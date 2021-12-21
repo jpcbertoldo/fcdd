@@ -63,8 +63,8 @@ if __name__ == '__main__':
     assert len(it_dirs) > 0, "source experiment directory's first class folder has no runs, i.e. contains no log data!"
 
     # read configuration file, where the choice of parameters of the source experiment is logged
-    assert 'config.txt' in os.listdir(pt.join(cls_dirs[0], it_dirs[0])), 'could not find configuration file!'
-    cfgfile = pt.join(cls_dirs[0], it_dirs[0], 'config.txt')
+    assert 'config.txt' in os.listdir(it_dirs[0]), 'could not find configuration file!'
+    cfgfile = pt.join(it_dirs[0], 'config.txt')
     cfg = read_cfg(cfgfile)
     extract_args(runner.args, cfg)
 
