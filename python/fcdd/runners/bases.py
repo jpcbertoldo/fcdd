@@ -125,7 +125,7 @@ class BaseRunner(object):
         if backup:
             self.backup_args()
         self.args.net = NET_TO_AE[self.args.net]
-        self.args.objective = 'autoencoder'
+        self.args.objective = 'ae'
         self.args.supervise_mode = 'unsupervised'
         self.args.blur_heatmaps = True
         self.args.viz_ids = self.get_base_logdir()
