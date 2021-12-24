@@ -47,3 +47,6 @@ dist
 
 # joao
 fcdd.code-workspace
+**/.ipynb_checkpoints
+# this is temporary because of a path mistake i made
+results/
