@@ -99,7 +99,12 @@ def combine_specific_viz_ids_pics(srcs: List[str], out: str = None, setup: List[
         )
     pics = {}
     for n, src in enumerate(srcs):
-        cls_labels = [pt.join(src, c) for c in os.listdir(src)]
+        # (joao) this broke when jupyter created a `.ipynb_checkpoints` dir inside the 
+        # experiment dir; i added the if so we only get actual classwise experiments
+        # i'm not sure if this is the best way to do it, but that's what the assertion 
+        # in a few lines below was checking, so it should be ok
+        # i had to add a similar fix for the `it_dir` values, see [fix][it_dir]
+        cls_labels = [pt.join(src, c) for c in os.listdir(src) if c.startswith('normal_')]
         cls_labels.sort(key=pt.getmtime)
         cls_labels = [pt.basename(c) for c in cls_labels]
         if all([c.startswith('it_') for c in cls_labels if pt.isdir(pt.join(src, c))]):  # one class experiment
@@ -107,11 +112,13 @@ def combine_specific_viz_ids_pics(srcs: List[str], out: str = None, setup: List[
         for cls_dir in cls_labels:
             if not pt.isdir(pt.join(src, cls_dir)):
                 continue
-            assert cls_dir.startswith('normal_')
+            assert cls_dir.startswith('normal_'), f"cls_dir={cls_dir}"
             if only_cls is not None and len(only_cls) > 0 and int(cls_dir[7:]) not in only_cls:
                 continue
             print('collecting pictures of {} {}...'.format(src, cls_dir))
-            for it_dir in os.listdir(pt.join(src, cls_dir)):
+            # [fix][it_dir]
+            it_dirs = [dir_ for dir_ in os.listdir(pt.join(src, cls_dir)) if dir_.startswith("it_")]
+            for it_dir in it_dirs:
                 if pt.isfile(pt.join(src, cls_dir, it_dir)):
                     continue
                 cfg = read_cfg(pt.join(src, cls_dir, it_dir, 'config.txt'))
