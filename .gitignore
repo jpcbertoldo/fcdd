@@ -45,8 +45,5 @@ data
 venv
 dist
 
-# joao
-fcdd.code-workspace
+# jupyter notebook/lab checkpoints
 **/.ipynb_checkpoints
-# this is temporary because of a path mistake i made
-results/
