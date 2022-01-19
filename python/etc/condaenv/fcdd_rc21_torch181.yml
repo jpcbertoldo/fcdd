@@ -1,0 +1,13 @@
+name: fcdd_rc21_torch181
+
+channels:
+  - defaults
+  - conda-forge
+
+dependencies:
+  - python=3.9
+  - pip=21.0*
+  - conda-forge::ipykernel
+  # this version needs to be not 58 becasue it is causing this issue https://github.com/pypa/setuptools/issues/2769
+  # src: https://github.com/tikitu/jsmin/issues/33#issue-989555565
+  - setuptools=57.*
