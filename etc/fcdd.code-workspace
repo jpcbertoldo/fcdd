@@ -2,6 +2,10 @@
 	"folders": [
 		{
 			"path": ".."
+		},
+		{
+			"name": "thalassa:log",
+			"path": "/cbio/donnees/jpcasagrande/log"
 		}
 	],
 	"settings": {
