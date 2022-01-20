@@ -99,7 +99,9 @@ class MyImageFolder(DatasetFolder):
         self.loader = default_loader
         self.extensions = extensions = IMG_EXTENSIONS if is_valid_file is None else None
 
-        classes, class_to_idx = self.find_classes(self.root)
+        # [joao] i had to replace `find_classes` by `_find_classes` (an extra '_')
+        # because of difference between torchvision versions 0.9.1 (in thalassa) and 0.10.1 (original)
+        classes, class_to_idx = self._find_classes(self.root)
         samples = self.make_dataset(self.root, class_to_idx, extensions, is_valid_file)
         if len(samples) == 0:
             raise (RuntimeError("Found 0 files in subfolders of: " + self.root + "\n"
