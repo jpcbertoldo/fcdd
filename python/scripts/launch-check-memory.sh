@@ -31,12 +31,12 @@ echo "pid-monitor=$(which pid-monitor)"
 # DATASET="cifar10"
 # RUNNER="run_cifar10.py"
 
-# DATASET="mvtec-unsupervised"
-# RUNNER="run_mvtec.py"
+DATASET="mvtec-unsupervised"
+RUNNER="run_mvtec.py"
 # mvtec is unsupervised by default
 
-DATASET="mvtec-semi-supervised"
-RUNNER="run_mvtec.py"
+# DATASET="mvtec-semi-supervised"
+# RUNNER="run_mvtec.py"
 # args for semi-supervised 
 # --supervise-mode noise --noise-mode mvtec_gt --oe-limit 1
 
@@ -48,9 +48,9 @@ LOG_MEM_FPATH="${LOGS_DIR}/${DATASET}.$(date +'%Y-%m-%d-%H-%M-%S').mem.log"
 LOG_GPU_FPATH="${LOGS_DIR}/${DATASET}.$(date +'%Y-%m-%d-%H-%M-%S').gpu.log"
 
 echo "launching ${DATASET}"
-# CUDA_VISIBLE_DEVICES=1 TMPDIR=/data/bertoldo/tmp python runners/${RUNNER} --it 1 --epochs 1 & 
+CUDA_VISIBLE_DEVICES=1 TMPDIR=/data/bertoldo/tmp python runners/${RUNNER} --it 1 --epochs 1 & 
 # for mvtec semi-supervised
-CUDA_VISIBLE_DEVICES=1 TMPDIR=/data/bertoldo/tmp python runners/${RUNNER} --supervise-mode noise --noise-mode mvtec_gt --oe-limit 1 --it 1 --epochs 1 & 
+# CUDA_VISIBLE_DEVICES=0 TMPDIR=/data/bertoldo/tmp python runners/${RUNNER} --supervise-mode noise --noise-mode mvtec_gt --oe-limit 1 --it 1 --epochs 1 & 
 PID=$!
 
 echo "launching mem monitor on pid ${PID}"
