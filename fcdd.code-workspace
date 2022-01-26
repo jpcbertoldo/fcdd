@@ -6,7 +6,15 @@
 		{
 			"name": "thalassa:log",
 			"path": "/cbio/donnees/jpcasagrande/log"
-		}
+		},
+		{
+			"name": "cuda:log",
+			"path": "/home/bertoldo/log"
+		},
+		{
+			"name": "cuda:log:mem-use",
+			"path": "/home/bertoldo/log/fcdd-memory-usage"
+		},
 	],
 	"settings": {
 		"files.exclude": {
@@ -14,7 +22,7 @@
 		},
 		"python.defaultInterpreterPath": "/home/bertoldo/miniconda3/envs/fcdd_rc21/bin/python",
 		"terminal.integrated.defaultProfile.linux": "zsh",
-		"terminal.integrated.cwd": "/home/bertoldo/repos/fcdd/python/fcdd"
+		// "terminal.integrated.cwd": "/home/bertoldo/repos/fcdd/python/fcdd"
 	},
 	"launch": {
 		"version": "0.2.0",
