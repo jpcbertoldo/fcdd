@@ -4,17 +4,39 @@
 			"path": "."
 		},
 		{
-			"name": "thalassa:log",
+			"name": "thalassa:~/log",
 			"path": "/cbio/donnees/jpcasagrande/log"
+		},
+		{
+			"name": "thalassa:~/log/fcdd-running",
+			"path": "/cbio/donnees/jpcasagrande/log/fcdd-running"
+		},
+		{
+			"name": "thalassa:~/log/fcdd-imagenet",
+			"path": "/cbio/donnees/jpcasagrande/log/fcdd-imagenet"
+		},{
+			"name": "imagenet 1k",
+			"path": "/mnt/data2/CMM/commun/imagenet_1k_2012",
 		}
 	],
 	"settings": {
+		// src: https://code.visualstudio.com/docs/languages/identifiers#_known-language-identifiers
+		"files.associations": {
+			"*.out": "plaintext"
+		},
 		"files.exclude": {
 			"**/.ipynb_checkpoints/": true
 		},
-		"python.defaultInterpreterPath": "/home/bertoldo/miniconda3/envs/fcdd_rc21/bin/python",
+		"python.defaultInterpreterPath": "${env:HOME}/miniconda3/envs/fcdd_rc21/bin/python",
 		"terminal.integrated.defaultProfile.linux": "zsh",
-		"terminal.integrated.cwd": "/home/bertoldo/repos/fcdd/python/fcdd"
+		"search.exclude": {
+			// src: https://stackoverflow.com/questions/45895070/vs-code-search-exclude-doesnt-work
+			// src: https://stackoverflow.com/questions/29971600/choose-folders-to-be-ignored-during-search-in-vs-code
+			// this pattern exclusion doensn't work as expected or i didnt understand the refs above
+			"**/*.out": true,
+		},
+		// src: https://stackoverflow.com/a/39747937/9582881
+		"explorer.autoReveal": false,
 	},
 	"launch": {
 		"version": "0.2.0",
