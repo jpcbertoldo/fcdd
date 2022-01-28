@@ -10,6 +10,10 @@ class MvtecConfig(DefaultMvtecConfig):
             '--cls-restrictions', type=int, nargs='+', default=None,
             help='Run only training sessions for some of the classes being nominal.'
         )
+        parser.add_argument(
+            "--snapshots-training", type=int, nargs='+', default=None, dest='snapshots_training', 
+            help="Save the model and evaluate it on the test set at the given epochs."
+        )
         return parser
 
 

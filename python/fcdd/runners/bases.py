@@ -96,13 +96,14 @@ class BaseRunner(object):
         acc_batches = kwargs.pop('acc_batches', 1)
         epochs = kwargs.pop('epochs')
         load = kwargs.pop('load', None)
+        snapshots_training = kwargs.pop("snapshots_training", None)
         kwargs.pop('viz_ids')
         setup = trainer_setup(
             **kwargs
         )
         try:
             trainer = SuperTrainer(**setup)
-            trainer.train(epochs, load, acc_batches=acc_batches)
+            trainer.train(epochs, load, acc_batches=acc_batches, snapshots_training=snapshots_training)
             if self._test and (epochs > 0 or load is not None):
                 x = trainer.test(viz_ids)
             else:

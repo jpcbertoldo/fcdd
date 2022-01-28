@@ -146,7 +146,7 @@ class BaseADTrainer(BaseTrainer):
         """ Reduces the anomaly score to be a score per pixel (explanation). """
         return ascore.mean(1).unsqueeze(1)
 
-    def train(self, epochs: int, acc_batches=1) -> BaseNet:
+    def train(self, epochs: int, acc_batches=1, end_of_epoch_hook=None) -> BaseNet:
         """
         In addition to the base class this train method support ground-truth maps, logs losses for
         nominal and anomalous samples separately, and introduces another parameter to
@@ -202,9 +202,14 @@ class BaseADTrainer(BaseTrainer):
                         info=info
                     )
             self.sched.step()
+
+            if end_of_epoch_hook is not None:
+                self.logger.print(f"calling `end_of_epoch_hook` {epoch=}")
+                end_of_epoch_hook(epoch)
+
         return self.net
 
-    def test(self, specific_viz_ids: Tuple[List[int], List[int]] = ()) -> dict:
+    def test(self, specific_viz_ids: Tuple[List[int], List[int]] = (), train_data=True, subdir='.') -> dict:
         """
         Does a full iteration of the data loaders, remembers all data (i.e. inputs, labels, outputs, loss),
         and computes scores and heatmaps with it. Scores and heatmaps are computed for both, the training
@@ -235,14 +240,18 @@ class BaseADTrainer(BaseTrainer):
         """
         self.net = self.net.to(self.device).eval()
 
-        self.logger.print('Test training data...', fps=False)
-        labels, loss, anomaly_scores, imgs, outputs, gtmaps, grads = self._gather_data(
-            self.train_loader
-        )
-        self.heatmap_generation(
-            labels, anomaly_scores, imgs, gtmaps, grads,
-            name='train_heatmaps',
-        )
+        if train_data:
+            self.logger.print('Test training data...', fps=False)
+            labels, loss, anomaly_scores, imgs, outputs, gtmaps, grads = self._gather_data(
+                self.train_loader
+            )
+            self.heatmap_generation(
+                labels, anomaly_scores, imgs, gtmaps, grads,
+                name='train_heatmaps',
+            )
+            
+        else:
+            self.logger.print('Test training data SKIPPED', fps=False)
 
         self.logger.print('Test test data...', fps=False)
         labels, loss, anomaly_scores, imgs, outputs, gtmaps, grads = self._gather_data(
@@ -257,7 +266,7 @@ class BaseADTrainer(BaseTrainer):
         )
 
         with torch.no_grad():
-            sc = self.score(labels, anomaly_scores, imgs, outputs, gtmaps, grads)
+            sc = self.score(labels, anomaly_scores, imgs, outputs, gtmaps, grads, subdir=subdir)
         return sc
 
     def _gather_data(self, loader: DataLoader,
