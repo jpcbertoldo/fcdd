@@ -65,7 +65,7 @@ class SuperTrainer(object):
         self.logger = logger
         self.res = {}  # keys = {pt_roc, roc, gtmap_roc, prc, gtmap_prc}
 
-    def train(self, epochs: int, snap: str = None, acc_batches=1):
+    def train(self, epochs: int, snap: str = None, acc_batches=1, snapshots_training=None):
         """
         Trains the model for anomaly detection. Afterwards, stores and plots all metrics that have
         been logged during training in respective files in the log directory. Additionally, saves a snapshot
@@ -78,8 +78,22 @@ class SuperTrainer(object):
         """
         start = self.load(snap)
 
+        if snapshots_training is None:
+            end_of_epoch_hook = None
+
+        else:
+            def end_of_epoch_hook(epoch: int):
+                if epoch in snapshots_training:
+                    # self.trainer.snapshot(epoch)
+                    # this is basically what the line above would do but i avoid modifying it
+                    self.logger.snapshot(
+                        self.trainer.net, self.trainer.opt, self.trainer.sched, epoch, suffix=f"epoch={epoch:05d}", subdir="training_snapshots"
+                    )
+                    self.trainer.test(train_data=False, subdir=f"training_tests/epoch={epoch:05d}")
+
         try:
-            self.trainer.train(epochs - start, acc_batches)
+            self.trainer.train(epochs - start, acc_batches, end_of_epoch_hook=end_of_epoch_hook)
+
         finally:
             self.logger.save()
             self.logger.plot()

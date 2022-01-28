@@ -431,7 +431,7 @@ class Logger(object):
             t = cv2.cvtColor(t, cv2.COLOR_RGB2BGR)
         cv2.imwrite(outfile, t)
 
-    def snapshot(self, net: torch.nn.Module, opt: Optimizer, sched: _LRScheduler = None, epoch: int = None, subdir='.'):
+    def snapshot(self, net: torch.nn.Module, opt: Optimizer, sched: _LRScheduler = None, epoch: int = None, subdir='.', suffix=""):
         """
         Writes a snapshot of the training, i.e. network weights, optimizer state and scheduler state to a file
         in the log directory.
@@ -443,7 +443,7 @@ class Logger(object):
             in this subdirectory instead.
         :return:
         """
-        outfile = pt.join(self.dir, subdir, 'snapshot.pt')
+        outfile = pt.join(self.dir, subdir, f'snapshot{suffix}.pt')
         if not pt.exists(os.path.dirname(outfile)):
             os.makedirs(os.path.dirname(outfile))
         torch.save(

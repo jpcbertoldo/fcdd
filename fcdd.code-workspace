@@ -21,7 +21,7 @@
 			"**/.ipynb_checkpoints/": true
 		},
 		"python.defaultInterpreterPath": "/home/bertoldo/miniconda3/envs/fcdd_rc21/bin/python",
-		"terminal.integrated.defaultProfile.linux": "zsh",
+		"terminal.integrated.defaultProfile.linux": "${env:HOME}/.local/bin/zsh",
 		// "terminal.integrated.cwd": "/home/bertoldo/repos/fcdd/python/fcdd"
 	},
 	"launch": {
