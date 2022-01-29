@@ -5,27 +5,27 @@
 		},
 		{
 			"name": "thalassa:~/log",
-			"path": "/cbio/donnees/jpcasagrande/log",
+			"path": "/cbio/donnees/jpcasagrande/log"
 		},
 		{
-			"name": "thalassa:~/log/fcdd-running",
-			"path": "/cbio/donnees/jpcasagrande/log/fcdd-running",
+			"name": "thalassa:~/log/fcdd/mvtec",
+			"path": "/cbio/donnees/jpcasagrande/log/fcdd/mvtec"
 		},
 		{
-			"name": "thalassa:~/log/fcdd-imagenet",
-			"path": "/cbio/donnees/jpcasagrande/log/fcdd-imagenet",
-		},{
 			"name": "imagenet 1k",
-			"path": "/mnt/data2/CMM/commun/imagenet_1k_2012",
+			"path": "/mnt/data2/CMM/commun/imagenet_1k_2012"
 		},
 		{
 			"name": "cuda:log",
-			"path": "/home/bertoldo/log",
+			"path": "/home/bertoldo/log"
 		},
 		{
 			"name": "cuda:log:mem-use",
-			"path": "/home/bertoldo/log/fcdd-memory-usage",
+			"path": "/home/bertoldo/log/fcdd-memory-usage"
 		},
+		{
+			"path": "../../bashrc.d"
+		}
 	],
 	"settings": {
 		// src: https://code.visualstudio.com/docs/languages/identifiers#_known-language-identifiers
