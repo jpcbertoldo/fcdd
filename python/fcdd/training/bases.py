@@ -90,9 +90,12 @@ class BaseTrainer(ABC):
     def score(self, labels: Tensor, losses: Tensor, ins: Tensor, outs: Tensor):
         pass
 
-    def load(self, path: str) -> int:
+    def load(self, path: str, cpu=False) -> int:
         """ Loads a snapshot of the training state, including network weights """
-        snapshot = torch.load(path)
+        if cpu:
+            snapshot = torch.load(path, map_location=torch.device('cpu'))
+        else:
+            snapshot = torch.load(path)
         net_state = snapshot.pop('net', None)
         opt_state = snapshot.pop('opt', None)
         sched_state = snapshot.pop('sched', None)
