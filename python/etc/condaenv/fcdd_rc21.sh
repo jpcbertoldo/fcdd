@@ -9,4 +9,6 @@ conda env create --file ${FCDD_PYTHON_DIR}/etc/condaenv/fcdd_rc21.yml
 conda activate fcdd_rc21
 cd ${FCDD_PYTHON_DIR}
 pip install --editable .
-
+conda activate fcdd_rc21
+echo "installing the ipykernel locally (--user)"
+python -m ipykernel install --user --name=fcdd_rc21

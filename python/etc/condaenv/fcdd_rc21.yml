@@ -11,3 +11,8 @@ dependencies:
   # this version needs to be not 58 becasue it is causing this issue https://github.com/pypa/setuptools/issues/2769
   # src: https://github.com/tikitu/jsmin/issues/33#issue-989555565
   - setuptools=57.*
+  - conda-forge::ipywidgets  # this is needed for torch on jlab
+  - conda-forge::pandas
+
+# line to update the environment
+# conda env update --name fcdd_rc21 --file ${HOME}/fcdd/python/etc/condaenv/fcdd_rc21.yml --prune
