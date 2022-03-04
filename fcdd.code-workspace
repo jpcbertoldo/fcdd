@@ -24,6 +24,15 @@
 		"terminal.integrated.defaultProfile.linux": "${env:HOME}/.local/bin/zsh",
 		// "terminal.integrated.cwd": "/home/bertoldo/repos/fcdd/python/fcdd"
 	},
+	"extensions": {
+		"recommendations": [
+			"ms-toolsai.jupyter", 
+			"github.copilot", 
+			"ms-toolsai.jupyter-renderers", 
+			"kevinrose.vsc-python-indent", 
+			"ms-python.vscode-pylance",
+		]
+	},
 	"launch": {
 		"version": "0.2.0",
 		"configurations": [
