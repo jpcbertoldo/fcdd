@@ -1,0 +1,50 @@
+Scope of Reproducibility
+
+Liznerski et al. [23] proposed Fully Convolutional Data Description (FCDD), an explainable version of the Hypersphere
+Classifier (HSC) to directly address image anomaly detection (AD) and pixel-wise AD without any post-hoc explainer
+methods. The authors claim that FCDD achieves results comparable with the state-of-the-art in sample-wise AD on
+Fashion-MNIST and CIFAR-10 and exceeds the state-of-the-art on the pixel-wise task on MVTec-AD. They also give
+evidence to show a clear improvement by using few (1 up to 8) real anomalous images in MVTec-AD for supervision at
+the pixel level. Finally, a qualitative study with horse images on PASCAL-VOC shows that FCDD can intrinsically
+reveal spurious model decisions by providing built-in anomaly score heatmaps.
+
+---
+
+Methodology
+
+We have reproduced the quantitative results in the main text of [23] except for the performance on ImageNet: sample-
+wise AD on Fashion-MNIST and CIFAR-10, and pixel-wise AD on MVTec-AD. We used the author’s code with GPUs
+NVIDIA TITAN X and NVIDIA TITAN Xp. A more detailed look into FCDD’s performance variability is presented,
+and a Critical Difference (CD) diagram is proposed as a more appropriate tool to compare methods over the datasets in
+MVTec-AD. Finally, we study the generalization power of the unsupervised FCDD during training.
+
+---
+
+Results
+
+All per-class performances (in terms of Area Under the ROC Curve (ROC-AUC) [31]) announced in the paper were
+replicated with absolute difference of at most 2% and below 1% on average, confirming the paper’s claims. We report
+the experiments’ GPU and CPU memory requirements and their average training time. Our analyses beyond the paper’s
+scope show that claiming to “exceed the state-of-the-art” should be considered with care, and evidence is given to argue
+that the pixel-wise unsupervised FCDD could narrow the gap with its semi-supervised version.
+
+---
+
+What was easy
+
+The paper was clear and explicitly gave many training and hyperparameters details, which were conveniently set as
+default in the author’s scripts. Their code was well organized and easy to interact with.
+
+---
+
+What was difficult
+
+Using ImageNet proved to be challenging due to its size and need to manually set it up; we could not complete the
+experiments on this dataset.
+
+---
+
+Communication with original authors
+
+We reached the main author by e-mail to ask for help with ImageNet and discuss a few practical details. He promptly
+replied with useful information.
