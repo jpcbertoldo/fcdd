@@ -1,0 +1,6 @@
+[submodule "python/mmsegmentation"]
+	path = python/mmsegmentation
+	url = https://github.com/open-mmlab/mmsegmentation.git
+[submodule "U-2-Net"]
+	path = U-2-Net
+	url = git@github.com:jpcbertoldo/U-2-Net.git
