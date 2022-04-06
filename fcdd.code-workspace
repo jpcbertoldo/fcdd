@@ -23,6 +23,8 @@
 		"python.defaultInterpreterPath": "~/miniconda3/envs/fcdd_rc21/bin/python",
 		"terminal.integrated.defaultProfile.linux": "${env:HOME}/.local/bin/zsh",
 		"jupyter.jupyterServerType": "remote",
+		"scm.autoReveal": false,
+		"problems.autoReveal": false,
 		// "terminal.integrated.cwd": "/home/bertoldo/repos/fcdd/python/fcdd"
 	},
 	"launch": {
