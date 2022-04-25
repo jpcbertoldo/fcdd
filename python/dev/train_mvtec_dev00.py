@@ -1,96 +1,136 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# In[]:
 # # train mvtec
 # 
 # i want to have a simpler script to integrate to wandb and later adapt it to unetdd
 
-# # consts
+# In[]:
+# # imports
 
-## In[1]:
-
+# In[1]:
 
 import collections
 import json
 import os
 import os.path as pt
-import re
+import random
 import time
 import traceback
-from abc import ABC, abstractmethod
 from argparse import ArgumentParser
-from collections import defaultdict, namedtuple
+from collections import namedtuple
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple
 
+from scipy.interpolate import interp1d
+import numpy as np
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from fcdd.datasets import load_dataset
-from fcdd.datasets.bases import GTMapADDataset, TorchvisionDataset
-from fcdd.datasets.cifar import ADCIFAR10
-from fcdd.datasets.fmnist import ADFMNIST
-from fcdd.datasets.image_folder import ADImageFolderDataset
-from fcdd.datasets.image_folder_gtms import ADImageFolderDatasetGTM
-from fcdd.datasets.imagenet import ADImageNet
-from fcdd.datasets.mvtec import ADMvTec
-from fcdd.datasets.noise import kernel_size_to_std
-from fcdd.datasets.pascal_voc import ADPascalVoc
 from fcdd.models import choices, load_nets
-from fcdd.models.bases import BaseNet, ReceptiveNet, FCDDNet
-from fcdd.training import balance_labels
-from fcdd.training.setup import pick_opt_sched
+from fcdd.models.bases import BaseNet, FCDDNet, ReceptiveNet
 from fcdd.util.logging import Logger
 from fcdd.util.logging import colorize as colorize_img
 from kornia import gaussian_blur2d
-from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.metrics import roc_auc_score, roc_curve, auc
 from torch import Tensor
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.optim.optimizer import Optimizer
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
-DS_CHOICES = ('mnist', 'cifar10', 'fmnist', 'mvtec', 'imagenet', 'pascalvoc')
-PREPROC_CHOICES = (
-    'lcn', 'lcnaug1', 'aug1', 'aug1_blackcenter', 'aug1_blackcenter_inverted', 'none'
+# from fcdd.datasets.noise import kernel_size_to_std
+# from fcdd.training import balance_labels
+# from fcdd.training.setup import pick_opt_sched
+
+# # utils
+
+def kernel_size_to_std(k: int):
+    """ Returns a standard deviation value for a Gaussian kernel based on its size """
+    return np.log10(0.45*k + 1) + 0.25 if k < 32 else 10
+
+
+def balance_labels(data: Tensor, labels: List[int], err=True) -> Tensor:
+    """ balances data by removing samples for the more frequent label until both labels have equally many samples """
+    lblset = list(set(labels))
+    if err:
+        assert len(lblset) == 2, 'binary labels required'
+    else:
+        assert len(lblset) <= 2, 'binary labels required'
+        if len(lblset) == 1:
+            return data
+    l0 = (torch.from_numpy(np.asarray(labels)) == lblset[0]).nonzero().squeeze(-1).tolist()
+    l1 = (torch.from_numpy(np.asarray(labels)) == lblset[1]).nonzero().squeeze(-1).tolist()
+    if len(l0) > len(l1):
+        rmv = random.sample(l0, len(l0) - len(l1))
+    else:
+        rmv = random.sample(l1, len(l1) - len(l0))
+    ids = [i for i in range(len(labels)) if i not in rmv]
+    data = data[ids]
+    return data
+
+
+# In[]:
+# # consts
+
+SUPERVISE_MODES = (
+    # 'unsupervised', 
+    # 'other', 
+    'noise', 
+    'malformed_normal', 
+    'malformed_normal_gt'
 )
-SUPERVISE_MODES = ('unsupervised', 'other', 'noise', 'malformed_normal', 'malformed_normal_gt')
 NOISE_MODES = [
-    'gaussian', 'uniform', 'blob', 'mixed_blob', 'solid', 'confetti',  # Synthetic Anomalies
-    'imagenet', 'imagenet22k', 'cifar100', 'emnist',  # Outlier Exposure
-    'mvtec', 'mvtec_gt'  # Outlier Exposure online supervision only
+    # Synthetic Anomalies
+    'confetti',  
+    # Outlier Exposure online supervision only  
+    'mvtec', 
+    'mvtec_gt'  
 ]
 
-def str_labels(dataset_name: str) -> List[str]:
+# In[]:
+# # datasets
+
+from mvtec_dataset import ADMvTec, TorchvisionDataset
+
+DATASET_CHOICES = ('mvtec',)
+
+
+def dataset_class_labels(dataset_name: str) -> List[str]:
     return {
-        'cifar10': [
-            'airplane', 'automobile', 'bird', 'cat', 'deer', 
-            'dog', 'frog', 'horse', 'ship', 'truck'
-        ],
-        'fmnist': [
-            't-shirt/top', 'trouser', 'pullover', 'dress', 'coat', 
-            'sandal', 'shirt', 'sneaker', 'bag', 'ankle boot'
-        ],
-        'mvtec': [
-            'bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather',
-            'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor',
-            'wood', 'zipper'
-        ],
-        'imagenet': deepcopy(ADImageNet.ad_classes),
-        'pascalvoc': ['horse'],
+        'mvtec': deepcopy(ADMvTec.classes_labels),
     }[dataset_name]
 
 
-def no_classes(dataset_name: str) -> int:
-    return len(str_labels[dataset_name])
+def dataset_nclasses(dataset_name: str) -> int:
+    return len(dataset_class_labels[dataset_name])
 
 
+def dataset_class_index(dataset_name: str, class_name: str) -> int:
+
+    return dataset_class_labels(dataset_name).index(class_name)
+
+
+def dataset_preprocessing_choices(dataset_name: str) -> List[str]:
+    return {
+        'mvtec': deepcopy(ADMvTec.preprocessing_choices),
+    }[dataset_name]
+
+
+PREPROCESSING_CHOICES = tuple(set.union(*[
+    set(dataset_preprocessing_choices(dataset_name)) 
+    for dataset_name in DATASET_CHOICES
+]))
+
+
+# In[]:
 # # args
 
-## In[2]:
+# In[2]:
 
 
 def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
@@ -153,13 +193,13 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
              'Note that only one snapshot is given, thus using a runner that trains for multiple different classes '
              'to be nominal is not applicable. '
     )
-    parser.add_argument('-d', '--dataset', type=str, default='custom', choices=DS_CHOICES)
+    parser.add_argument('-d', '--dataset', type=str, default='custom', choices=DATASET_CHOICES)
     parser.add_argument(
         '-n', '--net', type=str, default='FCDD_CNN224_VGG_F', choices=choices(),
         help='Chooses a network architecture to train.'
     )
     parser.add_argument(
-        '--preproc', type=str, default='aug1', choices=PREPROC_CHOICES,
+        '--preproc', type=str, default='aug1', choices=PREPROCESSING_CHOICES,
         help='Determines the kind of preprocessing pipeline (augmentations and such). '
              'Have a look at the code (dataset implementation, e.g. fcdd.datasets.cifar.py) for details.'
     )
@@ -196,13 +236,6 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
              'Has no impact on synthetic anomalies.'
     )
     parser.add_argument(
-        '--offline-supervision', dest='online_supervision', action='store_false',
-        help='Instead of sampling artificial anomalies during training by having a 50%% chance to '
-             'replace nominal samples, this mode samples them once at the start of the training and adds them to '
-             'the training set. '
-             'This yields less performance and higher RAM utilization, but reduces the training time. '
-    )
-    parser.add_argument(
         '--nominal-label', type=int, default=0,
         help='Determines the label that marks nominal samples. '
              'Note that this is not the class that is considered nominal! '
@@ -234,11 +267,15 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
         '--no-test', dest="test", action="store_false",
         help='If set then the model will not be tested at the end of the training. It will by default.'
     )
+    parser.add_argument(
+        "--pixel-level-loss", dest="pixel_level_loss", action="store_true",
+        help="If set, the pixel-level loss is used instead of the old version, which didn't apply the anomalous part of the loss to each pixel individually. "
+    )
     return parser
 
 
 def default_parser_config_mvtec(parser: ArgumentParser) -> ArgumentParser:
-    parser = default_parser_config(parser)
+    
     parser.set_defaults(
         batch_size=16, 
         acc_batches=8, 
@@ -263,20 +300,7 @@ def default_parser_config_mvtec(parser: ArgumentParser) -> ArgumentParser:
     return parser
 
 
-## In[3]:
-
-
-parser = ArgumentParser(
-    description="""
-    Train a neural network module as explained in the `Explainable Deep Anomaly Detection` paper.
-    Train FCDD, and log achieved scores, metrics, plots, and heatmaps
-    for both test and training data. 
-    """
-)
-parser = default_parser_config_mvtec(parser)
-
-
-## In[4]:
+# In[4]:
 
 
 def time_format(i: float) -> str:
@@ -297,6 +321,7 @@ def args_post_parse(args_):
     
     if 'logdir_suffix' in vars(args_):
         logdir_name += args_.logdir_suffix
+
         del vars(args_)['logdir_suffix']
         
     logdir_name = logdir_name.replace('{t}', args_.log_start_time_str)
@@ -306,9 +331,11 @@ def args_post_parse(args_):
     return args_
 
 
+# In[]:
 # # setup
 
-## In[5]:
+# In[5]:
+
 
 TrainSetup = namedtuple(
     "TrainSetup",
@@ -341,7 +368,6 @@ def trainer_setup(
     preproc: str, 
     supervise_mode: str, 
     nominal_label: int,
-    online_supervision: bool, 
     oe_limit: int, 
     noise_mode: str,
     workers: int, 
@@ -372,12 +398,10 @@ def trainer_setup(
     :param batch_size: batch size, i.e. number of data samples that are returned per iteration of the data loader.
     :param optimizer_type: optimizer type, needs to be one of {'sgd', 'adam'}.
     :param scheduler_type: learning rate scheduler type, needs to be one of {'lambda', 'milestones'}.
-    :param preproc: data preprocessing pipeline identifier string (see :data:`fcdd.datasets.PREPROC_CHOICES`).
+    :param preproc: data preprocessing pipeline identifier string (see :data:`PREPROCESSING_CHOICES`).
     :param supervise_mode: the type of generated artificial anomalies.
         See :meth:`fcdd.datasets.bases.TorchvisionDataset._generate_artificial_anomalies_train_set`.
     :param nominal_label: the label that is to be returned to mark nominal samples.
-    :param online_supervision: whether to sample anomalies online in each epoch,
-        or offline before training (same for all epochs in this case).
     :param oe_limit: limits the number of different anomalies in case of Outlier Exposure (defined in noise_mode).
     :param noise_mode: the type of noise used, see :mod:`fcdd.datasets.noise_mode`.
     :param workers: how many subprocesses to use for data loading.
@@ -394,43 +418,56 @@ def trainer_setup(
     """
     assert supervise_mode in SUPERVISE_MODES, 'unknown supervise mode: {}'.format(supervise_mode)
     assert noise_mode in NOISE_MODES, 'unknown noise mode: {}'.format(noise_mode)
-    
+    assert dataset in DATASET_CHOICES
+    assert preproc in PREPROCESSING_CHOICES
     device = torch.device('cuda:0') if cuda else torch.device('cpu')
     
-    logger = Logger(
-        logdir=logdir, 
-        exp_start_time=log_start_time,
-    )
+    logger = Logger(logdir=logdir, exp_start_time=log_start_time,)
     
-    ds = load_dataset(
-        dataset_name=dataset,
-        data_path=datadir,
-        normal_class=normal_class,
-        preproc=preproc,   
-        supervise_mode=supervise_mode,
-        noise_mode=noise_mode,
-        online_supervision=online_supervision,
-        nominal_label=nominal_label,
-        oe_limit=oe_limit,
-        logger=logger,
-    )
+    # ================================ DATASET ================================
+    if dataset == 'mvtec':
+        ds = ADMvTec(
+            root=datadir, 
+            normal_class=normal_class, 
+            preproc=preproc,
+            supervise_mode=supervise_mode, 
+            noise_mode=noise_mode, 
+            oe_limit=oe_limit, 
+            logger=logger, 
+            nominal_label=nominal_label,
+        )
+    else:
+        raise NotImplementedError(f'Dataset {dataset} is unknown.')
     
-    loaders = ds.loaders(
-        batch_size=batch_size, 
-        num_workers=workers
-    )
+    loaders = ds.loaders(batch_size=batch_size, num_workers=workers)
     
+    # ================================ NET ================================
     net = load_nets(name=net, in_shape=ds.shape, bias=bias)
     net = net.to(device)
-
-    optimizer, scheduler = pick_opt_sched(
-        net=net, 
-        lr=learning_rate, 
-        wdk=weight_decay, 
-        sched_params=lr_sched_param, 
-        opt=optimizer_type, 
-        sched=scheduler_type,
-    )
+    
+    # ================================ OPTIMIZER ================================
+    if optimizer_type == 'sgd':
+        optimizer = optim.SGD(net.parameters(), lr=learning_rate, weight_decay=weight_decay, momentum=0.9, nesterov=True)
+    
+    elif optimizer_type == 'adam':
+        optimizer = optim.Adam(net.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    
+    else:
+        raise NotImplementedError('Optimizer type {} not known.'.format(optimizer_type))
+    
+    # ================================ SCHEDULER ================================
+    if scheduler_type == 'lambda':
+        assert len(lr_sched_param) == 1 and 0 < lr_sched_param[0] <= 1
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lambda ep: lr_sched_param[0] ** ep)
+    
+    elif scheduler_type == 'milestones':
+        assert len(lr_sched_param) >= 2 and 0 < lr_sched_param[0] <= 1 and all([p > 1 for p in lr_sched_param[1:]])
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, [int(s) for s in lr_sched_param[1:]], lr_sched_param[0], )
+    
+    else:
+        raise NotImplementedError('LR scheduler type {} not known.'.format(scheduler_type))
+    
+    # ================================ ELSE ================================
     
     logger.save_params(net, config)
     
@@ -441,11 +478,11 @@ def trainer_setup(
         
     images = ds.preview(percls=20, train=True)
     
-    rowheaders = (
-        ds_order 
-        if not isinstance(ds.train_set, GTMapADDataset) else 
-        [*ds_order, '', *['gtno' if s == 'norm' else 'gtan' for s in ds_order]]
-    )
+    rowheaders = [
+        *ds_order, 
+        '', 
+        *['gtno' if s == 'norm' else 'gtan' for s in ds_order]
+    ]
         
     logger.imsave(
         name='ds_preview', 
@@ -468,11 +505,10 @@ def trainer_setup(
     )
 
 
+# In[]:
 # # trainer
 
-# ## BaseADTrainer
-
-## In[13]:
+# In[13]:
 
 class FCDDTrainer:
     
@@ -488,7 +524,7 @@ class FCDDTrainer:
         resdown: int, 
         blur_heatmaps=False,
         device='cuda:0',
-        pixel_level_loss: bool = False,
+        pixel_level_loss: bool = False, 
         **kwargs
     ):
         """
@@ -586,14 +622,10 @@ class FCDDTrainer:
                     data = [torch.cat(d) for d in zip(*acc_data)]
                     acc_data, acc_counter = [], 1
 
-                if isinstance(self.train_loader.dataset, GTMapADDataset):
-                    inputs, labels, gtmaps = data
-                    gtmaps = gtmaps.to(self.device)
-                else:
-                    inputs, labels = data
-                    gtmaps = None
-                    
+
+                inputs, labels, gtmaps = data
                 inputs = inputs.to(self.device)
+                gtmaps = gtmaps.to(self.device)
                 self.opt.zero_grad()
                 outputs = self.net(inputs)
                 loss = self.loss(
@@ -708,11 +740,8 @@ class FCDDTrainer:
         all_labels, all_loss, all_anomaly_scores, all_imgs, all_outputs = [], [], [], [], []
         all_gtmaps, all_grads = [], []
         for n_batch, data in enumerate(loader):
-            if isinstance(loader.dataset, GTMapADDataset):
-                inputs, labels, gtmaps = data
-                all_gtmaps.append(gtmaps)
-            else:
-                inputs, labels = data
+            inputs, labels, gtmaps = data
+            all_gtmaps.append(gtmaps)
             bk_inputs = inputs.detach().clone()
             inputs = inputs.to(self.device)
             if gather_all:
@@ -814,16 +843,43 @@ class FCDDTrainer:
                 # Further upsampling for original dataset size
                 ascores = torch.nn.functional.interpolate(ascores, (gtmaps.shape[-2:]))
                 flat_gtmaps, flat_ascores = gtmaps.reshape(-1).int().tolist(), ascores.reshape(-1).tolist()
+                gtfpr, gttpr, gtthresholds = roc_curve(
+                    y_true=flat_gtmaps, 
+                    y_score=flat_ascores,
+                    drop_intermediate=True,
+                )
+                
+                # reduce the number of points of the ROC curve
+                ROC_LIMIT_NUMBER_OF_POINTS = 6000
+                ROC_INTERPOLATION_NUMBER_OF_POINTS = 3000
+                roc_npoints = gtthresholds.shape[0]
+                if roc_npoints > ROC_LIMIT_NUMBER_OF_POINTS:
+                    
+                    func_fpr = interp1d(gtthresholds, gtfpr, kind='linear')
+                    func_tpr = interp1d(gtthresholds, gttpr, kind='linear')
 
-                gtfpr, gttpr, gtthresholds = roc_curve(flat_gtmaps, flat_ascores)
-                gt_roc_score = roc_auc_score(flat_gtmaps, flat_ascores)
+                    thmin, thmax = np.min(gtthresholds), np.max(gtthresholds)
+                    gtthresholds = np.linspace(thmin, thmax, ROC_INTERPOLATION_NUMBER_OF_POINTS, endpoint=True)
+                    
+                    gtfpr = func_fpr(gtthresholds)
+                    gttpr = func_tpr(gtthresholds)
+                
+                gt_roc_score = auc(gtfpr, gttpr)
                 gtmap_roc_res = {'tpr': gttpr, 'fpr': gtfpr, 'ths': gtthresholds, 'auc': gt_roc_score}
+                
                 self.logger.single_plot(
-                    'gtmap_roc_curve', gttpr, gtfpr, xlabel='false positive rate', ylabel='true positive rate',
-                    legend=['auc={}'.format(gt_roc_score)], subdir=subdir
+                    'gtmap_roc_curve', 
+                    gttpr, 
+                    gtfpr, 
+                    xlabel='false positive rate', 
+                    ylabel='true positive rate',
+                    legend=['auc={}'.format(gt_roc_score)], 
+                    subdir=subdir
                 )
                 self.logger.single_save(
-                    'gtmap_roc', gtmap_roc_res, subdir=subdir
+                    'gtmap_roc', 
+                    gtmap_roc_res, 
+                    subdir=subdir,
                 )
                 self.logger.logtxt('##### GTMAP ROC TEST SCORE {} #####'.format(gt_roc_score), print=True)
             except AssertionError as e:
@@ -1136,12 +1192,12 @@ class FCDDTrainer:
             return loss  # here it is always loss map
 
 
-## In[15]:
+# In[15]:
 
 def use_wandb() -> bool:
     return bool(int(os.environ.get("WANDB", "0")))
 
-## In[21]:
+# In[21]:
 
 # the names come from trainer.test()
 RunResults = namedtuple('RunResults', ["roc", "gtmap_roc",])
@@ -1171,6 +1227,7 @@ def run_one(it, **kwargs):
     epochs = kwargs.pop('epochs')
     load_snapshot = kwargs.pop('load', None)  # pre-trained model, path to model snapshot
     test = kwargs.pop("test")
+    pixel_level_loss = kwargs.pop("pixel_level_loss")
     
     del kwargs["log_start_time_str"]
     del kwargs["normal_class_label"]
@@ -1191,7 +1248,7 @@ def run_one(it, **kwargs):
             resdown=setup.resdown,
             blur_heatmaps=setup.blur_heatmaps,
             device=setup.device,
-            pixel_level_loss=False,  # todo: add me to cli
+            pixel_level_loss=pixel_level_loss,
         )
         
         if load_snapshot is None:
@@ -1252,7 +1309,7 @@ def run(**kwargs) -> dict:
     dataset = kwargs['dataset']
     
     cls_restrictions = kwargs.pop("cls_restrictions", None)
-    classes = cls_restrictions or range(no_classes(dataset))
+    classes = cls_restrictions or range(dataset_nclasses(dataset))
 
     number_it = kwargs.pop('it')
     its_restrictions = kwargs.pop("its_restrictions", None)
@@ -1264,7 +1321,7 @@ def run(**kwargs) -> dict:
         cls_logdir = original_logdir / f'normal_{c}'
         
         kwargs['normal_class'] = c
-        kwargs['normal_class_label'] = str_labels(dataset)[c]
+        kwargs['normal_class_label'] = dataset_class_labels(dataset)[c]
     
         for i in its:
             it_logdir = cls_logdir / 'it_{}'.format(i)
@@ -1274,9 +1331,10 @@ def run(**kwargs) -> dict:
     return results
 
 
+# In[]:
 # # launch
 
-## In[22]:
+# In[22]:
 
 
 # import os
@@ -1289,12 +1347,22 @@ def run(**kwargs) -> dict:
 # args = ARG_STRING.split(" ")
 
 if __name__ == "__main__":
+    
+    parser = ArgumentParser(
+        description="""
+        Train a neural network module as explained in the `Explainable Deep Anomaly Detection` paper.
+        Train FCDD, and log achieved scores, metrics, plots, and heatmaps
+        for both test and training data. 
+        """
+    )
+    parser = default_parser_config(parser)
+    parser = default_parser_config_mvtec(parser)
     args = parser.parse_args()
     args = args_post_parse(args)
     results = run(**vars(args))
 
 
-## In[ ]:
+# In[ ]:
 
 
 # this was in run_seeds
@@ -1307,7 +1375,7 @@ if __name__ == "__main__":
 # return {key: mean_roc(val) for key, val in results.items()}
 
 
-## In[ ]:
+# In[ ]:
 
 
 # this was in run_classes
