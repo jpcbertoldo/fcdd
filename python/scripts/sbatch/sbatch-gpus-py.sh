@@ -4,41 +4,44 @@
 #
 #SBATCH --job-name   gpus-py
  
-#SBATCH --partition  gpu-cmm
+#SBATCH --partition  cmm-gpu
 #SBATCH --gres       gpu:1
-#SBATCH --mem        32768
+#SBATCH --mem        32G
 
-#SBATCH --output     log/%x-%N-%j.log
+# Variables d'environnement (juste des variables...)
+#BATCH  --export     ALL
  
+# Fichier de sortie de ce script (stdout + stderr)
+#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/%x-%N-%j.log
+
 # tous les evenements pertinents seront envoyes par email a cette adresse
 #SBATCH --mail-type  ALL
-# SBATCH --mail-user joao-paulo.casagrande_bertoldo@mines-paristech.fr
+#SBATCH --mail-user joaopcbertoldo@gmail.com
  
 # obs : la ligne suivante est necessaire pour forces l'exécution 
 . $HOME/.bashrc
+
  
 # Decomenter et definir le repertoire de travail
 WorkDir=$HOME/fcdd/python/fcdd
 cd $WorkDir
-
 echo "pwd = $(pwd)"
 
-mkdir -p log
+# mkdir -p log
  
 Node=$(hostname)
+echo "Node=${Node}"
  
 # ajoute modules CUDA
-module add cuda90
-module add cuda90/blas
-module add cuda90/toolkit
+# module add cuda90
+# module add cuda90/blas
+# module add cuda90/toolkit
  
 # use my local conda
 source ${HOME}/init-conda-bash
-
 echo "which conda = $(which conda)"
 
-conda activate fcdd_rc21_torch181
-
+conda activate fcdd_rc21
 echo "\$CONDA_DEFAULT_ENV = $CONDA_DEFAULT_ENV"
 
 echo "nvidia-smi"
@@ -48,13 +51,11 @@ echo ""
 echo "nvcc --version = $(nvcc --version)"
 echo ""
 
-JNAME="${SLURM_JOB_NAME}-${SLURM_JOB_ID}"
-
+JNAME="${SLURM_JOB_NAME}-${Node}-${SLURM_JOB_ID}"
 echo "\$JNAME = $JNAME"
  
 # code de calcul
 # Noter 
 
 echo "which python = $(which python)"
-
 python ../scripts/gpus.py $* > $HOME/log/$JNAME.out 2>&1

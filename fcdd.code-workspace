@@ -3,10 +3,10 @@
 		{
 			"path": "."
 		},
-		// {
-		// 	"name": "thalassa:log",
-		// 	"path": "/cbio/donnees/jpcasagrande/log"
-		// },
+		{
+			// "name": "thalassa:log",
+			"path": "/cluster/CMM/home/jcasagrandebertoldo/log"
+		},
 		// {
 		// 	"name": "cuda:log",
 		// 	"path": "/home/bertoldo/log"
@@ -15,10 +15,15 @@
 		// 	"name": "cuda:log:mem-use",
 		// 	"path": "/home/bertoldo/log/fcdd-memory-usage"
 		// },
+		// {
+		// 	"name": "cuda:home",
+		// 	"path": "/home/bertoldo"
+		// },,
 		{
-			"name": "cuda:home",
-			"path": "/home/bertoldo"
+			"name": "thalassa:home",
+			"path": "/cluster/CMM/home/jcasagrandebertoldo"
 		},
+		
 	],
 	"settings": {
 		"files.exclude": {
@@ -34,7 +39,7 @@
 	},
 	"launch": {
 		"version": "0.2.0",
-		"configurations": [    
+		"configurations": [    	
 			{
 				"name": "[fcdd] train mvtec",
 				"python": "/home/bertoldo/miniconda3/envs/fcdd_rc21/bin/python",

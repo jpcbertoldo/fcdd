@@ -107,7 +107,7 @@ def dataset_class_labels(dataset_name: str) -> List[str]:
 
 
 def dataset_nclasses(dataset_name: str) -> int:
-    return len(dataset_class_labels[dataset_name])
+    return len(dataset_class_labels(dataset_name))
 
 
 def dataset_class_index(dataset_name: str, class_name: str) -> int:
