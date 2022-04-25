@@ -25,19 +25,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple
 
-from scipy.interpolate import interp1d
-import numpy as np
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from fcdd.models import choices, load_nets
+import torchvision
+# from fcdd.models import choices, load_nets
 from fcdd.models.bases import BaseNet, FCDDNet, ReceptiveNet
 from fcdd.util.logging import Logger
 from fcdd.util.logging import colorize as colorize_img
 from kornia import gaussian_blur2d
-from sklearn.metrics import roc_auc_score, roc_curve, auc
+from scipy.interpolate import interp1d
+from sklearn.metrics import auc, roc_auc_score, roc_curve
 from torch import Tensor
+from torch.hub import load_state_dict_from_url
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.optim.optimizer import Optimizer
 from torch.utils.data.dataloader import DataLoader
@@ -95,7 +97,7 @@ NOISE_MODES = [
 # In[]:
 # # datasets
 
-from mvtec_dataset import ADMvTec, TorchvisionDataset
+from mvtec_dataset import ADMvTec
 
 DATASET_CHOICES = ('mvtec',)
 
@@ -126,7 +128,81 @@ PREPROCESSING_CHOICES = tuple(set.union(*[
     for dataset_name in DATASET_CHOICES
 ]))
 
+# In[]:
+# # model
 
+# In[]:
+
+class FCDD_CNN224_VGG(FCDDNet):
+    """
+    # VGG_11BN based net with most of the VGG layers having weights 
+    # pretrained on the ImageNet classification task.
+    # these weights get frozen, i.e., the weights will not get updated during training
+    """
+
+    def __init__(self, in_shape, **kwargs):
+        
+        super().__init__(in_shape, **kwargs)
+        assert self.bias, 'VGG net is only supported with bias atm!'
+        
+        state_dict = load_state_dict_from_url(
+            torchvision.models.vgg.model_urls['vgg11_bn'],
+            model_dir=pt.join(pt.dirname(__file__), '..', '..', '..', 'data', 'models')
+        )
+        features_state_dict = {k[9:]: v for k, v in state_dict.items() if k.startswith('features')}
+
+        self.features = nn.Sequential(
+            self._create_conv2d(3, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            self._create_maxpool2d(2, 2),
+            self._create_conv2d(64, 128, 3, 1, 1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True),
+            self._create_maxpool2d(2, 2),
+            self._create_conv2d(128, 256, 3, 1, 1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True),
+            self._create_conv2d(256, 256, 3, 1, 1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True),
+            self._create_maxpool2d(2, 2),
+            # Frozen version freezes up to here
+            self._create_conv2d(256, 512, 3, 1, 1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(True),
+            self._create_conv2d(512, 512, 3, 1, 1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(True),
+            # CUT
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(512, 512, 3, 1, 1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(True),
+            nn.Conv2d(512, 512, 3, 1, 1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(True),
+            nn.MaxPool2d(2, 2)
+        )
+        self.features.load_state_dict(features_state_dict)
+        self.features = self.features[:-8]
+
+        self.conv_final = self._create_conv2d(512, 1, 1)
+        
+        for m in self.features[:15]:
+            for p in m.parameters():
+                p.requires_grad = False
+
+    def forward(self, x, ad=True):
+        x = self.features(x)
+        if ad:
+            x = self.conv_final(x)
+        return x
+   
+   
+MODEL_CLASSES = {
+    "FCDD_CNN224_VGG": FCDD_CNN224_VGG,
+}
 # In[]:
 # # args
 
@@ -195,7 +271,7 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
     )
     parser.add_argument('-d', '--dataset', type=str, default='custom', choices=DATASET_CHOICES)
     parser.add_argument(
-        '-n', '--net', type=str, default='FCDD_CNN224_VGG_F', choices=choices(),
+        '-n', '--net', type=str, default='FCDD_CNN224_VGG', choices=MODEL_CLASSES.keys(),
         help='Chooses a network architecture to train.'
     )
     parser.add_argument(
@@ -285,7 +361,7 @@ def default_parser_config_mvtec(parser: ArgumentParser) -> ArgumentParser:
         epochs=200, 
         preproc='lcnaug1',
         quantile=0.99, 
-        net='FCDD_CNN224_VGG_F', 
+        net='FCDD_CNN224_VGG', 
         dataset='mvtec', 
         noise_mode='confetti',
     )
@@ -333,6 +409,7 @@ def args_post_parse(args_):
 
 # In[]:
 # # setup
+
 
 # In[5]:
 
@@ -442,9 +519,15 @@ def trainer_setup(
     loaders = ds.loaders(batch_size=batch_size, num_workers=workers)
     
     # ================================ NET ================================
-    net = load_nets(name=net, in_shape=ds.shape, bias=bias)
-    net = net.to(device)
+    # net = load_nets(name=net, in_shape=ds.shape, bias=bias)
     
+    try:
+        # ds.shape: of the inputs the model expects (n x c x h x w).
+        net = MODEL_CLASSES[net](ds.shape, bias=bias).to(device)
+    
+    except KeyError:
+        raise KeyError(f'Model {net} is not implemented!')  
+        
     # ================================ OPTIMIZER ================================
     if optimizer_type == 'sgd':
         optimizer = optim.SGD(net.parameters(), lr=learning_rate, weight_decay=weight_decay, momentum=0.9, nesterov=True)
@@ -504,6 +587,10 @@ def trainer_setup(
         blur_heatmaps=blur_heatmaps,
     )
 
+
+# %%
+
+# %%
 
 # In[]:
 # # trainer
@@ -585,10 +672,6 @@ class FCDDTrainer:
         """ Reduces the anomaly score to be a score per image (detection). """
         return ascore.reshape(ascore.size(0), -1).mean(1)
 
-    def reduce_pixelwise_ascore(self, ascore: Tensor) -> Tensor:
-        """ Reduces the anomaly score to be a score per pixel (explanation). """
-        return ascore.mean(1).unsqueeze(1)
-
     def train(self, epochs: int, acc_batches=1, wandb=None) -> BaseNet:
         """
         Does epochs many full iteration of the data loader and trains the network with the data using self.loss.
@@ -668,11 +751,12 @@ class FCDDTrainer:
 
         return self.net
 
-    def test(self, specific_viz_ids: Tuple[List[int], List[int]] = (), train_data=True, subdir='.') -> dict:
+    def test(self, net, data_loader, logger, heatmap_name, subdir='.') -> dict:
         """
-        Does a full iteration of the data loaders, remembers all data (i.e. inputs, labels, outputs, loss),
-        and computes scores and heatmaps with it. Scores and heatmaps are computed for both, the training
-        and the test data. For each, one heatmap picture is generated that contains (row-wise):
+        Does a full iteration of a data loader, remembers all data (i.e. inputs, labels, outputs, loss),
+        and computes scores and heatmaps with it. 
+        
+        For each, one heatmap picture is generated that contains (row-wise):
             -   The first 20 nominal samples (label == 0, if nominal_label==1 this shows anomalies instead).
             -   The first 20 anomalous samples (label == 1, if nominal_label==1 this shows nominal samples instead).
                 The :func:`reorder` takes care that the first anomalous test samples are not all from the same class.
@@ -680,13 +764,17 @@ class FCDDTrainer:
                 the 10 most anomalous rated samples from the nominal set on the right.
             -   The 10 most nominal rated samples from the anomalous set on the left and
                 the 10 most anomalous  rated samples from the anomalous set on the right.
-        Additionally, for the test set only, four heatmap pictures are generated that show six samples with
-        increasing anomaly score from left to right. Thereby the leftmost heatmap shows the most nominal rated example
-        and the rightmost sample the most anomalous rated one. There are two heatmaps for the anomalous set and
-        two heatmaps for the nominal set. Both with either local normalization -- i.e. each heatmap is normalized
-        w.r.t itself only, there is a complete red and complete blue pixel in each heatmap -- or semi-global
-        normalization -- each heatmap is normalized w.r.t. to all heatmaps shown in the picture.
-        These four heatmap pictures are also stored as tensors in a 'tim' subdirectory for later usage.
+        
+                            Four heatmap pictures are generated that show six samples with increasing anomaly score from left to right. 
+                            I.E.: the leftmost heatmap shows the most nominal rated example and the rightmost sample the most anomalous rated one. 
+                            
+                            There are two heatmaps for the anomalous set and two heatmaps for the nominal set. 
+                            Both with either local normalization -- i.e. each heatmap is normalized w.r.t itself only, 
+                            there is a complete red and complete blue pixel in each heatmap -- or semi-global normalization -- 
+                            each heatmap is normalized w.r.t. to all heatmaps shown in the picture.
+                            
+                            These four heatmap pictures are also stored as tensors in a 'tim' subdirectory for later usage.
+        
         The score computes AUC values and complete ROC curves for detection. It also computes explanation ROC curves
         if ground-truth maps are available.
 
@@ -697,195 +785,131 @@ class FCDDTrainer:
                 'tpr': [], 'fpr': [], 'ths': [], 'auc': int, ...
             }.
         """
-        self.net = self.net.to(self.device).eval()
-
-        if train_data:
-            self.logger.print('Test training data...', fps=False)
-            labels, loss, anomaly_scores, imgs, outputs, gtmaps, grads = self._gather_data(
-                self.train_loader
-            )
-            self.heatmap_generation(labels, anomaly_scores, imgs, gtmaps, grads, name='train_heatmaps',)
-            
-        else:
-            self.logger.print('Test training data SKIPPED', fps=False)
-
-        self.logger.print('Test test data...', fps=False)
-        labels, loss, anomaly_scores, imgs, outputs, gtmaps, grads = self._gather_data(
-            self.test_loader,
-        )
+        net = net.to(self.device).eval()
         
-        def reorder(labels: List[int], loss: Tensor, anomaly_scores: Tensor, imgs: Tensor, outputs: Tensor, gtmaps: Tensor,
-                    grads: Tensor, ds: Dataset = None) -> Tuple[List[int], Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
-            """ returns all inputs in an identical new order if the dataset offers a predefined (random) order """
-            if ds is not None and hasattr(ds, 'fixed_random_order'):
-                assert gtmaps is None,                     'original gtmaps loaded in score do not know order! Hence reordering is not allowed for GT datasets'
-                o = ds.fixed_random_order
-                labels = labels[o] if isinstance(labels, (Tensor, np.ndarray)) else np.asarray(labels)[o].tolist()
-                loss, anomaly_scores, imgs = loss[o], anomaly_scores[o], imgs[o]
-                outputs, gtmaps = outputs[o], gtmaps
-                grads = grads[o] if grads is not None else None
-            return labels, loss, anomaly_scores, imgs, outputs, gtmaps, grads
+        logger.print('Testing data split `test`', fps=False)
         
-        labels, loss, anomaly_scores, imgs, outputs, gtmaps, grads = reorder(
-            labels, loss, anomaly_scores, imgs, outputs, gtmaps, grads, ds=self.test_loader.dataset
-        )
-        self.heatmap_generation(labels, anomaly_scores, imgs, gtmaps, grads, name='test_heatmaps',)
-
-        with torch.no_grad():
-            sc = self.score(labels, anomaly_scores, imgs, outputs, gtmaps, grads, subdir=subdir)
-        return sc
-
-    def _gather_data(self, loader: DataLoader,
-                     gather_all=False) -> Tuple[List[int], Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
         all_labels, all_loss, all_anomaly_scores, all_imgs, all_outputs = [], [], [], [], []
-        all_gtmaps, all_grads = [], []
-        for n_batch, data in enumerate(loader):
+        all_gtmaps = []
+        
+        for n_batch, data in enumerate(data_loader):
+            
             inputs, labels, gtmaps = data
             all_gtmaps.append(gtmaps)
-            bk_inputs = inputs.detach().clone()
+
+            # return outputs, loss, anomaly_score, grads
+            # outputs, loss, anomaly_score, grads = self._regular_forward(inputs, labels)
             inputs = inputs.to(self.device)
-            if gather_all:
-                outputs, loss, anomaly_score, _ = self._regular_forward(inputs, labels)
-                inputs = bk_inputs.clone().to(self.device)
-                _, _, _, grads = self._grad_forward(inputs, labels)
-            else:
-                outputs, loss, anomaly_score, grads = self._regular_forward(inputs, labels)
+            with torch.no_grad():
+                outputs = net(inputs)
+                loss = self.loss(outputs, inputs, labels)
+                anomaly_score = self.anomaly_score(loss)
+            
             all_labels += labels.detach().cpu().tolist()
             all_loss.append(loss.detach().cpu())
             all_anomaly_scores.append(anomaly_score.detach().cpu())
             all_imgs.append(inputs.detach().cpu())
             all_outputs.append(outputs.detach().cpu())
-            if grads is not None:
-                all_grads.append(grads.detach().cpu())
-            self.logger.print(
-                'TEST {:04d}/{:04d} ID {}{}'.format(
-                    n_batch, len(loader), str(self.__class__)[8:-2],
-                    ' NCLS {}'.format(loader.dataset.normal_classes)
-                    if hasattr(loader.dataset, 'normal_classes') else ''
-                ),
-                fps=True
-            )
+            
+            logger.print(f'TEST {n_batch:04d}/{len(data_loader):04d}', fps=True)
+            
         all_imgs = torch.cat(all_imgs)
         all_outputs = torch.cat(all_outputs)
         all_gtmaps = torch.cat(all_gtmaps) if len(all_gtmaps) > 0 else None
         all_loss = torch.cat(all_loss)
         all_anomaly_scores = torch.cat(all_anomaly_scores)
-        all_grads = torch.cat(all_grads) if len(all_grads) > 0 else None
-        ret = (
-            all_labels, all_loss, all_anomaly_scores, all_imgs, all_outputs, all_gtmaps,
-            all_grads
+        
+        # change variable names because i got rid of a function that did this before
+        # labels, loss, anomaly_scores, imgs, outputs, gtmaps, grads = gather_data(data_loader,)
+        labels, loss, anomaly_scores, imgs, outputs, gtmaps = all_labels, all_loss, all_anomaly_scores, all_imgs, all_outputs, all_gtmaps
+        
+        def reorder(
+            labels: List[int], 
+            loss: Tensor, 
+            anomaly_scores: Tensor, 
+            imgs: Tensor, 
+            outputs: Tensor, 
+            gtmaps: Tensor,
+            ds: Dataset = None
+        ) -> Tuple[List[int], Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+            """ returns all inputs in an identical new order if the dataset offers a predefined (random) order """
+            if ds is not None and hasattr(ds, 'fixed_random_order'):
+                assert gtmaps is None, 'original gtmaps loaded in score do not know order! Hence reordering is not allowed for GT datasets'
+                o = ds.fixed_random_order
+                labels = labels[o] if isinstance(labels, (Tensor, np.ndarray)) else np.asarray(labels)[o].tolist()
+                loss, anomaly_scores, imgs = loss[o], anomaly_scores[o], imgs[o]
+                outputs, gtmaps = outputs[o], gtmaps
+            return labels, loss, anomaly_scores, imgs, outputs, gtmaps
+        
+        labels, loss, anomaly_scores, imgs, outputs, gtmaps = reorder(
+            labels=labels,
+            loss=loss,
+            anomaly_scores=anomaly_scores,
+            imgs=imgs,
+            outputs=outputs,
+            gtmaps=gtmaps,
+            ds=data_loader.dataset,
         )
-        return ret
+        
+        self.heatmap_generation(
+            labels=labels,
+            ascores=anomaly_scores,
+            imgs=imgs,
+            gtmaps=gtmaps,
+            name=heatmap_name,
+            subdir=subdir,
+        )
 
-    def _regular_forward(self, inputs: Tensor, labels: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         with torch.no_grad():
-            outputs = self.net(inputs)
-            loss = self.loss(outputs, inputs, labels)
-            anomaly_score = self.anomaly_score(loss)
-            grads = None
-        return outputs, loss, anomaly_score, grads
-
-    def _grad_forward(self, inputs: Tensor, labels: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        inputs.requires_grad = True
-        outputs = self.net(inputs)
-        loss = self.loss(outputs, inputs, labels)
-        anomaly_score = self.anomaly_score(loss)
-        grads = self.net.get_grad_heatmap(loss, inputs)
-        inputs.requires_grad = False
-        self.opt.zero_grad()
-        return outputs, loss, anomaly_score, grads
-
-    def score(self, labels: List[int], ascores: Tensor, imgs: Tensor, outs: Tensor, gtmaps: Tensor = None,
-              grads: Tensor = None, subdir='.') -> dict:
-        """
-        Computes the ROC curves and the AUC for detection performance.
-        Also computes those for the explanation performance if ground-truth maps are available.
-        :param labels: labels
-        :param ascores: anomaly scores
-        :param imgs: input images
-        :param outs: outputs of the neural network
-        :param gtmaps: ground-truth maps (can be None)
-        :param grads: gradients of anomaly scores w.r.t. inputs (can be None)
-        :param subdir: subdirectory to store the data in (plots and numbers)
-        :return:  A dictionary of ROC results, each ROC result is again represented by a dictionary of the form: {
-                'tpr': [], 'fpr': [], 'ths': [], 'auc': int, ...
-            }.
-        """
-        # Logging
-        self.logger.print('Computing test score...')
-        if torch.isnan(ascores).sum() > 0:
-            self.logger.logtxt('Could not compute test scores, since anomaly scores contain nan values!!!', True)
-            return None
-        red_ascores = self.reduce_ascore(ascores).tolist()
-        std = self.gauss_std
-
-        # Overall ROC for sample-wise anomaly detection
-        fpr, tpr, thresholds = roc_curve(labels, red_ascores)
-        roc_score = roc_auc_score(labels, red_ascores)
-        roc_res = {'tpr': tpr, 'fpr': fpr, 'ths': thresholds, 'auc': roc_score}
-        self.logger.single_plot(
-            'roc_curve', tpr, fpr, xlabel='false positive rate', ylabel='true positive rate',
-            legend=['auc={}'.format(roc_score)], subdir=subdir
-        )
-        self.logger.single_save('roc', roc_res, subdir=subdir)
-        self.logger.logtxt('##### ROC TEST SCORE {} #####'.format(roc_score), print=True)
-
-        # GTMAPS pixel-wise anomaly detection = explanation performance
-        gtmap_roc_res, gtmap_prc_res = None, None
-        use_grads = grads is not None
-        if gtmaps is not None:
-            try:
-                self.logger.print('Computing GT test score...')
-                ascores = self.reduce_pixelwise_ascore(ascores) if not use_grads else grads
-                gtmaps = self.test_loader.dataset.dataset.get_original_gtmaps_normal_class()
-                if isinstance(self.net, ReceptiveNet):  # Receptive field upsampling for FCDD nets
-                    ascores = self.net.receptive_upsample(ascores, std=std)
-                # Further upsampling for original dataset size
-                ascores = torch.nn.functional.interpolate(ascores, (gtmaps.shape[-2:]))
-                flat_gtmaps, flat_ascores = gtmaps.reshape(-1).int().tolist(), ascores.reshape(-1).tolist()
-                gtfpr, gttpr, gtthresholds = roc_curve(
-                    y_true=flat_gtmaps, 
-                    y_score=flat_ascores,
-                    drop_intermediate=True,
-                )
+            
+            # GTMAPS pixel-wise anomaly detection = explanation performance
+            logger.print('Computing GT test score...')
+            # Reduces the anomaly score to be a score per pixel (explanation)
+            # self.reduce_pixelwise_ascore(anomaly_scores) if not use_grads else grads
+            anomaly_scores = anomaly_scores.mean(1).unsqueeze(1)
+            gtmaps = self.test_loader.dataset.dataset.get_original_gtmaps_normal_class()
+            
+            if isinstance(self.net, ReceptiveNet):  # Receptive field upsampling for FCDD nets
+                anomaly_scores = self.net.receptive_upsample(anomaly_scores, std=self.gauss_std)
                 
-                # reduce the number of points of the ROC curve
-                ROC_LIMIT_NUMBER_OF_POINTS = 6000
-                ROC_INTERPOLATION_NUMBER_OF_POINTS = 3000
-                roc_npoints = gtthresholds.shape[0]
-                if roc_npoints > ROC_LIMIT_NUMBER_OF_POINTS:
-                    
-                    func_fpr = interp1d(gtthresholds, gtfpr, kind='linear')
-                    func_tpr = interp1d(gtthresholds, gttpr, kind='linear')
-
-                    thmin, thmax = np.min(gtthresholds), np.max(gtthresholds)
-                    gtthresholds = np.linspace(thmin, thmax, ROC_INTERPOLATION_NUMBER_OF_POINTS, endpoint=True)
-                    
-                    gtfpr = func_fpr(gtthresholds)
-                    gttpr = func_tpr(gtthresholds)
+            # Further upsampling for original dataset size
+            anomaly_scores = torch.nn.functional.interpolate(anomaly_scores, (gtmaps.shape[-2:]))
+            flat_gtmaps, flat_ascores = gtmaps.reshape(-1).int().tolist(), anomaly_scores.reshape(-1).tolist()
+            gtfpr, gttpr, gtthresholds = roc_curve(
+                y_true=flat_gtmaps, 
+                y_score=flat_ascores,
+                drop_intermediate=True,
+            )
+            
+            # reduce the number of points of the ROC curve
+            ROC_LIMIT_NUMBER_OF_POINTS = 6000
+            ROC_INTERPOLATION_NUMBER_OF_POINTS = 3000
+            roc_npoints = gtthresholds.shape[0]
+            if roc_npoints > ROC_LIMIT_NUMBER_OF_POINTS:
                 
-                gt_roc_score = auc(gtfpr, gttpr)
-                gtmap_roc_res = {'tpr': gttpr, 'fpr': gtfpr, 'ths': gtthresholds, 'auc': gt_roc_score}
-                
-                self.logger.single_plot(
-                    'gtmap_roc_curve', 
-                    gttpr, 
-                    gtfpr, 
-                    xlabel='false positive rate', 
-                    ylabel='true positive rate',
-                    legend=['auc={}'.format(gt_roc_score)], 
-                    subdir=subdir
-                )
-                self.logger.single_save(
-                    'gtmap_roc', 
-                    gtmap_roc_res, 
-                    subdir=subdir,
-                )
-                self.logger.logtxt('##### GTMAP ROC TEST SCORE {} #####'.format(gt_roc_score), print=True)
-            except AssertionError as e:
-                self.logger.warning(f'Skipped computing the gtmap ROC score. {str(e)}')
+                func_fpr = interp1d(gtthresholds, gtfpr, kind='linear')
+                func_tpr = interp1d(gtthresholds, gttpr, kind='linear')
 
-        return {'roc': roc_res, 'gtmap_roc': gtmap_roc_res}
+                thmin, thmax = np.min(gtthresholds), np.max(gtthresholds)
+                gtthresholds = np.linspace(thmin, thmax, ROC_INTERPOLATION_NUMBER_OF_POINTS, endpoint=True)
+                
+                gtfpr = func_fpr(gtthresholds)
+                gttpr = func_tpr(gtthresholds)
+            
+            gt_roc_score = auc(gtfpr, gttpr)
+            logger.logtxt(f'##### GTMAP ROC TEST SCORE {gt_roc_score} #####', print=True)
+            logger.single_plot(
+                'gtmap_roc_curve', 
+                gttpr, 
+                gtfpr, 
+                xlabel='false positive rate', 
+                ylabel='true positive rate',
+                legend=['auc={}'.format(gt_roc_score)], 
+                subdir=subdir
+            )
+            gtmap_roc_res = {'tpr': gttpr, 'fpr': gtfpr, 'ths': gtthresholds, 'auc': gt_roc_score}
+            logger.single_save('gtmap_roc', gtmap_roc_res, subdir=subdir,)
+        return {'gtmap_roc': gtmap_roc_res}
 
     def heatmap_generation(
         self, 
@@ -930,27 +954,26 @@ class FCDDTrainer:
 
         # Concise paper picture: Samples grow from most nominal to most anomalous (equidistant).
         # 2 versions: with local normalization and semi-global normalization
-        if 'train' not in name:
-            res = self.resdown * 2  ## Increase resolution limit because there are only a few heatmaps shown here
-            rascores = self.reduce_ascore(ascores)
-            inpshp = imgs.shape
-            for l in sorted(set(labels)):
-                lid = set((torch.from_numpy(np.asarray(labels)) == l).nonzero().squeeze(-1).tolist())
-                if len(lid) < 1:
-                    break
-                k = min(show_per_cls // 3, len(lid))
-                sort = [
-                    i for i in np.argsort(rascores.detach().reshape(rascores.size(0), -1).sum(1)).tolist() if i in lid
-                ]
-                splits = np.array_split(sort, k)
-                idx = [s[int(n / (k - 1) * len(s)) if n != len(splits) - 1 else -1] for n, s in enumerate(splits)]
-                self.logger.logtxt(
-                    'Interpretation visualization paper image {} indicies for label {}: {}'
-                    .format('{}_paper_lbl{}'.format(name, l), l, idx)
-                )
-                self._create_singlerow_heatmaps_picture(
-                    idx, name, inpshp, l, subdir, res, imgs, ascores, grads, gtmaps, labels
-                )
+        res = self.resdown * 2  ## Increase resolution limit because there are only a few heatmaps shown here
+        rascores = self.reduce_ascore(ascores)
+        inpshp = imgs.shape
+        for l in sorted(set(labels)):
+            lid = set((torch.from_numpy(np.asarray(labels)) == l).nonzero().squeeze(-1).tolist())
+            if len(lid) < 1:
+                break
+            k = min(show_per_cls // 3, len(lid))
+            sort = [
+                i for i in np.argsort(rascores.detach().reshape(rascores.size(0), -1).sum(1)).tolist() if i in lid
+            ]
+            splits = np.array_split(sort, k)
+            idx = [s[int(n / (k - 1) * len(s)) if n != len(splits) - 1 else -1] for n, s in enumerate(splits)]
+            self.logger.logtxt(
+                'Interpretation visualization paper image {} indicies for label {}: {}'
+                .format('{}_paper_lbl{}'.format(name, l), l, idx)
+            )
+            self._create_singlerow_heatmaps_picture(
+                idx, name, inpshp, l, subdir, res, imgs, ascores, grads, gtmaps, labels
+            )
 
     def _create_heatmaps_picture(self, idx: List[int], name: str, inpshp: torch.Size, subdir: str,
                                  nrow: int, imgs: Tensor, ascores: Tensor, grads: Tensor, gtmaps: Tensor,
@@ -1200,7 +1223,7 @@ def use_wandb() -> bool:
 # In[21]:
 
 # the names come from trainer.test()
-RunResults = namedtuple('RunResults', ["roc", "gtmap_roc",])
+RunResults = namedtuple('RunResults', ["gtmap_roc",])
 
 
 def run_one(it, **kwargs):
@@ -1276,13 +1299,15 @@ def run_one(it, **kwargs):
         )
 
         if test and (epochs > 0 or load_snapshot is not None):
-            ret = trainer.test()  # keys = {roc, gtmap_roc}
-            return RunResults(
-                roc=ret["roc"],
-                gtmap_roc=ret["gtmap_roc"],
-            )
+            ret = trainer.test(
+                net=trainer.net, 
+                data_loader=trainer.test_loader, 
+                heatmap_name='test_heatmaps',
+                logger=trainer.logger,
+            )  # keys = {roc, gtmap_roc}
+            return RunResults(gtmap_roc=ret["gtmap_roc"],)
         else:
-            return RunResults({}, {})
+            return RunResults({})
         
     except:
         setup.logger.printlog += traceback.format_exc()
