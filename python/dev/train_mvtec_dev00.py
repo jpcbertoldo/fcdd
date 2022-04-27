@@ -195,7 +195,6 @@ class FCDDNet(ReceptiveNet):
         else:
             return loss  # here it is always loss map
 
-
 class FCDD_CNN224_VGG(FCDDNet):
     """
     # VGG_11BN based net with most of the VGG layers having weights 
@@ -258,6 +257,7 @@ class FCDD_CNN224_VGG(FCDDNet):
 
     def forward(self, x, ad=True):
         x = self.features(x)
+        if ad:
             x = self.conv_final(x)
         return x
        
@@ -1429,24 +1429,6 @@ def run_one(it, **kwargs):
     with wandb_init(
         name=f"{logdir.parent.parent.name}.{logdir.parent.name}.{logdir.name}",
         project=wandb_project, 
-            project=wandb_project, 
-        project=wandb_project, 
-            project=wandb_project, 
-        project=wandb_project, 
-            project=wandb_project, 
-        project=wandb_project, 
-            project=wandb_project, 
-        project=wandb_project, 
-            project=wandb_project, 
-        project=wandb_project, 
-            project=wandb_project, 
-        project=wandb_project, 
-            project=wandb_project, 
-        project=wandb_project, 
-            project=wandb_project, 
-        project=wandb_project, 
-            project=wandb_project, 
-        project=wandb_project, 
         entity="mines-paristech-cmm",
         config={**kwargs, **dict(it=it)},
         tags=wandb_tags,
@@ -1512,24 +1494,6 @@ def run_one(it, **kwargs):
                 train_loader=setup.train_loader,
                 device=setup.device,
                 epochs=epochs - epoch_start, 
-            epochs=epochs - epoch_start, 
-                epochs=epochs - epoch_start, 
-            epochs=epochs - epoch_start, 
-                epochs=epochs - epoch_start, 
-            epochs=epochs - epoch_start, 
-                epochs=epochs - epoch_start, 
-            epochs=epochs - epoch_start, 
-                epochs=epochs - epoch_start, 
-            epochs=epochs - epoch_start, 
-                epochs=epochs - epoch_start, 
-            epochs=epochs - epoch_start, 
-                epochs=epochs - epoch_start, 
-            epochs=epochs - epoch_start, 
-                epochs=epochs - epoch_start, 
-            epochs=epochs - epoch_start, 
-                epochs=epochs - epoch_start, 
-            epochs=epochs - epoch_start, 
-                epochs=epochs - epoch_start, 
                 acc_batches=acc_batches,
                 wandb=run, 
             )
@@ -1582,63 +1546,9 @@ def run_one(it, **kwargs):
                     vega_spec_name="wandb/area-under-curve/v0",
                     data_table=wandb.Table(
                         columns=["class", "fpr", "tpr"], 
-                            columns=["class", "fpr", "tpr"], 
-                        columns=["class", "fpr", "tpr"], 
-                            columns=["class", "fpr", "tpr"], 
-                        columns=["class", "fpr", "tpr"], 
-                            columns=["class", "fpr", "tpr"], 
-                        columns=["class", "fpr", "tpr"], 
-                            columns=["class", "fpr", "tpr"], 
-                        columns=["class", "fpr", "tpr"], 
-                            columns=["class", "fpr", "tpr"], 
-                        columns=["class", "fpr", "tpr"], 
-                            columns=["class", "fpr", "tpr"], 
-                        columns=["class", "fpr", "tpr"], 
-                            columns=["class", "fpr", "tpr"], 
-                        columns=["class", "fpr", "tpr"], 
-                            columns=["class", "fpr", "tpr"], 
-                        columns=["class", "fpr", "tpr"], 
-                            columns=["class", "fpr", "tpr"], 
-                        columns=["class", "fpr", "tpr"], 
                         data=[
                             [normal_class_label, fpr_, tpr_] 
-                                [normal_class_label, fpr_, tpr_] 
-                            [normal_class_label, fpr_, tpr_] 
-                                [normal_class_label, fpr_, tpr_] 
-                            [normal_class_label, fpr_, tpr_] 
-                                [normal_class_label, fpr_, tpr_] 
-                            [normal_class_label, fpr_, tpr_] 
-                                [normal_class_label, fpr_, tpr_] 
-                            [normal_class_label, fpr_, tpr_] 
-                                [normal_class_label, fpr_, tpr_] 
-                            [normal_class_label, fpr_, tpr_] 
-                                [normal_class_label, fpr_, tpr_] 
-                            [normal_class_label, fpr_, tpr_] 
-                                [normal_class_label, fpr_, tpr_] 
-                            [normal_class_label, fpr_, tpr_] 
-                                [normal_class_label, fpr_, tpr_] 
-                            [normal_class_label, fpr_, tpr_] 
-                                [normal_class_label, fpr_, tpr_] 
-                            [normal_class_label, fpr_, tpr_] 
                             for fpr_, tpr_ in zip(
-                                rr.gtmap_roc["fpr"], 
-                                    rr.gtmap_roc["fpr"], 
-                                rr.gtmap_roc["fpr"], 
-                                    rr.gtmap_roc["fpr"], 
-                                rr.gtmap_roc["fpr"], 
-                                    rr.gtmap_roc["fpr"], 
-                                rr.gtmap_roc["fpr"], 
-                                    rr.gtmap_roc["fpr"], 
-                                rr.gtmap_roc["fpr"], 
-                                    rr.gtmap_roc["fpr"], 
-                                rr.gtmap_roc["fpr"], 
-                                    rr.gtmap_roc["fpr"], 
-                                rr.gtmap_roc["fpr"], 
-                                    rr.gtmap_roc["fpr"], 
-                                rr.gtmap_roc["fpr"], 
-                                    rr.gtmap_roc["fpr"], 
-                                rr.gtmap_roc["fpr"], 
-                                    rr.gtmap_roc["fpr"], 
                                 rr.gtmap_roc["fpr"], 
                                 rr.gtmap_roc["tpr"],
                             )
@@ -1658,63 +1568,9 @@ def run_one(it, **kwargs):
                     vega_spec_name="wandb/area-under-curve/v0",
                     data_table=wandb.Table(
                         columns=["class", "recall", "precision"], 
-                            columns=["class", "recall", "precision"], 
-                        columns=["class", "recall", "precision"], 
-                            columns=["class", "recall", "precision"], 
-                        columns=["class", "recall", "precision"], 
-                            columns=["class", "recall", "precision"], 
-                        columns=["class", "recall", "precision"], 
-                            columns=["class", "recall", "precision"], 
-                        columns=["class", "recall", "precision"], 
-                            columns=["class", "recall", "precision"], 
-                        columns=["class", "recall", "precision"], 
-                            columns=["class", "recall", "precision"], 
-                        columns=["class", "recall", "precision"], 
-                            columns=["class", "recall", "precision"], 
-                        columns=["class", "recall", "precision"], 
-                            columns=["class", "recall", "precision"], 
-                        columns=["class", "recall", "precision"], 
-                            columns=["class", "recall", "precision"], 
-                        columns=["class", "recall", "precision"], 
                         data=[
                             [normal_class_label, rec_, prec_] 
-                                [normal_class_label, rec_, prec_] 
-                            [normal_class_label, rec_, prec_] 
-                                [normal_class_label, rec_, prec_] 
-                            [normal_class_label, rec_, prec_] 
-                                [normal_class_label, rec_, prec_] 
-                            [normal_class_label, rec_, prec_] 
-                                [normal_class_label, rec_, prec_] 
-                            [normal_class_label, rec_, prec_] 
-                                [normal_class_label, rec_, prec_] 
-                            [normal_class_label, rec_, prec_] 
-                                [normal_class_label, rec_, prec_] 
-                            [normal_class_label, rec_, prec_] 
-                                [normal_class_label, rec_, prec_] 
-                            [normal_class_label, rec_, prec_] 
-                                [normal_class_label, rec_, prec_] 
-                            [normal_class_label, rec_, prec_] 
-                                [normal_class_label, rec_, prec_] 
-                            [normal_class_label, rec_, prec_] 
                             for rec_, prec_ in zip(
-                                rr.gtmap_pr["recall"], 
-                                    rr.gtmap_pr["recall"], 
-                                rr.gtmap_pr["recall"], 
-                                    rr.gtmap_pr["recall"], 
-                                rr.gtmap_pr["recall"], 
-                                    rr.gtmap_pr["recall"], 
-                                rr.gtmap_pr["recall"], 
-                                    rr.gtmap_pr["recall"], 
-                                rr.gtmap_pr["recall"], 
-                                    rr.gtmap_pr["recall"], 
-                                rr.gtmap_pr["recall"], 
-                                    rr.gtmap_pr["recall"], 
-                                rr.gtmap_pr["recall"], 
-                                    rr.gtmap_pr["recall"], 
-                                rr.gtmap_pr["recall"], 
-                                    rr.gtmap_pr["recall"], 
-                                rr.gtmap_pr["recall"], 
-                                    rr.gtmap_pr["recall"], 
                                 rr.gtmap_pr["recall"], 
                                 rr.gtmap_pr["precision"],
                             )
@@ -1741,24 +1597,6 @@ def run_one(it, **kwargs):
             # joao: i'm ignoring it to see what happens
             # and it was in the except clause of the BaseRunner.run_one()
             setup.logger.log_prints() 
-        setup.logger.log_prints() 
-            setup.logger.log_prints() 
-        setup.logger.log_prints() 
-            setup.logger.log_prints() 
-        setup.logger.log_prints() 
-            setup.logger.log_prints() 
-        setup.logger.log_prints() 
-            setup.logger.log_prints() 
-        setup.logger.log_prints() 
-            setup.logger.log_prints() 
-        setup.logger.log_prints() 
-            setup.logger.log_prints() 
-        setup.logger.log_prints() 
-            setup.logger.log_prints() 
-        setup.logger.log_prints() 
-            setup.logger.log_prints() 
-        setup.logger.log_prints() 
-            setup.logger.log_prints() 
             
             setup.logger.save()
             setup.logger.plot()
@@ -1766,92 +1604,10 @@ def run_one(it, **kwargs):
             # setup.logger.snapshot(trainer.net, trainer.opt, trainer.sched, epochs)
             train_setup_save_snapshot(
                 outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
-                net=setup.net, 
-            net=setup.net, 
-                net=setup.net, 
-            net=setup.net, 
-                net=setup.net, 
-            net=setup.net, 
-                net=setup.net, 
-            net=setup.net, 
-                net=setup.net, 
-            net=setup.net, 
-                net=setup.net, 
-            net=setup.net, 
-                net=setup.net, 
-            net=setup.net, 
-                net=setup.net, 
-            net=setup.net, 
-                net=setup.net, 
-            net=setup.net, 
                 net=setup.net, 
                 opt=setup.opt, 
-            opt=setup.opt, 
-                opt=setup.opt, 
-            opt=setup.opt, 
-                opt=setup.opt, 
-            opt=setup.opt, 
-                opt=setup.opt, 
-            opt=setup.opt, 
-                opt=setup.opt, 
-            opt=setup.opt, 
-                opt=setup.opt, 
-            opt=setup.opt, 
-                opt=setup.opt, 
-            opt=setup.opt, 
-                opt=setup.opt, 
-                sched=setup.sched, 
-            sched=setup.sched, 
-                sched=setup.sched, 
-            sched=setup.sched, 
-                sched=setup.sched, 
-            sched=setup.sched, 
-                sched=setup.sched, 
-            sched=setup.sched, 
-                sched=setup.sched, 
-            sched=setup.sched, 
-                sched=setup.sched, 
-            sched=setup.sched, 
-                sched=setup.sched, 
-            sched=setup.sched, 
-                sched=setup.sched, 
-            sched=setup.sched, 
-                sched=setup.sched, 
-            sched=setup.sched, 
                 sched=setup.sched, 
                 epoch=epochs,
-                # kwargs 
-            # kwargs 
-                # kwargs 
-            # kwargs 
-                # kwargs 
-            # kwargs 
-                # kwargs 
-            # kwargs 
-                # kwargs 
-            # kwargs 
-                # kwargs 
-            # kwargs 
-                # kwargs 
-            # kwargs 
-                # kwargs 
-            # kwargs 
-                # kwargs 
-            # kwargs 
                 # kwargs 
                 gauss_std=setup.gauss_std,
                 quantile=setup.quantile,
