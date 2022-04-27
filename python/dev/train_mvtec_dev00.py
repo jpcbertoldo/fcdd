@@ -26,16 +26,18 @@ from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import torchmetrics
 import torchvision
-# from fcdd.models import choices, load_nets
 from fcdd.models.bases import BaseNet, ReceptiveNet
 from fcdd.util.logging import Logger
 from fcdd.util.logging import colorize as colorize_img
 from kornia import gaussian_blur2d
+from pytorch_lightning.loggers import WandbLogger
 from scipy.interpolate import interp1d
 from sklearn.metrics import (auc, average_precision_score,
                              precision_recall_curve, roc_curve)
@@ -48,9 +50,13 @@ from torch.utils.data.dataset import Dataset
 
 import wandb
 
+from mvtec_dataset import ADMvTec
+
+
 # from fcdd.datasets.noise import kernel_size_to_std
 # from fcdd.training import balance_labels
 # from fcdd.training.setup import pick_opt_sched
+# from fcdd.models import choices, load_nets
 
 # # utils
 
@@ -103,8 +109,6 @@ NOISE_MODES = [
 
 # In[]:
 # # datasets
-
-from mvtec_dataset import ADMvTec
 
 DATASET_CHOICES = ('mvtec',)
 
@@ -191,6 +195,7 @@ class FCDDNet(ReceptiveNet):
         else:
             return loss  # here it is always loss map
 
+
 class FCDD_CNN224_VGG(FCDDNet):
     """
     # VGG_11BN based net with most of the VGG layers having weights 
@@ -253,7 +258,6 @@ class FCDD_CNN224_VGG(FCDDNet):
 
     def forward(self, x, ad=True):
         x = self.features(x)
-        if ad:
             x = self.conv_final(x)
         return x
        
@@ -412,6 +416,10 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument(
         "--wandb-tags", type=str, nargs='*', default=None,
         help="If set, the model will be logged to wandb with the given tags.",
+    )
+    parser.add_argument(
+        "--wandb-profile", action="store_true",
+        help="If set, the run will be profiled and sent to wandb."
     )
     return parser
 
@@ -1386,6 +1394,26 @@ def compute_gtmap_pr(
 RunResults = namedtuple('RunResults', ["gtmap_roc", "gtmap_pr",])
 
 
+from contextlib import contextmanager
+
+
+class NoWandb:
+    
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+    
+    def log(self, *args, **kwargs) -> None:
+        pass
+    
+
+@contextmanager
+def no_wandb_init(*args, **kwargs):
+    try:
+        yield NoWandb()
+    finally:
+        pass
+
+
 def run_one(it, **kwargs):
     """
     kwargs should contain all parameters of the setup function in training.setup
@@ -1394,31 +1422,51 @@ def run_one(it, **kwargs):
     
     wandb_project = kwargs.pop("wandb_project", None)
     wandb_tags = kwargs.pop("wandb_tags", None) or []
-    use_wandb = wandb_project is not None
-    
-    if use_wandb:
-        wandb.init(
-            name=f"{logdir.parent.parent.name}.{logdir.parent.name}.{logdir.name}",
-            project=wandb_project, 
-            entity="mines-paristech-cmm",
-            config={**kwargs, **dict(it=it)},
-            tags=wandb_tags,
-        )
-        
-    kwargs["logdir"] = str(logdir.absolute())
-    kwargs["datadir"] = str(Path(kwargs["datadir"]).absolute())
-    readme = kwargs.pop("readme")
-    kwargs['config'] = f'{json.dumps(kwargs)}\n\n{readme}'
+    wandb_profile = kwargs.pop("wandb_profile", False)
 
-    acc_batches = kwargs.pop('acc_batches', 1)
-    epochs = kwargs.pop('epochs')
-    load_snapshot = kwargs.pop('load', None)  # pre-trained model, path to model snapshot
-    test = kwargs.pop("test")
-    normal_class_label = kwargs.pop("normal_class_label")
-    
-    del kwargs["log_start_time_str"]
-    
-    try:
+    wandb_init = wandb.init if wandb_project is not None else no_wandb_init
+            
+    with wandb_init(
+        name=f"{logdir.parent.parent.name}.{logdir.parent.name}.{logdir.name}",
+        project=wandb_project, 
+            project=wandb_project, 
+        project=wandb_project, 
+            project=wandb_project, 
+        project=wandb_project, 
+            project=wandb_project, 
+        project=wandb_project, 
+            project=wandb_project, 
+        project=wandb_project, 
+            project=wandb_project, 
+        project=wandb_project, 
+            project=wandb_project, 
+        project=wandb_project, 
+            project=wandb_project, 
+        project=wandb_project, 
+            project=wandb_project, 
+        project=wandb_project, 
+            project=wandb_project, 
+        project=wandb_project, 
+        entity="mines-paristech-cmm",
+        config={**kwargs, **dict(it=it)},
+        tags=wandb_tags,
+    ) as run:
+        
+        # these pops must particularly come here
+        # after the wandb.init() so they are logged    
+        kwargs["logdir"] = str(logdir.absolute())
+        kwargs["datadir"] = str(Path(kwargs["datadir"]).absolute())
+        readme = kwargs.pop("readme")
+        kwargs['config'] = f'{json.dumps(kwargs)}\n\n{readme}'
+
+        acc_batches = kwargs.pop('acc_batches', 1)
+        epochs = kwargs.pop('epochs')
+        load_snapshot = kwargs.pop('load', None)  # pre-trained model, path to model snapshot
+        test = kwargs.pop("test")
+        normal_class_label = kwargs.pop("normal_class_label")
+        
+        del kwargs["log_start_time_str"]
+
         # this was the part
         # setup = trainer_setup(**kwargs)
         # trainer = SuperTrainer(**setup)
@@ -1449,32 +1497,46 @@ def run_one(it, **kwargs):
             device=setup.device,
             pixel_level_loss=setup.pixel_level_loss,
         )
-            
-    except:
-        if use_wandb:
-            wandb.finish()
-        raise
 
-    try:
-        # this was the part
-        # trainer.train(epochs, load, acc_batches=acc_batches)
-        # epochs: from kwargs, ok
-        # load: from kwargs, ok
-        # acc_batches: from kwargs, ok
-        trainer.train(
-            net=setup.net,
-            opt=setup.opt,
-            sched=setup.sched,
-            logger=setup.logger,
-            train_loader=setup.train_loader,
-            device=setup.device,
+        try:
+            # this was the part
+            # trainer.train(epochs, load, acc_batches=acc_batches)
+            # epochs: from kwargs, ok
+            # load: from kwargs, ok
+            # acc_batches: from kwargs, ok
+            trainer.train(
+                net=setup.net,
+                opt=setup.opt,
+                sched=setup.sched,
+                logger=setup.logger,
+                train_loader=setup.train_loader,
+                device=setup.device,
+                epochs=epochs - epoch_start, 
             epochs=epochs - epoch_start, 
-            acc_batches=acc_batches,
-            wandb=wandb if use_wandb else None, 
-        )
+                epochs=epochs - epoch_start, 
+            epochs=epochs - epoch_start, 
+                epochs=epochs - epoch_start, 
+            epochs=epochs - epoch_start, 
+                epochs=epochs - epoch_start, 
+            epochs=epochs - epoch_start, 
+                epochs=epochs - epoch_start, 
+            epochs=epochs - epoch_start, 
+                epochs=epochs - epoch_start, 
+            epochs=epochs - epoch_start, 
+                epochs=epochs - epoch_start, 
+            epochs=epochs - epoch_start, 
+                epochs=epochs - epoch_start, 
+            epochs=epochs - epoch_start, 
+                epochs=epochs - epoch_start, 
+            epochs=epochs - epoch_start, 
+                epochs=epochs - epoch_start, 
+                acc_batches=acc_batches,
+                wandb=run, 
+            )
 
-        if test and (epochs > 0 or load_snapshot is not None):
-            
+            if not (test and (epochs > 0 or load_snapshot is not None)):
+                return RunResults(gtmap_roc=dict(), gtmap_pr=dict())
+                
             labels, loss, anomaly_scores, imgs, outputs, gtmaps = trainer.test(
                 net=setup.net, 
                 data_loader=setup.test_loader, 
@@ -1511,91 +1573,292 @@ def run_one(it, **kwargs):
             # ========================== WANDB TEST LOG ==========================
             # ========================== WANDB TEST LOG ==========================
             # ========================== WANDB TEST LOG ==========================
-            if use_wandb:
-                wandb.log(dict(
-                    test_rocauc=rr.gtmap_roc["auc"],
-                    # ========================== ROC CURVE ==========================
-                    # copied from wandb.plot.roc_curve()
-                    # debug=wandb.plot.roc_curve(),
-                    test_roc_curve=wandb.plot_table(
-                        vega_spec_name="wandb/area-under-curve/v0",
-                        data_table=wandb.Table(
+            run.log(dict(
+                test_rocauc=rr.gtmap_roc["auc"],
+                # ========================== ROC CURVE ==========================
+                # copied from wandb.plot.roc_curve()
+                # debug=wandb.plot.roc_curve(),
+                test_roc_curve=wandb.plot_table(
+                    vega_spec_name="wandb/area-under-curve/v0",
+                    data_table=wandb.Table(
+                        columns=["class", "fpr", "tpr"], 
                             columns=["class", "fpr", "tpr"], 
-                            data=[
+                        columns=["class", "fpr", "tpr"], 
+                            columns=["class", "fpr", "tpr"], 
+                        columns=["class", "fpr", "tpr"], 
+                            columns=["class", "fpr", "tpr"], 
+                        columns=["class", "fpr", "tpr"], 
+                            columns=["class", "fpr", "tpr"], 
+                        columns=["class", "fpr", "tpr"], 
+                            columns=["class", "fpr", "tpr"], 
+                        columns=["class", "fpr", "tpr"], 
+                            columns=["class", "fpr", "tpr"], 
+                        columns=["class", "fpr", "tpr"], 
+                            columns=["class", "fpr", "tpr"], 
+                        columns=["class", "fpr", "tpr"], 
+                            columns=["class", "fpr", "tpr"], 
+                        columns=["class", "fpr", "tpr"], 
+                            columns=["class", "fpr", "tpr"], 
+                        columns=["class", "fpr", "tpr"], 
+                        data=[
+                            [normal_class_label, fpr_, tpr_] 
                                 [normal_class_label, fpr_, tpr_] 
-                                for fpr_, tpr_ in zip(
+                            [normal_class_label, fpr_, tpr_] 
+                                [normal_class_label, fpr_, tpr_] 
+                            [normal_class_label, fpr_, tpr_] 
+                                [normal_class_label, fpr_, tpr_] 
+                            [normal_class_label, fpr_, tpr_] 
+                                [normal_class_label, fpr_, tpr_] 
+                            [normal_class_label, fpr_, tpr_] 
+                                [normal_class_label, fpr_, tpr_] 
+                            [normal_class_label, fpr_, tpr_] 
+                                [normal_class_label, fpr_, tpr_] 
+                            [normal_class_label, fpr_, tpr_] 
+                                [normal_class_label, fpr_, tpr_] 
+                            [normal_class_label, fpr_, tpr_] 
+                                [normal_class_label, fpr_, tpr_] 
+                            [normal_class_label, fpr_, tpr_] 
+                                [normal_class_label, fpr_, tpr_] 
+                            [normal_class_label, fpr_, tpr_] 
+                            for fpr_, tpr_ in zip(
+                                rr.gtmap_roc["fpr"], 
                                     rr.gtmap_roc["fpr"], 
-                                    rr.gtmap_roc["tpr"],
-                                )
-                            ],
-                        ),
-                        fields={"x": "fpr", "y": "tpr", "class": "class"},
-                        string_fields={
-                            "title": "ROC curve",
-                            "x-axis-title": "False Positive Rate (FPR)",
-                            "y-axis-title": "True Positive Rate (TPR)",
-                        },
+                                rr.gtmap_roc["fpr"], 
+                                    rr.gtmap_roc["fpr"], 
+                                rr.gtmap_roc["fpr"], 
+                                    rr.gtmap_roc["fpr"], 
+                                rr.gtmap_roc["fpr"], 
+                                    rr.gtmap_roc["fpr"], 
+                                rr.gtmap_roc["fpr"], 
+                                    rr.gtmap_roc["fpr"], 
+                                rr.gtmap_roc["fpr"], 
+                                    rr.gtmap_roc["fpr"], 
+                                rr.gtmap_roc["fpr"], 
+                                    rr.gtmap_roc["fpr"], 
+                                rr.gtmap_roc["fpr"], 
+                                    rr.gtmap_roc["fpr"], 
+                                rr.gtmap_roc["fpr"], 
+                                    rr.gtmap_roc["fpr"], 
+                                rr.gtmap_roc["fpr"], 
+                                rr.gtmap_roc["tpr"],
+                            )
+                        ],
                     ),
-                    # ========================== PR CURVE ==========================
-                    # copied from wandb.plot.pr_curve()
-                    # debug=wandb.plot.pr_curve(),
-                    test_pr_curve=wandb.plot_table(
-                        vega_spec_name="wandb/area-under-curve/v0",
-                        data_table=wandb.Table(
+                    fields={"x": "fpr", "y": "tpr", "class": "class"},
+                    string_fields={
+                        "title": "ROC curve",
+                        "x-axis-title": "False Positive Rate (FPR)",
+                        "y-axis-title": "True Positive Rate (TPR)",
+                    },
+                ),
+                # ========================== PR CURVE ==========================
+                # copied from wandb.plot.pr_curve()
+                # debug=wandb.plot.pr_curve(),
+                test_pr_curve=wandb.plot_table(
+                    vega_spec_name="wandb/area-under-curve/v0",
+                    data_table=wandb.Table(
+                        columns=["class", "recall", "precision"], 
                             columns=["class", "recall", "precision"], 
-                            data=[
+                        columns=["class", "recall", "precision"], 
+                            columns=["class", "recall", "precision"], 
+                        columns=["class", "recall", "precision"], 
+                            columns=["class", "recall", "precision"], 
+                        columns=["class", "recall", "precision"], 
+                            columns=["class", "recall", "precision"], 
+                        columns=["class", "recall", "precision"], 
+                            columns=["class", "recall", "precision"], 
+                        columns=["class", "recall", "precision"], 
+                            columns=["class", "recall", "precision"], 
+                        columns=["class", "recall", "precision"], 
+                            columns=["class", "recall", "precision"], 
+                        columns=["class", "recall", "precision"], 
+                            columns=["class", "recall", "precision"], 
+                        columns=["class", "recall", "precision"], 
+                            columns=["class", "recall", "precision"], 
+                        columns=["class", "recall", "precision"], 
+                        data=[
+                            [normal_class_label, rec_, prec_] 
                                 [normal_class_label, rec_, prec_] 
-                                for rec_, prec_ in zip(
+                            [normal_class_label, rec_, prec_] 
+                                [normal_class_label, rec_, prec_] 
+                            [normal_class_label, rec_, prec_] 
+                                [normal_class_label, rec_, prec_] 
+                            [normal_class_label, rec_, prec_] 
+                                [normal_class_label, rec_, prec_] 
+                            [normal_class_label, rec_, prec_] 
+                                [normal_class_label, rec_, prec_] 
+                            [normal_class_label, rec_, prec_] 
+                                [normal_class_label, rec_, prec_] 
+                            [normal_class_label, rec_, prec_] 
+                                [normal_class_label, rec_, prec_] 
+                            [normal_class_label, rec_, prec_] 
+                                [normal_class_label, rec_, prec_] 
+                            [normal_class_label, rec_, prec_] 
+                                [normal_class_label, rec_, prec_] 
+                            [normal_class_label, rec_, prec_] 
+                            for rec_, prec_ in zip(
+                                rr.gtmap_pr["recall"], 
                                     rr.gtmap_pr["recall"], 
-                                    rr.gtmap_pr["precision"],
-                                )
-                            ],
-                        ),
-                        fields={"x": "recall", "y": "precision", "class": "class"},
-                        string_fields={
-                            "title": "PR curve",
-                            "x-axis-title": "Recall",
-                            "y-axis-title": "Precision",
-                        },
-                    )
-                ))
-
+                                rr.gtmap_pr["recall"], 
+                                    rr.gtmap_pr["recall"], 
+                                rr.gtmap_pr["recall"], 
+                                    rr.gtmap_pr["recall"], 
+                                rr.gtmap_pr["recall"], 
+                                    rr.gtmap_pr["recall"], 
+                                rr.gtmap_pr["recall"], 
+                                    rr.gtmap_pr["recall"], 
+                                rr.gtmap_pr["recall"], 
+                                    rr.gtmap_pr["recall"], 
+                                rr.gtmap_pr["recall"], 
+                                    rr.gtmap_pr["recall"], 
+                                rr.gtmap_pr["recall"], 
+                                    rr.gtmap_pr["recall"], 
+                                rr.gtmap_pr["recall"], 
+                                    rr.gtmap_pr["recall"], 
+                                rr.gtmap_pr["recall"], 
+                                rr.gtmap_pr["precision"],
+                            )
+                        ],
+                    ),
+                    fields={"x": "recall", "y": "precision", "class": "class"},
+                    string_fields={
+                        "title": "PR curve",
+                        "x-axis-title": "Recall",
+                        "y-axis-title": "Precision",
+                    },
+                )
+            ))
             return rr
-        else:
-            return RunResults(gtmap_roc=dict(), gtmap_pr=dict())
 
-    except:
-        setup.logger.printlog += traceback.format_exc()
-        epochs = "epochs could not be properly saved because the training broke (exception)"
-        raise  # the re-raise is executed after the 'finally' clause
+        except:
+            setup.logger.printlog += traceback.format_exc()
+            epochs = "epochs could not be properly saved because the training broke (exception)"
+            raise  # the re-raise is executed after the 'finally' clause
 
-    finally:
-        # joao: the original code had this comment about logger.print_logs()
-        # no finally statement, because that breaks debugger
-        # joao: i'm ignoring it to see what happens
-        # and it was in the except clause of the BaseRunner.run_one()
+        finally:
+            # joao: the original code had this comment about logger.print_logs()
+            # no finally statement, because that breaks debugger
+            # joao: i'm ignoring it to see what happens
+            # and it was in the except clause of the BaseRunner.run_one()
+            setup.logger.log_prints() 
         setup.logger.log_prints() 
-        
-        setup.logger.save()
-        setup.logger.plot()
-        
-        # setup.logger.snapshot(trainer.net, trainer.opt, trainer.sched, epochs)
-        train_setup_save_snapshot(
+            setup.logger.log_prints() 
+        setup.logger.log_prints() 
+            setup.logger.log_prints() 
+        setup.logger.log_prints() 
+            setup.logger.log_prints() 
+        setup.logger.log_prints() 
+            setup.logger.log_prints() 
+        setup.logger.log_prints() 
+            setup.logger.log_prints() 
+        setup.logger.log_prints() 
+            setup.logger.log_prints() 
+        setup.logger.log_prints() 
+            setup.logger.log_prints() 
+        setup.logger.log_prints() 
+            setup.logger.log_prints() 
+        setup.logger.log_prints() 
+            setup.logger.log_prints() 
+            
+            setup.logger.save()
+            setup.logger.plot()
+            
+            # setup.logger.snapshot(trainer.net, trainer.opt, trainer.sched, epochs)
+            train_setup_save_snapshot(
+                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
             outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+            outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+                outfile=str(Path(setup.logger.dir) / f"snapshot.pt"), 
+                net=setup.net, 
             net=setup.net, 
+                net=setup.net, 
+            net=setup.net, 
+                net=setup.net, 
+            net=setup.net, 
+                net=setup.net, 
+            net=setup.net, 
+                net=setup.net, 
+            net=setup.net, 
+                net=setup.net, 
+            net=setup.net, 
+                net=setup.net, 
+            net=setup.net, 
+                net=setup.net, 
+            net=setup.net, 
+                net=setup.net, 
+            net=setup.net, 
+                net=setup.net, 
+                opt=setup.opt, 
             opt=setup.opt, 
+                opt=setup.opt, 
+            opt=setup.opt, 
+                opt=setup.opt, 
+            opt=setup.opt, 
+                opt=setup.opt, 
+            opt=setup.opt, 
+                opt=setup.opt, 
+            opt=setup.opt, 
+                opt=setup.opt, 
+            opt=setup.opt, 
+                opt=setup.opt, 
+            opt=setup.opt, 
+                opt=setup.opt, 
+                sched=setup.sched, 
             sched=setup.sched, 
-            epoch=epochs,
+                sched=setup.sched, 
+            sched=setup.sched, 
+                sched=setup.sched, 
+            sched=setup.sched, 
+                sched=setup.sched, 
+            sched=setup.sched, 
+                sched=setup.sched, 
+            sched=setup.sched, 
+                sched=setup.sched, 
+            sched=setup.sched, 
+                sched=setup.sched, 
+            sched=setup.sched, 
+                sched=setup.sched, 
+            sched=setup.sched, 
+                sched=setup.sched, 
+            sched=setup.sched, 
+                sched=setup.sched, 
+                epoch=epochs,
+                # kwargs 
             # kwargs 
-            gauss_std=setup.gauss_std,
-            quantile=setup.quantile,
-            resdown=setup.resdown,
-            blur_heatmaps=setup.blur_heatmaps,
-            pixel_level_loss=setup.pixel_level_loss,
-        )
-
-        if use_wandb:
-            wandb.finish()    
+                # kwargs 
+            # kwargs 
+                # kwargs 
+            # kwargs 
+                # kwargs 
+            # kwargs 
+                # kwargs 
+            # kwargs 
+                # kwargs 
+            # kwargs 
+                # kwargs 
+            # kwargs 
+                # kwargs 
+            # kwargs 
+                # kwargs 
+            # kwargs 
+                # kwargs 
+                gauss_std=setup.gauss_std,
+                quantile=setup.quantile,
+                resdown=setup.resdown,
+                blur_heatmaps=setup.blur_heatmaps,
+                pixel_level_loss=setup.pixel_level_loss,
+            )
             
                     
 def run(**kwargs) -> dict:
