@@ -271,6 +271,10 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
         "--pixel-level-loss", dest="pixel_level_loss", action="store_true",
         help="If set, the pixel-level loss is used instead of the old version, which didn't apply the anomalous part of the loss to each pixel individually. "
     )
+    parser.add_argument(
+        "--pixel-loss-fix", action="store_true",
+        help="Use the fix as discussed by e-mail with philipp (correctly combine the positive/negative loss terms). "
+    )
     return parser
 
 
@@ -525,6 +529,7 @@ class FCDDTrainer:
         blur_heatmaps=False,
         device='cuda:0',
         pixel_level_loss: bool = False, 
+        pixel_loss_fix: bool = False,
         **kwargs
     ):
         """
@@ -554,6 +559,7 @@ class FCDDTrainer:
         self.resdown = resdown
         self.blur_heatmaps = blur_heatmaps
         self.pixel_level_loss = pixel_level_loss
+        self.pixel_loss_fix = pixel_loss_fix
                 
     def load(self, path: str, cpu=False) -> int:
         """ Loads a snapshot of the training state, including network weights """
@@ -589,7 +595,7 @@ class FCDDTrainer:
         """ Reduces the anomaly score to be a score per pixel (explanation). """
         return ascore.mean(1).unsqueeze(1)
 
-    def train(self, epochs: int, acc_batches=1, wandb=None) -> BaseNet:
+    def train(self, epochs: int, acc_batches=1, wandb = None) -> BaseNet:
         """
         Does epochs many full iteration of the data loader and trains the network with the data using self.loss.
         Supports ground-truth maps, logs losses for
@@ -1167,6 +1173,14 @@ class FCDDTrainer:
             std = self.gauss_std
             loss = self.net.receptive_upsample(loss, reception=True, std=std, cpu=False)
             
+            if self.pixel_loss_fix:
+                norm_loss_maps = (loss * (1 - gtmaps))
+                anom_loss_maps = -(((1 - (-loss).exp()) + 1e-31).log())
+                anom_loss_maps = anom_loss_maps * gtmaps
+                loss = norm_loss_maps + anom_loss_maps
+                batch_size = loss.size(0)
+                return loss.view(batch_size, -1).mean(-1)
+            
             norm_map = (loss * (1 - gtmaps))
             norm = norm_map.view(norm_map.size(0), -1).mean(-1)
             
@@ -1228,6 +1242,7 @@ def run_one(it, **kwargs):
     load_snapshot = kwargs.pop('load', None)  # pre-trained model, path to model snapshot
     test = kwargs.pop("test")
     pixel_level_loss = kwargs.pop("pixel_level_loss")
+    pixel_loss_fix = kwargs.pop("pixel_loss_fix")
     
     del kwargs["log_start_time_str"]
     del kwargs["normal_class_label"]
@@ -1249,6 +1264,7 @@ def run_one(it, **kwargs):
             blur_heatmaps=setup.blur_heatmaps,
             device=setup.device,
             pixel_level_loss=pixel_level_loss,
+            pixel_loss_fix=pixel_loss_fix,
         )
         
         if load_snapshot is None:
@@ -1277,10 +1293,15 @@ def run_one(it, **kwargs):
 
         if test and (epochs > 0 or load_snapshot is not None):
             ret = trainer.test()  # keys = {roc, gtmap_roc}
-            return RunResults(
+            rr = RunResults(
                 roc=ret["roc"],
                 gtmap_roc=ret["gtmap_roc"],
             )
+            
+            if use_wandb():
+                wandb.log(dict(test_rocauc=ret["gtmap_roc"]["auc"]))
+            
+            return rr
         else:
             return RunResults({}, {})
         
