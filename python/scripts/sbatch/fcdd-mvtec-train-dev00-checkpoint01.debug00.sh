@@ -7,7 +7,6 @@
 #SBATCH --partition  cmm-gpu
 #SBATCH --gres       gpu:1
 #SBATCH --mem        32G
-#SBATCH --nodelist   node001
 
 #SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/mvtec-train-dev00.checkpoint01/%x-%N-%j.log
  
@@ -29,15 +28,6 @@ echo "pwd = $(pwd)"
 Node=$(hostname)
 echo "hostname = $(hostname)"
 
-# source ${HOME}/bashrc.d/90-init-module.sh
-# echo $(ls -l ${HOME}/bashrc.d/90-init-module.sh)
-# echo "module = $(type -a module)"
-
-# # ajoute modules CUDA
-# module add cuda90
-# module add cuda90/blas
-# module add cuda90/toolkit
- 
 # use my local conda
 source ${HOME}/init-conda-bash
 echo ""
@@ -77,11 +67,12 @@ echo ""
 echo "\$TMPDIR = ${TMPDIR}"
 echo "\$WANDB = ${WANDB}"
 
+ARGS="--supervise-mode noise --noise-mode mvtec_gt --pixel-loss-fix --cls-restrictions 4 --it 1 --epochs 1"
 echo ""
-echo "\$* = $*"
+echo "\$ARGS = $ARGS"
 
 # & will put it in the background
-python train_mvtec_dev00.py $* > $JPATH 2>&1 & 
+python train_mvtec_dev00.py $ARGS > $JPATH 2>&1 & 
 PYTHON_PID=$!
 echo ""
 echo "PYTHON_PID=${PYTHON_PID}"

@@ -740,6 +740,7 @@ class FCDDTrainer:
         blur_heatmaps=False,
         device='cuda:0',
         pixel_level_loss: bool = False, 
+        pixel_loss_fix: bool = False,
         **kwargs
     ):
         """
@@ -766,6 +767,7 @@ class FCDDTrainer:
         self.resdown = resdown
         self.blur_heatmaps = blur_heatmaps
         self.pixel_level_loss = pixel_level_loss
+        self.pixel_loss_fix = pixel_loss_fix
                 
     def train(
         self, 
