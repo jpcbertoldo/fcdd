@@ -2,14 +2,13 @@
  
 # Personalisation de la tache
 #
-#SBATCH --job-name   fcdd-mvtec-train-dev00
+#SBATCH --job-name   fcdd-mvtec-dev00-checkpoint02
  
 #SBATCH --partition  cmm-gpu
 #SBATCH --gres       gpu:1
 #SBATCH --mem        32G
-#SBATCH --nodelist   node002,node001
 
-#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/mvtec-train-dev00.checkpoint01/%x-%N-%j.log
+#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/dev00-checkpoint02/%x-%N-%j.log
  
 # tous les evenements pertinents seront envoyes par email a cette adresse
 #SBATCH --mail-type  ALL
@@ -47,7 +46,7 @@ nvidia-smi
 echo ""
 echo "nvcc --version = $(nvcc --version)"
 
-LOGDIR=${HOME}/log/fcdd/mvtec/mvtec-train-dev00.checkpoint01
+LOGDIR=${HOME}/log/fcdd/mvtec/dev00-checkpoint02
 mkdir -p ${LOGDIR}
 echo "LOGDIR = ${LOGDIR}"
  
@@ -71,12 +70,48 @@ echo "\$WANDB = ${WANDB}"
 echo ""
 echo "\$* = $*"
 
+
+
+
+CLASSES_RESTRICTIONS_00="--cls-restrictions 0 1 2 3 4 5 6 7"
+CLASSES_RESTRICTIONS_01="--cls-restrictions 8 9 10 11 12 13 14"
+
+
+COMMON_ARGS="--it 3"
+echo ""
+echo "\$COMMON_ARGS = ${COMMON_ARGS}"
+
+
+
+
+
 # & will put it in the background
-python train_mvtec_dev00.py $* > $JPATH 2>&1 & 
-PYTHON_PID=$!
 echo ""
-echo "PYTHON_PID=${PYTHON_PID}"
+echo "launching process 00"
+echo "\$CLASSES_RESTRICTIONS_00 = $CLASSES_RESTRICTIONS_00"
+python train_mvtec_dev00_checkpoint02.py ${COMMON_ARGS} $* $CLASSES_RESTRICTIONS_00 > "${JPATH}00" 2>&1 & 
+PYTHON_PID00=$!
 echo ""
-echo "waiting for PYTHON_PID=${PYTHON_PID}"
-wait ${PYTHON_PID}
-echo "PYTHON_PID=${PYTHON_PID} finished"
+echo "PYTHON_PID00=${PYTHON_PID00}"
+
+# & will put it in the background
+echo ""
+echo "launching process 01"
+echo "\$CLASSES_RESTRICTIONS_01 = $CLASSES_RESTRICTIONS_01"
+python train_mvtec_dev00_checkpoint02.py ${COMMON_ARGS} $* $CLASSES_RESTRICTIONS_01 > "${JPATH}01" 2>&1 & 
+PYTHON_PID01=$!
+echo ""
+echo "PYTHON_PID01=${PYTHON_PID01}"
+
+
+
+
+echo ""
+echo "waiting for PYTHON_PID00=${PYTHON_PID00}"
+wait ${PYTHON_PID00}
+echo "PYTHON_PID00=${PYTHON_PID00} finished"
+
+echo ""
+echo "waiting for PYTHON_PID01=${PYTHON_PID01}"
+wait ${PYTHON_PID01}
+echo "PYTHON_PID01=${PYTHON_PID01} finished"

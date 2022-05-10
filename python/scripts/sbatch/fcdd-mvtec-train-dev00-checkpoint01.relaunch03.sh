@@ -7,7 +7,7 @@
 #SBATCH --partition  cmm-gpu
 #SBATCH --gres       gpu:1
 #SBATCH --mem        32G
-#SBATCH --nodelist   node002,node001
+#SBATCH --nodelist   node002
 
 #SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/mvtec-train-dev00.checkpoint01/%x-%N-%j.log
  
@@ -68,15 +68,53 @@ echo ""
 echo "\$TMPDIR = ${TMPDIR}"
 echo "\$WANDB = ${WANDB}"
 
-echo ""
-echo "\$* = $*"
+
+ARGS_COMMON="--supervise-mode malformed_normal_gt --noise-mode confetti --pixel-loss-fix"
+ARGS_00="--cls-restrictions 5 --it 2"
+ARGS_01="--cls-restrictions 6 7"
+ARGS_02="--cls-restrictions 8 9"
+
 
 # & will put it in the background
-python train_mvtec_dev00.py $* > $JPATH 2>&1 & 
-PYTHON_PID=$!
+python train_mvtec_dev00.py $ARGS_COMMON $ARGS_00 > "${JPATH}00" 2>&1 & 
+PYTHON_PID_00=$!
 echo ""
-echo "PYTHON_PID=${PYTHON_PID}"
+echo "PYTHON_PID_00=${PYTHON_PID_00}"
+sleep 5
+
+python train_mvtec_dev00.py $ARGS_COMMON $ARGS_01 > "${JPATH}01" 2>&1 & 
+PYTHON_PID_01=$!
 echo ""
-echo "waiting for PYTHON_PID=${PYTHON_PID}"
-wait ${PYTHON_PID}
-echo "PYTHON_PID=${PYTHON_PID} finished"
+echo "PYTHON_PID_01=${PYTHON_PID_01}"
+sleep 5
+
+echo ""
+echo "waiting for PYTHON_PID_00=${PYTHON_PID_00}"
+wait ${PYTHON_PID_00}
+echo "PYTHON_PID_00=${PYTHON_PID_00} finished"
+
+
+
+
+
+
+python train_mvtec_dev00.py $ARGS_COMMON $ARGS_02 > "${JPATH}02" 2>&1 & 
+PYTHON_PID_02=$!
+echo ""
+echo "PYTHON_PID_02=${PYTHON_PID_02}"
+
+
+
+
+
+
+
+echo ""
+echo "waiting for PYTHON_PID_01=${PYTHON_PID_01}"
+wait ${PYTHON_PID_01}
+echo "PYTHON_PID_01=${PYTHON_PID_01} finished"
+
+echo ""
+echo "waiting for PYTHON_PID_02=${PYTHON_PID_02}"
+wait ${PYTHON_PID_02}
+echo "PYTHON_PID_02=${PYTHON_PID_02} finished"

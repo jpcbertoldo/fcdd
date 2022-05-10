@@ -294,7 +294,7 @@ def generate_noise(
                 size, 0.000012, ((8, 8), (54, 54)), fillval=-255, clamp=False, awgn=0, rotation=45
             )
             generated_noise = generated_noise_rgb + generated_noise
-            generated_noise = smooth_noise(generated_noise, 25, 5, 1.0)
+            # generated_noise = smooth_noise(generated_noise, 25, 5, 1.0)
         
         elif noise_mode in ['mvtec', 'mvtec_gt']:
             raise NotImplementedError('MVTec-AD and MVTec-AD with ground-truth maps is only available with online supervision.')

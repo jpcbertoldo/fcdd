@@ -23,6 +23,10 @@
 			"name": "thalassa:home",
 			"path": "/cluster/CMM/home/jcasagrandebertoldo"
 		},
+		{
+			"name": "data/results",
+			"path": "./data/results"
+		},
 		
 	],
 	"settings": {

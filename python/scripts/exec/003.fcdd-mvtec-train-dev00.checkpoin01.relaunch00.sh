@@ -26,13 +26,13 @@ sleep 3  # avoid the same directory name
 
 # ============================================================ later ============================================================
 
+# ============================================================ nope ============================================================
+
 # # // B) unsupervised (confetti), MASK, old loss
 # # sbatch ${SBATCH_SCRIPT_FPATH} \
 # --supervise-mode malformed_normal_gt --noise-mode confetti \
 # --cls-restrictions 4 5 6 7 8 9 10 11 12 13 14 
 # sleep 3  # avoid the same directory name
-
-# ============================================================ nope ============================================================
 
 # already running
 # # // D) unsupervised (confetti), MASK, pixel wise loss (fixed)

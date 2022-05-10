@@ -72,7 +72,7 @@ echo ""
 echo "\$* = $*"
 
 # & will put it in the background
-python train_mvtec_dev00.py $* > $JPATH 2>&1 & 
+python train_mvtec_dev00_balanced_loss.py $* > $JPATH 2>&1 & 
 PYTHON_PID=$!
 echo ""
 echo "PYTHON_PID=${PYTHON_PID}"
