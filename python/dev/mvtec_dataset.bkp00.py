@@ -1277,44 +1277,4 @@ class ADMvTec(TorchvisionDataset):
             self.normal_classes
         )
         self._test_set = GTSubset(test_set, test_idx_normal)
-    
         
-if __name__ == "__main__":
-    import os.path as pt
-
-    from pathlib import Path
-    logger = Logger(logdir=str(Path.home() / "fcdd/data/tmp"),)
-        
-    normal_class = 0
-    
-    ds = ADMvTec(
-        root=pt.join('..', '..', 'data', 'datasets'), 
-        normal_class=normal_class, 
-        preproc="lcnaug1",
-        supervise_mode="malformed_normal_gt", 
-        noise_mode="confetti", 
-        oe_limit=1, 
-        logger=logger, 
-        nominal_label=0,
-    )
-    images = ds.preview(percls=20, train=True)
-    images = torch.cat([
-        images,
-        images[2:3],
-        images[1:2] * images[4:5],
-    ], dim=0)
-
-    ds_order = ['norm', 'anom']
-    rowheaders = [
-        *ds_order, 
-        '', 
-        *['gtno' if s == 'norm' else 'gtan' for s in ds_order],
-        "",
-        "anom * gtan"
-    ]
-    logger.imsave(
-        name=f'ds_preview.{normal_class}', 
-        tensors=torch.cat([*images]), 
-        nrow=images.size(1),
-        rowheaders=rowheaders,
-    )
