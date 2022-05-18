@@ -1368,7 +1368,8 @@ def run_one(it, **kwargs):
             project="fcdd-mvtec-dev00-checkpoint02", 
             entity="mines-paristech-cmm",
             config={**kwargs, **dict(it=it)},
-            tags=["fix-test-no-grad", "checkpoint02bis"]
+            tags=["fix-test-no-grad", "checkpoint02bis"],
+            settings=wandb.Settings(start_method="fork"),
         )
         
     kwargs["logdir"] = str(logdir.absolute())
