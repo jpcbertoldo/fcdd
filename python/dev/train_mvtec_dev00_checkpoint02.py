@@ -96,8 +96,9 @@ LOSS_PIXEL_LEVEL = "pixel-level"
 LOSS_PIXEL_LEVEL_BALANCED = "pixel-level-balanced"
 LOSS_PIXEL_LEVEL_FOCAL = "pixel-level-focal"
 LOSS_PIXEL_LEVEL_FOCAL2 = "pixel-level-focal2"
+LOSS_PIXEL_WISE_AVERAGE_DISTANCES = "pixel-wise-average-distances"
 
-LOSS_MODES = (LOSS_PIXEL_LEVEL, LOSS_PIXEL_LEVEL_BALANCED, LOSS_PIXEL_LEVEL_FOCAL, LOSS_PIXEL_LEVEL_FOCAL2)
+LOSS_MODES = (LOSS_PIXEL_LEVEL, LOSS_PIXEL_LEVEL_BALANCED, LOSS_PIXEL_LEVEL_FOCAL, LOSS_PIXEL_LEVEL_FOCAL2, LOSS_PIXEL_WISE_AVERAGE_DISTANCES)
 
 # In[]:
 # # datasets
@@ -635,45 +636,47 @@ class FCDDTrainer:
                 gtmaps = gtmaps.to(self.device)
                 self.opt.zero_grad()
                 outputs = self.net(inputs)
-                loss = self.loss(
-                    outputs, 
-                    inputs, 
-                    labels, 
-                    gtmaps,
-                )
-                loss_mean = loss.mean()
+                
+                if self.loss_mode == LOSS_PIXEL_WISE_AVERAGE_DISTANCES:
+                    loss_norm, loss_anom = self.loss(outputs, inputs, labels, gtmaps)
+                    loss_mean = (loss_norm + loss_anom) / 2
+                
+                else:
+                    loss = self.loss(outputs, inputs, labels, gtmaps,)
+                    loss_mean = loss.mean()
+                
                 loss_mean.backward()
                 self.opt.step()
+                
                 with torch.no_grad():
-                    info = {}
-                    if len(set(labels.tolist())) > 1:
-                        swloss = loss.reshape(loss.size(0), -1).mean(-1)
-                        info = {'err_normal': swloss[labels == 0].mean(),
-                                'err_anomalous': swloss[labels != 0].mean()}
-                    self.logger.log(
-                        epoch, 
-                        n_batch, 
-                        len(self.train_loader), 
-                        loss_mean,
-                        infoprint='LR {} ID {}{}'.format(
-                            ['{:.0e}'.format(p['lr']) for p in self.opt.param_groups],
-                            str(self.__class__)[8:-2],
-                            ' NCLS {}'.format(self.train_loader.dataset.normal_classes)
-                            if hasattr(self.train_loader.dataset, 'normal_classes') else ''
-                        ),
-                        info=info
-                    )
+                    self.logger.log(epoch, n_batch, len(self.train_loader), loss_mean,)
                               
-            test_score = self.test(subdir=f'test.epoch={epoch:03d}', train_data=False, lite_gtmap=True)
+            self.net.eval()
             if wandb is not None:
-                wandb.log(dict(
-                    epoch=epoch,
-                    loss=loss_mean.data.item(),
-                    loss_normal=swloss[labels == 0].mean().data.item(),
-                    loss_anomalous=swloss[labels != 0].mean().data.item(),
-                    test_rocauc=test_score['gtmap_roc']['auc'],
-                    lr=self.opt.param_groups[0]["lr"],
-                ))
+
+                with torch.no_grad():
+                                        
+                    if self.loss_mode == LOSS_PIXEL_WISE_AVERAGE_DISTANCES:
+                        loss_norm = loss_norm.data.item()
+                        loss_anom = loss_anom.data.item()
+                    
+                    else:
+                        swloss = loss.reshape(loss.size(0), -1).mean(-1)
+                        loss_norm = swloss[labels == 0].mean().data.item()
+                        loss_anom = swloss[labels != 0].mean().data.item()
+                        
+                    test_score = self.test(subdir=f'test.epoch={epoch:03d}', train_data=False, lite_gtmap=True)
+                    
+                    wandb.log(dict(
+                        epoch=epoch,
+                        loss=loss_mean.data.item(),
+                        loss_normal=loss_norm,
+                        loss_anomalous=loss_anom,
+                        test_rocauc=test_score['gtmap_roc']['auc'],
+                        lr=self.opt.param_groups[0]["lr"],
+                    ))
+                    
+            self.net.train()        
             self.sched.step()
                 
 
@@ -1177,76 +1180,83 @@ class FCDDTrainer:
 
     def loss(self, outs: Tensor, ins: Tensor, labels: Tensor, gtmaps: Tensor = None):
         """ computes the FCDD """
+        
         assert isinstance(self.net, FCDDNet)
+        
         loss = outs ** 2
         loss = (loss + 1).sqrt() - 1
-        if self.net.training:
-            
-            assert gtmaps is not None
-            
-            std = self.gauss_std
-            loss = self.net.receptive_upsample(loss, reception=True, std=std, cpu=False)
-            
-            norm_loss_maps = (loss * (1 - gtmaps))
-            anom_loss_maps = -(((1 - (-loss).exp()) + 1e-31).log())
-            anom_loss_maps = anom_loss_maps * gtmaps
-            
-            if self.loss_mode == LOSS_PIXEL_LEVEL:
-                loss = norm_loss_maps + anom_loss_maps                    
-            
-            elif self.loss_mode == LOSS_PIXEL_LEVEL_BALANCED:
-                n_pixels_normal = (1 - gtmaps.cpu()).sum()
-                n_pixels_anomalous = gtmaps.cpu().sum()
-                ratio_norm_anom = n_pixels_normal / (n_pixels_anomalous + 1)
-                loss = norm_loss_maps + ratio_norm_anom * anom_loss_maps                    
-            
-            elif self.loss_mode == LOSS_PIXEL_LEVEL_FOCAL:
-                loss = norm_loss_maps + anom_loss_maps
-                loss_np = loss.cpu().detach().numpy()                    
-                import random
-                from scipy.stats import percentileofscore
-                loss_sample = loss_np.ravel()[random.sample(range(loss_np.size), 100)]
-                def percent_score_func(value):
-                    return percentileofscore(loss_sample, value)
-                percent_score_func = np.vectorize(percent_score_func)
-                weights = percent_score_func(loss_np)
-                weights = torch.tensor(weights / weights.sum(), device=self.device)
-                loss = loss * weights                            
-            
-            elif self.loss_mode == LOSS_PIXEL_LEVEL_FOCAL2:
+        
+        if not self.net.training:
+            return loss  # here it is always loss map
+        
+        assert gtmaps is not None
+        
+        std = self.gauss_std
+        loss = self.net.receptive_upsample(loss, reception=True, std=std, cpu=False)
+        
+        if self.loss_mode == LOSS_PIXEL_WISE_AVERAGE_DISTANCES:
+            norm_avg_loss = (loss[(1 - gtmaps).bool()]).mean()  # for normals dist = loss
+            anom_avg_dist = (loss[gtmaps.bool()]).mean()
+            anom_avg_loss = -(((1 - (-anom_avg_dist).exp()) + 1e-31).log())
+            return norm_avg_loss, anom_avg_loss
+        
+        norm_loss_maps = (loss * (1 - gtmaps))
+        anom_loss_maps = -(((1 - (-loss).exp()) + 1e-31).log())
+        anom_loss_maps = anom_loss_maps * gtmaps
+        
+        if self.loss_mode == LOSS_PIXEL_LEVEL:
+            loss = norm_loss_maps + anom_loss_maps                    
+        
+        elif self.loss_mode == LOSS_PIXEL_LEVEL_BALANCED:
+            n_pixels_normal = (1 - gtmaps.cpu()).sum()
+            n_pixels_anomalous = gtmaps.cpu().sum()
+            ratio_norm_anom = n_pixels_normal / (n_pixels_anomalous + 1)
+            loss = norm_loss_maps + ratio_norm_anom * anom_loss_maps                    
+        
+        elif self.loss_mode == LOSS_PIXEL_LEVEL_FOCAL:
+            loss = norm_loss_maps + anom_loss_maps
+            loss_np = loss.cpu().detach().numpy()                    
+            import random
+            from scipy.stats import percentileofscore
+            loss_sample = loss_np.ravel()[random.sample(range(loss_np.size), 100)]
+            def percent_score_func(value):
+                return percentileofscore(loss_sample, value)
+            percent_score_func = np.vectorize(percent_score_func)
+            weights = percent_score_func(loss_np)
+            weights = torch.tensor(weights / weights.sum(), device=self.device)
+            loss = loss * weights                            
+        
+        elif self.loss_mode == LOSS_PIXEL_LEVEL_FOCAL2:
 
-                n_pixels_normal = int((1 - gtmaps).sum())
-                n_pixels_anomalous = int(gtmaps.sum())
-                
-                loss = norm_loss_maps + anom_loss_maps
-                loss_np = loss.cpu().detach().numpy()  
-                gtmaps_np = gtmaps.cpu().detach().numpy()
-                                  
-                import random
-                from scipy.stats import percentileofscore
-                
-                normal_loss_sample = (loss_np[(1 - gtmaps_np).astype(np.bool)]).ravel()[random.sample(range(n_pixels_normal), 500)]
-                anomalous_loss_sample = (loss_np[gtmaps_np.astype(np.bool)]).ravel()[random.sample(range(n_pixels_anomalous), 500)]
-                loss_sample = np.concatenate((normal_loss_sample, anomalous_loss_sample))
-                
-                def percent_score_func(value):
-                    return percentileofscore(loss_sample, value)
-                percent_score_func = np.vectorize(percent_score_func)
-                
-                weights = percent_score_func(loss_np)
-                weights = torch.tensor(weights / weights.sum(), device=self.device)
-                
-                loss = loss * weights                                   
-                
-            else:
-                raise NotImplementedError(f'Loss mode {self.loss_mode} not implemented!')
-                        
-            batch_size = loss.size(0)
-            return loss.view(batch_size, -1).mean(-1)
+            n_pixels_normal = int((1 - gtmaps).sum())
+            n_pixels_anomalous = int(gtmaps.sum())
+            
+            loss = norm_loss_maps + anom_loss_maps
+            loss_np = loss.cpu().detach().numpy()  
+            gtmaps_np = gtmaps.cpu().detach().numpy()
+                                
+            import random
+            from scipy.stats import percentileofscore
+            
+            normal_loss_sample = (loss_np[(1 - gtmaps_np).astype(np.bool)]).ravel()[random.sample(range(n_pixels_normal), 500)]
+            anomalous_loss_sample = (loss_np[gtmaps_np.astype(np.bool)]).ravel()[random.sample(range(n_pixels_anomalous), 500)]
+            loss_sample = np.concatenate((normal_loss_sample, anomalous_loss_sample))
+            
+            def percent_score_func(value):
+                return percentileofscore(loss_sample, value)
+            percent_score_func = np.vectorize(percent_score_func)
+            
+            weights = percent_score_func(loss_np)
+            weights = torch.tensor(weights / weights.sum(), device=self.device)
+            
+            loss = loss * weights                                   
             
         else:
-            return loss  # here it is always loss map
-
+            raise NotImplementedError(f'Loss mode {self.loss_mode} not implemented!')
+                    
+        batch_size = loss.size(0)
+        return loss.view(batch_size, -1).mean(-1)
+        
 
 # In[15]:
 
@@ -1272,6 +1282,7 @@ def run_one(it, **kwargs):
             project="fcdd-mvtec-dev00-checkpoint02", 
             entity="mines-paristech-cmm",
             config={**kwargs, **dict(it=it)},
+            tags=["fix-test-no-grad"]
         )
         
     kwargs["logdir"] = str(logdir.absolute())
