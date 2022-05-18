@@ -11,56 +11,38 @@
 
 # In[1]:
 
-import collections
-import glob
+
 import json
-import os
 import os.path as pt
 import random
 import time
-import traceback
 from argparse import ArgumentParser
 from collections import namedtuple
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Union
-from dev.train_mvtec_dev01_aux import single_save
-
 import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
-import torchmetrics
 import torchvision
-from fcdd.models.bases import BaseNet, ReceptiveNet
+from fcdd.models.bases import ReceptiveNet
 from fcdd.util.logging import Logger
-from fcdd.util.logging import colorize as colorize_img
-from kornia import gaussian_blur2d
 from pytorch_lightning.loggers import WandbLogger
-from scipy.interpolate import interp1d
-from sklearn.metrics import (auc, average_precision_score,
-                             precision_recall_curve, roc_curve)
 from torch import Tensor, gt
 from torch.hub import load_state_dict_from_url
-from torch.optim.lr_scheduler import _LRScheduler
-from torch.optim.optimizer import Optimizer
-from torch.utils.data.dataloader import DataLoader
-from torch.utils.data.dataset import Dataset
 
 import wandb
 
-from mvtec_dataset import ADMvTec
+import mvtec_dataset_dev01 as mvtec_datamodule
+from mvtec_dataset_dev01 import MVTecAnomalyDetectionDataModule
+from train_mvtec_dev01_aux import single_save
+
 from train_mvtec_dev01_aux import compute_gtmap_roc, compute_gtmap_pr
 
 from torch.profiler import tensorboard_trace_handler
-
-# from fcdd.datasets.noise import kernel_size_to_std
-# from fcdd.training import balance_labels
-# from fcdd.training.setup import pick_opt_sched
-# from fcdd.models import choices, load_nets
 
 # # utils
 
@@ -85,54 +67,64 @@ def balance_labels(data: Tensor, labels: List[int], err=True) -> Tensor:
 
 
 # In[]:
-# # consts
 
-SUPERVISE_MODES = (
-    # 'unsupervised', 
-    # 'other', 
-    'noise', 
-    'malformed_normal', 
-    'malformed_normal_gt'
-)
-NOISE_MODES = [
-    # Synthetic Anomalies
-    'confetti',  
-    # Outlier Exposure online supervision only  
-    'mvtec', 
-    'mvtec_gt'  
-]
+# ======================================== dataset ========================================
 
-# In[]:
-# # datasets
-
-DATASET_CHOICES = ('mvtec',)
+DATASET_MVTEC = "mvtec"
+DATASET_CHOICES = (DATASET_MVTEC,)
 
 
 def dataset_class_labels(dataset_name: str) -> List[str]:
     return {
-        'mvtec': deepcopy(ADMvTec.classes_labels),
+        DATASET_MVTEC: mvtec_datamodule.CLASSES_LABELS,
     }[dataset_name]
 
 
 def dataset_nclasses(dataset_name: str) -> int:
-    return len(dataset_class_labels(dataset_name))
+    return {
+        DATASET_MVTEC: mvtec_datamodule.NCLASSES,
+    }[dataset_name]
 
 
 def dataset_class_index(dataset_name: str, class_name: str) -> int:
-
     return dataset_class_labels(dataset_name).index(class_name)
 
+# ======================================== preprocessing ========================================
 
 def dataset_preprocessing_choices(dataset_name: str) -> List[str]:
     return {
-        'mvtec': deepcopy(ADMvTec.preprocessing_choices),
+        DATASET_MVTEC: mvtec_datamodule.PREPROCESSING_CHOICES,
     }[dataset_name]
+
+
+PREPROCESSING_DEFAULT_DEFAULT = 'aug1'
 
 
 PREPROCESSING_CHOICES = tuple(set.union(*[
     set(dataset_preprocessing_choices(dataset_name)) 
     for dataset_name in DATASET_CHOICES
 ]))
+
+# ======================================== supervise mode ========================================
+
+def dataset_supervise_mode_choices(dataset_name: str) -> List[str]:
+    return {
+        DATASET_MVTEC: mvtec_datamodule.SUPERVISE_MODES,
+    }[dataset_name]
+
+
+SUPERVISE_MODE_DEFAULT_DEFAULT = 'synthetic-anomaly-confetti'
+
+SUPERVISE_MODE_CHOICES = tuple(set.union(*[
+    set(dataset_supervise_mode_choices(dataset_name)) 
+    for dataset_name in DATASET_CHOICES
+]))
+
+# ======================================== pytorch lightning ========================================
+
+LIGHTNING_ACCELERATOR_CPU = "cpu"
+LIGHTNING_ACCELERATOR_GPU = "gpu"
+LIGHTNING_ACCELERATOR_CHOICES = (LIGHTNING_ACCELERATOR_CPU, LIGHTNING_ACCELERATOR_GPU)
 
 # In[]:
 # # model
@@ -242,45 +234,26 @@ class FCDD_CNN224_VGG(LightningModule):
         x = self.conv_final(x)
         return x
     
-    def loss(self, inputs: Tensor, gtmaps: Tensor, labels: Tensor) -> Tensor:
+    def loss(self, inputs: Tensor, gtmaps: Tensor) -> Tensor:
         """ computes the FCDD """
         
-        batch_size, *dims = inputs.size()
+        anomaly_score_maps = self(inputs) 
         
-        anomaly_scores = self(inputs) 
-        
-        loss_map = anomaly_scores ** 2
-        loss_map = (loss_map + 1).sqrt() - 1
+        loss_maps = anomaly_score_maps ** 2
+        loss_maps = (loss_maps + 1).sqrt() - 1
         
         gauss_std = self.hparams["gauss_std"]
-        loss_map = self._receptive_field_net.receptive_upsample(loss_map, reception=True, std=gauss_std, cpu=False)
+        loss_maps = self._receptive_field_net.receptive_upsample(loss_maps, reception=True, std=gauss_std, cpu=False)
         
-        norm_map = (loss_map * (1 - gtmaps))
-        norm = norm_map.view(batch_size, -1).mean(-1)
+        norm_loss_maps = (loss_maps * (1 - gtmaps))
         
-        # this is my implementation
-        pixel_level_loss = self.hparams["pixel_level_loss"]
-        if pixel_level_loss:
-            anom_map = -(((1 - (-loss_map).exp()) + 1e-31).log())
-            anom_map = anom_map * gtmaps
-            anom = anom_map.view(batch_size, -1).mean(-1)
-
-        # this is fcdd's implementation
-        else:            
-            anom_map = torch.zeros_like(norm_map)
-            exclude_complete_nominal_samples = ((gtmaps == 1).view(gtmaps.size(0), -1).sum(-1) > 0)
-            anom = torch.zeros_like(norm)
-            if exclude_complete_nominal_samples.sum() > 0:
-                a = (loss_map * gtmaps)[exclude_complete_nominal_samples]
-                anom[exclude_complete_nominal_samples] = (
-                    -(((1 - (-a.view(a.size(0), -1).mean(-1)).exp()) + 1e-31).log())
-                )
+        anom_loss_maps = -(((1 - (-loss_maps).exp()) + 1e-31).log())
+        anom_loss_maps = anom_loss_maps * gtmaps
         
-        loss_map = norm_map + anom_map
-        loss = loss_map.mean()
+        loss_maps = norm_loss_maps + anom_loss_maps
         
-        return anomaly_scores, loss_map, loss
-    
+        return anomaly_score_maps, loss_maps, loss_maps.mean()
+            
     def configure_optimizers(self):
         
         # =================================== optimizer =================================== 
@@ -337,7 +310,7 @@ class FCDD_CNN224_VGG(LightningModule):
         
     def training_step(self, batch, batch_idx):
         inputs, labels, gtmaps = batch
-        anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps, labels=labels)
+        anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
         
         # separate the loss in normal/anomaly
         with torch.no_grad():
@@ -353,7 +326,7 @@ class FCDD_CNN224_VGG(LightningModule):
     def test_step(self, batch, batch_idx):
         
         inputs, labels, gtmaps = batch
-        anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps, labels=labels)
+        anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
         
         loss_normal = loss_maps[gtmaps == 0].mean()
         loss_anomaly = loss_maps[gtmaps == 1].mean()
@@ -375,6 +348,9 @@ class FCDD_CNN224_VGG(LightningModule):
         loss = torch.tensor(loss)
         
         # heatmap_generation()
+        
+        # maybe i have to use this again...
+        #get_original_gtmaps_normal_class()
         
         gtmap_roc = compute_gtmap_roc(
             anomaly_scores=anomaly_scores_maps,
@@ -491,25 +467,9 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
     :return: the parser with added arguments
     """
 
-    # define directories for datasets and logging
-    parser.add_argument(
-        '--logdir', type=str, default=pt.join('..', '..', 'data', 'results', 'fcdd_{t}'),
-        help='Directory where log data is to be stored. The pattern {t} is replaced by the start time. '
-             'Defaults to ../../data/results/fcdd_{t}. '
-    )
-    parser.add_argument(
-        '--logdir-suffix', type=str, default='',
-        help='String suffix for log directory, again {t} is replaced by the start time. '
-    )
-    parser.add_argument(
-        '--datadir', type=str, default=pt.join('..', '..', 'data', 'datasets'),
-        help='Directory where datasets are found or to be downloaded to. Defaults to ../../data/datasets.',
-    )
 
     # training parameters
-    parser.add_argument('-b', '--batch-size', type=int, default=128)
     parser.add_argument('-e', '--epochs', type=int, default=200)
-    parser.add_argument('-w', '--workers', type=int, default=4)
     parser.add_argument('-lr', '--learning_rate', type=float, default=1e-3)
     parser.add_argument('-wd', '--weight-decay', type=float, default=1e-6)
     parser.add_argument(
@@ -532,47 +492,29 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
              'and the others being each a milestone. For instance, "0.1 100 200 300" reduces the learning rate '
              'by 0.1 at epoch 100, 200, and 300. '
     )
-    parser.add_argument('-d', '--dataset', type=str, default='custom', choices=DATASET_CHOICES)
     parser.add_argument(
         '-n', '--net', type=str, default='FCDD_CNN224_VGG', choices=MODEL_CLASSES.keys(),
         help='Chooses a network architecture to train.'
     )
-    parser.add_argument(
-        '--preproc', type=str, default='aug1', choices=PREPROCESSING_CHOICES,
-        help='Determines the kind of preprocessing pipeline (augmentations and such). '
-             'Have a look at the code (dataset implementation, e.g. fcdd.datasets.cifar.py) for details.'
-    )
     parser.add_argument('--no-bias', dest='bias', action='store_false', help='Uses no bias in network layers.')
-    parser.add_argument('--cpu', dest='cuda', action='store_false', help='Trains on CPU only.')
 
-    # artificial anomaly settings
+    # 
+    # ===================================== anomaly settings =====================================
+    # 
     parser.add_argument(
-        '--supervise-mode', type=str, default='noise', choices=SUPERVISE_MODES,
+        '--supervise-mode', type=str, default=SUPERVISE_MODE_DEFAULT_DEFAULT, choices=SUPERVISE_MODE_CHOICES,
         help='This determines the kind of artificial anomalies. '
-             '"unsupervised" uses no anomalies at all. '
-             '"other" uses ground-truth anomalies. '
-             '"noise" uses pure noise images or Outlier Exposure. '
-             '"malformed_normal" adds noise to nominal images to create malformed nominal anomalies. '
-             '"malformed_normal_gt" is like malformed_normal, but with ground-truth anomaly heatmaps for training. '
     )
+    
     parser.add_argument(
-        '--noise-mode', type=str, default='imagenet22k', choices=NOISE_MODES,
-        help='The type of noise used when artificial anomalies are activated. Dataset names refer to OE. '
-             'See fcdd.datasets.noise_modes.py.'
+        '--real-anomaly-limit', type=int, default=np.infty,
+        help='Determines the number of real anomalous images used. '
+             'Has no impact on synthetic anomalies or outlier exposure.'
     )
-    parser.add_argument(
-        '--oe-limit', type=int, default=np.infty,
-        help='Determines the amount of different samples used for Outlier Exposure. '
-             'Has no impact on synthetic anomalies.'
-    )
-    parser.add_argument(
-        '--nominal-label', type=int, default=0,
-        help='Determines the label that marks nominal samples. '
-             'Note that this is not the class that is considered nominal! '
-             'For instance, class 5 is the nominal class, which is labeled with the nominal label 0.'
-    )
-
-    # heatmap generation parameters
+    
+    # 
+    # ===================================== heatmap generation =====================================
+    # 
     parser.add_argument(
         '--blur-heatmaps', dest='blur_heatmaps', action='store_true',
         help='Blurs heatmaps, like done for the explanation baseline experiments in the paper.'
@@ -601,6 +543,40 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
         "--pixel-level-loss", dest="pixel_level_loss", action="store_true",
         help="If set, the pixel-level loss is used instead of the old version, which didn't apply the anomalous part of the loss to each pixel individually. "
     )
+    
+    # 
+    # ===================================== directories and logging =====================================
+    # 
+    parser.add_argument(
+        '--logdir', type=str, default=pt.join('..', '..', 'data', 'results', 'fcdd_{t}'),
+        help='Directory where log data is to be stored. The pattern {t} is replaced by the start time. '
+             'Defaults to ../../data/results/fcdd_{t}. '
+    )
+    parser.add_argument(
+        '--logdir-suffix', type=str, default='',
+        help='String suffix for log directory, again {t} is replaced by the start time. '
+    )
+    parser.add_argument(
+        '--datadir', type=str, default=pt.join('..', '..', 'data', 'datasets'),
+        help='Directory where datasets are found or to be downloaded to. Defaults to ../../data/datasets.',
+    )
+    
+    # 
+    # ===================================== dataset =====================================
+    # 
+    parser.add_argument('--dataset', type=str, default='custom', choices=DATASET_CHOICES)
+    parser.add_argument('--batch-size', type=int, default=128)
+    parser.add_argument('--nworkers', type=int, default=2)
+    parser.add_argument('--pin-memory', action='store_true')
+    parser.add_argument(
+        '--preproc', type=str, default=PREPROCESSING_DEFAULT_DEFAULT, choices=PREPROCESSING_CHOICES,
+        help='Determines the kind of preprocessing pipeline (augmentations and such). '
+             'Have a look at the code (dataset implementation, e.g. fcdd.datasets.cifar.py) for details.'
+    )
+    
+    # 
+    # ===================================== wandb =====================================
+    # 
     parser.add_argument(
         "--wandb-project", type=str, default=None,
         help="If set, the model will be logged to wandb with the project name given here."
@@ -617,22 +593,41 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
         "--wandb-offline", action="store_true",
         help="If set, the model will be logged to wandb without the need for an internet connection.",
     )
+    
+    # 
+    # ===================================== pytorch lightning =====================================
+    # 
+    parser.add_argument(
+        "--lightning-accelerator", type=str, default=LIGHTNING_ACCELERATOR_GPU, choices=LIGHTNING_ACCELERATOR_CHOICES,
+    )
+    parser.add_argument(
+        "--lightning-ndevices", type=int, default=1,
+    )
     return parser
 
 
 def default_parser_config_mvtec(parser: ArgumentParser) -> ArgumentParser:
     
     parser.set_defaults(
-        batch_size=16, 
-        supervise_mode='malformed_normal',
-        gauss_std=12, 
+        supervise_mode=mvtec_datamodule.SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
         weight_decay=1e-4, 
-        epochs=200, 
-        preproc='lcnaug1',
-        quantile=0.99, 
+        epochs=50, 
         net='FCDD_CNN224_VGG', 
-        dataset='mvtec', 
-        noise_mode='confetti',
+        # anomaly settings
+        # heatmap generation
+        quantile=0.99, 
+        gauss_std=12, 
+        # directories and logging
+        # dataset
+        preproc=mvtec_datamodule.PREPROCESSING_LCNAUG1,
+        dataset=DATASET_MVTEC,
+        batch_size=128, 
+        nworkers=2,
+        pin_memory=False,
+        # wandb 
+        # pytorch lightning 
+        lightning_accelerator=LIGHTNING_ACCELERATOR_GPU,
+        lightning_ndevices=1,
     )
 
     parser.add_argument(
@@ -687,9 +682,6 @@ TrainSetup = namedtuple(
     "TrainSetup",
     [
         "net",
-        "dataset",
-        "train_loader",
-        "test_loader",
         "opt",
         "sched",
         "logger",
@@ -700,121 +692,6 @@ TrainSetup = namedtuple(
     ]
 )
 
-def trainer_setup(
-    dataset: str, 
-    datadir: str, 
-    logdir: str, 
-    batch_size: int,
-    preproc: str, 
-    supervise_mode: str, 
-    nominal_label: int,
-    oe_limit: int, 
-    noise_mode: str,
-    workers: int, 
-    quantile: float, 
-    resdown: int, 
-    blur_heatmaps: bool,
-    cuda: bool, 
-    log_start_time: int = None, 
-    normal_class: int = 0,
-) -> TrainSetup:
-    """
-    Creates a complete setup for training, given all necessary parameter from a runner (seefcdd.runners.bases.py).
-    This includes loading networks, datasets, data loaders, optimizers, and learning rate schedulers.
-    :param dataset: dataset identifier string (see :data:`fcdd.datasets.DS_CHOICES`).
-    :param datadir: directory where the datasets are found or to be downloaded to.
-    :param logdir: directory where log data is to be stored.
-    :param net: network model identifier string (see :func:`fcdd.models.choices`).
-    :param bias: whether to use bias in the network layers.
-    :param learning_rate: initial learning rate.
-    :param weight_decay: weight decay (L2 penalty) regularizer.
-    :param lr_sched_param: learning rate scheduler parameters. Format depends on the scheduler type.
-        For 'milestones' needs to have at least two elements, the first corresponding to the factor
-        the learning rate is decreased by at each milestone, the rest corresponding to milestones (epochs).
-        For 'lambda' needs to have exactly one element, i.e. the factor the learning rate is decreased by
-        at each epoch.
-    :param batch_size: batch size, i.e. number of data samples that are returned per iteration of the data loader.
-    :param optimizer: optimizer type, needs to be one of {'sgd', 'adam'}.
-    :param scheduler: learning rate scheduler type, needs to be one of {'lambda', 'milestones'}.
-    :param preproc: data preprocessing pipeline identifier string (see :data:`PREPROCESSING_CHOICES`).
-    :param supervise_mode: the type of generated artificial anomalies.
-        See :meth:`fcdd.datasets.bases.TorchvisionDataset._generate_artificial_anomalies_train_set`.
-    :param nominal_label: the label that is to be returned to mark nominal samples.
-    :param oe_limit: limits the number of different anomalies in case of Outlier Exposure (defined in noise_mode).
-    :param noise_mode: the type of noise used, see :mod:`fcdd.datasets.noise_mode`.
-    :param workers: how many subprocesses to use for data loading.
-    :param quantile: the quantile that is used to normalize the generated heatmap images.
-    :param resdown: the maximum resolution of logged images, images will be downsampled if necessary.
-    :param gauss_std: a constant value for the standard deviation of the Gaussian kernel used for upsampling and
-        blurring, the default value is determined by :func:`fcdd.datasets.noise.kernel_size_to_std`.
-    :param blur_heatmaps: whether to blur heatmaps.
-    :param cuda: whether to use GPU.
-    :param config: some config text that is to be stored in the config.txt file.
-    :param log_start_time: the start time of the experiment.
-    :param normal_class: the class that is to be considered nominal.
-    :return: a dictionary containing all necessary parameters to be passed to a Trainer instance.
-    """
-    assert supervise_mode in SUPERVISE_MODES, 'unknown supervise mode: {}'.format(supervise_mode)
-    assert noise_mode in NOISE_MODES, 'unknown noise mode: {}'.format(noise_mode)
-    assert dataset in DATASET_CHOICES
-    assert preproc in PREPROCESSING_CHOICES
-    device = torch.device('cuda:0') if cuda else torch.device('cpu')
-    
-    logger = Logger(logdir=logdir, exp_start_time=log_start_time,)
-    
-    # ================================ DATASET ================================
-    if dataset == 'mvtec':
-        ds = ADMvTec(
-            root=datadir, 
-            normal_class=normal_class, 
-            preproc=preproc,
-            supervise_mode=supervise_mode, 
-            noise_mode=noise_mode, 
-            oe_limit=oe_limit, 
-            logger=logger, 
-            nominal_label=nominal_label,
-        )
-    else:
-        raise NotImplementedError(f'Dataset {dataset} is unknown.')
-    
-    train_loader, test_loader = ds.loaders(batch_size=batch_size, num_workers=workers)
-       
-    # ================================ ELSE ================================
-    
-    if not hasattr(ds, 'nominal_label') or ds.nominal_label < ds.anomalous_label:
-        ds_order = ['norm', 'anom']
-    else:
-        ds_order = ['anom', 'norm']
-        
-    images = ds.preview(percls=20, train=True)
-    
-    rowheaders = [
-        *ds_order, 
-        '', 
-        *['gtno' if s == 'norm' else 'gtan' for s in ds_order]
-    ]
-        
-    logger.imsave(
-        name='ds_preview', 
-        tensors=torch.cat([*images]), 
-        nrow=images.size(1),
-        rowheaders=rowheaders,
-    )
-    
-    return TrainSetup(
-        net=None, 
-        dataset=ds,
-        train_loader=train_loader,
-        test_loader=test_loader,
-        opt=None, 
-        sched=None, 
-        logger=logger,
-        device=device, 
-        quantile=quantile, 
-        resdown=resdown,
-        blur_heatmaps=blur_heatmaps,
-    )
-    
 
 
 # In[]:
@@ -858,14 +735,57 @@ def run_one(
     test: bool,
     normal_class_label: str,
     wandb_logger,
-    # 
+    supervise_mode: str,
+    dataset: str,
+    preproc: str,
+    datadir: str,
+    normal_class: int,
+    batch_size: int,
+    real_anomaly_limit: int,
+    logdir: str,
+    log_start_time,
+    #
+    nworkers: int, 
+    pin_memory: bool,
+    #
     **kwargs,
 ):
     """
     kwargs should contain all parameters of the setup function in training.setup
     """
+
+    assert dataset in DATASET_CHOICES, f"Invalid dataset: {dataset}, chose from {DATASET_CHOICES}"
     
-    setup: TrainSetup = trainer_setup(**kwargs)
+    assert supervise_mode in SUPERVISE_MODE_CHOICES, f"Invalid supervise_mode: {supervise_mode}, chose from {SUPERVISE_MODE_CHOICES}"
+    assert supervise_mode in dataset_supervise_mode_choices(dataset), f"Invalid supervise_mode: {supervise_mode}, chose from {dataset_supervise_mode_choices(dataset)}"
+    
+    assert preproc in PREPROCESSING_CHOICES, f"Invalid preproc: {preproc}, chose from {PREPROCESSING_CHOICES}"
+    assert preproc in dataset_preprocessing_choices(dataset), f"Invalid preproc: {preproc}, chose from {dataset_preprocessing_choices(dataset)}"
+    
+    logger = Logger(logdir=logdir, exp_start_time=log_start_time,)
+    
+    datamodule = MVTecAnomalyDetectionDataModule(
+        root=datadir,
+        normal_class=normal_class,
+        preproc=preproc,
+        supervise_mode=supervise_mode,
+        real_anomaly_limit=real_anomaly_limit,
+        raw_shape=(1, 240, 240),
+        batch_size=batch_size,
+        nworkers=nworkers,
+        pin_memory=pin_memory,
+    )
+            
+    # generate preview
+    datamodule.prepare_data()
+    datamodule.setup()
+    images = datamodule.torchvision_dataset.preview(percls=20, train=True)
+    logger.imsave(
+        name='ds_preview', 
+        tensors=torch.cat([*images]), 
+        nrow=images.size(1),
+        rowheaders=['norm', 'anom', '', 'gtno', 'gtan',],
+    )   
     
     # ================================ NET & OPTIMIZER ================================
     try:
@@ -873,7 +793,7 @@ def run_one(
         net = MODEL_CLASSES[net](
             
             # model
-            in_shape=setup.dataset.shape, 
+            in_shape=datamodule.net_shape, 
             gauss_std=gauss_std,
             bias=bias, 
             pixel_level_loss=pixel_level_loss,
@@ -894,14 +814,13 @@ def run_one(
     except KeyError as err:
         raise KeyError(f'Model {net} is not implemented!') from err
 
-    setup.logger.save_params(net, config)
+    logger.save_params(net, config)
     
     # Set up profiler
     wait, warmup, active, repeat = 1, 1, 2, 1
     schedule =  torch.profiler.schedule(
       wait=wait, warmup=warmup, active=active, repeat=repeat,
     )
-    
     profile_dir = Path(f"{wandb_logger.save_dir}/latest-run/tbprofile").absolute()
     profiler = torch.profiler.profile(
       schedule=schedule, 
@@ -910,7 +829,9 @@ def run_one(
     )
 
     with profiler:
+        
         profiler_callback = TorchTensorboardProfilerCallback(profiler)
+        
         trainer = pl.Trainer(
             logger=wandb_logger,  
             log_every_n_steps=1,  
@@ -919,7 +840,7 @@ def run_one(
             deterministic=True,
             callbacks=[profiler_callback],   
         )
-        trainer.fit(model=net, train_dataloaders=setup.train_loader)
+        trainer.fit(model=net, datamodule=datamodule)
 
     profile_art = wandb.Artifact(f"trace-{wandb.run.id}", type="profile")
     profile_art.add_file(str(next(profile_dir.glob("*.pt.trace.json"))), "trace.pt.trace.json")
@@ -928,7 +849,7 @@ def run_one(
     if not test:
         return 
     
-    trainer.test(model=net, dataloaders=setup.test_loader, ckpt_path=None)    
+    trainer.test(model=net, datamodule=datamodule)    
     
     
 def run(**kwargs) -> dict:
