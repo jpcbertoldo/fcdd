@@ -21,9 +21,7 @@ echo ""
 echo "\$UNSUPERVISED_ARGS = ${UNSUPERVISED_ARGS}"
 
 
-
-
-# previous (in launch 07)
+# previous (in launch 08)
 
 # sbatch ${SBATCH_SCRIPT_FPATH} ${SEMI_SUPERVISED_ARGS} --loss-mode pixel-wise-averages-per-image
 # sleep 15  # avoid the same directory name
@@ -35,26 +33,21 @@ echo "\$UNSUPERVISED_ARGS = ${UNSUPERVISED_ARGS}"
 
 # launch
 
-sbatch ${SBATCH_SCRIPT_FPATH} ${UNSUPERVISED_ARGS} --loss-mode pixel-wise-average-distance-per-image
+sbatch ${SBATCH_SCRIPT_FPATH} ${UNSUPERVISED_ARGS} --loss-mode pixel-wise-averages-per-image-balanced
 sleep 15  # avoid the same directory name
 
-
-sbatch ${SBATCH_SCRIPT_FPATH} ${UNSUPERVISED_ARGS} --loss-mode pixel-wise-averages-per-image
+sbatch ${SBATCH_SCRIPT_FPATH} ${SEMI_SUPERVISED_ARGS} --loss-mode pixel-wise-averages-per-image-balanced
 sleep 15  # avoid the same directory name
-
-
-
 
 
 # --loss-mode 
+# LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE_BALANCED = "pixel-wise-averages-per-image-balanced"
 
+
+# already
 # LOSS_PIXEL_LEVEL_BALANCED = "pixel-level-balanced"
 # LOSS_PIXEL_WISE_AVERAGE_DISTANCE_PER_IMAGE = "pixel-wise-average-distance-per-image"
 # LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE = "pixel-wise-averages-per-image"
-
-# NEXT
-# LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE_BALANCED = "pixel-wise-averages-per-image-balanced"
-
 
 # NOT GONNA LAUNCH
 # LOSS_PIXEL_LEVEL_FOCAL = "pixel-level-focal"

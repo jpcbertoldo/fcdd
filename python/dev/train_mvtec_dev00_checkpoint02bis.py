@@ -99,6 +99,7 @@ LOSS_PIXEL_LEVEL_FOCAL2 = "pixel-level-focal2"
 LOSS_PIXEL_WISE_AVERAGE_DISTANCES = "pixel-wise-average-distances"
 LOSS_PIXEL_WISE_AVERAGE_DISTANCE_PER_IMAGE = "pixel-wise-average-distance-per-image"
 LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE = "pixel-wise-averages-per-image"
+LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE_BALANCED = "pixel-wise-averages-per-image-balanced"
 
 LOSS_MODES = (
     LOSS_PIXEL_LEVEL, 
@@ -108,6 +109,7 @@ LOSS_MODES = (
     LOSS_PIXEL_WISE_AVERAGE_DISTANCES, 
     LOSS_PIXEL_WISE_AVERAGE_DISTANCE_PER_IMAGE,
     LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE,
+    LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE_BALANCED,
 )
 
 # In[]:
@@ -1254,7 +1256,7 @@ class FCDDTrainer:
             loss = norm_loss - ((1 - (-anom_loss).exp()) + 1e-31).log()
             return loss
         
-        if self.loss_mode == LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE:
+        if self.loss_mode == LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE or self.loss_mode == LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE_BALANCED:
             # in this one i do the average per image as above
             # but i do the conversion of anomalous loss before the per-image averaging
             
@@ -1275,6 +1277,16 @@ class FCDDTrainer:
             anom_n_notnan = anom_select.sum(dim=(-3, -2, -1))
             anom_loss = anom_loss.nansum(dim=(-3, -2, -1)) / (anom_n_notnan + 1e-31)  # +1e-31 to avoid division by 0 (x.nansum() returns 0 if all are nan)
             
+            if self.loss_mode == LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE_BALANCED:
+                # apply a balancing factor to the anomalous to compensate the fact that 
+                # usually there are less anomalous pixels
+                assert len(gtmaps.shape) == 4, f"gtmaps.shape = {gtmaps.shape}"
+                n_pixels_norm_perimg = (1 - gtmaps).sum(dim=(-3, -2, -1))  # \in R^(N,)
+                n_pixels_anom_perimg = gtmaps.sum(dim=(-3, -2, -1))  # \in R^(N,)
+                assert len(n_pixels_norm_perimg.shape) == 1, f"n_pixels_norm_perimg.shape = {n_pixels_norm_perimg.shape}"
+                ratio_norm_anom_perimg = n_pixels_norm_perimg / (n_pixels_anom_perimg + 1)
+                anom_loss = ratio_norm_anom_perimg * anom_loss
+                
             # now both losses are in R^(N,) so loss \in R^(N,)
             # at this point, each position in norm_loss[i] and anom_loss[i] is the average distance 
             # of the normal pixels and the anomalous pixels in the i-th image respectively
