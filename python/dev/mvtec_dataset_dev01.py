@@ -25,7 +25,7 @@ from torchvision.datasets.imagenet import check_integrity
 from tqdm import tqdm
 
 from data_dev01 import (ImgGtmapLabelTransform, ImgGtmapTensorsToUint8,
-                        ImgGtmapToPIL, MultiCompose)
+                        ImgGtmapToPIL, MultiCompose, NOMINAL_TARGET, ANOMALY_TARGET)
 
 CLASSES_LABELS = (
     'bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather',
@@ -37,9 +37,6 @@ NCLASSES = len(CLASSES_LABELS)
 
 NORMAL_LABEL = 'good'
 NORMAL_LABEL_IDX = 0
-    
-NOMINAL_TARGET = 0
-ANOMALY_TARGET = 1
 
 SPLIT_TRAIN = "train"
 SPLIT_TEST = "test"
@@ -369,7 +366,6 @@ class MvTec(VisionDataset, Dataset):
         0: nominal
         1: anomalous
         order of transforms:
-            label_transform  (applied to the anomaly_label, not the class label!!!!)
             all_transform
             img_and_gtmap_transform
             img_transform
@@ -380,8 +376,6 @@ class MvTec(VisionDataset, Dataset):
         :param split: whether to use "split_train", "split_test", "split_test_anomaly_type_label" data.
             In the latter case the get_item method returns labels indexing the anomalous class rather than
             the object class. That is, instead of returning 0 for "bottle", it returns "1" for "large_broken".
-        :param label_transform: function that takes label and transforms it somewhat.
-            Target transform is the first transform that is applied.
         :param img_and_gtmap_transform: function that takes image and ground-truth map and transforms it somewhat.
             Useful to apply the same augmentation to image and ground-truth map (e.g. cropping), s.t.
             the ground-truth map still matches the image.
@@ -519,6 +513,13 @@ class MvTec(VisionDataset, Dataset):
             None
         ):
             print(f'File `{self.data_fpath}` already prepared.')
+            assert check_integrity(
+                str(self.original_data_fpath), 
+                self._original_data_md5_fpath.read_text()
+                if self._original_data_md5_fpath.exists() else
+                None
+            ), \
+                f"file {self.data_fpath} is already prepared but its original {self.original_data_fpath} seems to be missing or corrupted"
             return 
         
         print(f'File `{self.data_fpath}` will be precomputed.')
@@ -670,8 +671,8 @@ class MvTec(VisionDataset, Dataset):
         assert class_label == self.normal_class, f'Expected class label {self.normal_class} but got {class_label}'
         gtmap = self.gtmaps[index]
 
-        if self.label_transform is not None:
-            target = NOMINAL_TARGET if anomaly_label == NORMAL_LABEL_IDX else ANOMALY_TARGET
+        # no more label_transform
+        target = NOMINAL_TARGET if anomaly_label == NORMAL_LABEL_IDX else ANOMALY_TARGET
 
         if self.all_transform is not None:
             img, gtmap, target = self.all_transform((img, gtmap, target))
@@ -1148,7 +1149,7 @@ if __name__ == "__main__":
         root="../../data/datasets", 
         split=SPLIT_TEST, 
         # split=SPLIT_TRAIN, 
-        normal_class=1,
+        normal_class=0,
         # shape=(3, 100, 100),
         shape=(3, 50, 50),
     )
@@ -1158,7 +1159,7 @@ if __name__ == "__main__":
 
     mvtecad_datamodule = MVTecAnomalyDetectionDataModule(
         root="../../data/datasets",
-        normal_class=7,
+        normal_class=0,
         # preproc=PREPROCESSING_NONE,
         preproc=PREPROCESSING_LCNAUG1,
         # supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
