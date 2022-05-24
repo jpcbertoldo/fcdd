@@ -12,6 +12,7 @@ import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
 from PIL import Image
 
+from matplotlib.figure import Figure
 
 
 ANOMALY_TARGET = 1
@@ -124,7 +125,7 @@ class MultiCompose(transforms.Compose):
         return imgs
 
 
-def generate_dataloader_images(dataloader, nimages_perclass=20) -> torch.Tensor:
+def generate_dataloader_images(dataloader, nimages_perclass=20) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]:
     """
     Generates a preview of the dataset, i.e. it generates an image of some randomly chosen outputs
     of the dataloader, including ground-truth maps.
@@ -134,6 +135,8 @@ def generate_dataloader_images(dataloader, nimages_perclass=20) -> torch.Tensor:
     :param nimages_perclass: how many samples are shown per class, i.e. for anomalies and nominal samples each
     :return: four Tensors of images of shape (n x c x h x w): ((normal_imgs, normal_gtmaps), (anomalous_imgs, anomalous_gtmaps)) 
     """
+    print('Generating images...')
+    
     imgs, y, gtmaps = torch.FloatTensor(), torch.LongTensor(), torch.FloatTensor()
     
     for imgb, yb, gtmapb in dataloader:
@@ -147,11 +150,11 @@ def generate_dataloader_images(dataloader, nimages_perclass=20) -> torch.Tensor:
     n_unique_values_in_gts = len(set(gtmaps.reshape(-1).tolist()))
     assert n_unique_values_in_gts <= 2, 'training process assumes zero-one gtmaps'
     
-    effective_nimages_perclass = min(Counter(y.tolist()).values())
-    if effective_nimages_perclass != nimages_perclass:
+    effective_nimages_perclass = min(min(Counter(y.tolist()).values()), nimages_perclass)
+    if effective_nimages_perclass < nimages_perclass:
         print(f"could not find {nimages_perclass} on each class, only generated {effective_nimages_perclass} of each")
-        
-    return torch.tensor((
+    
+    ret = (
         (
             imgs[y == NOMINAL_TARGET][:effective_nimages_perclass], 
             gtmaps[y == NOMINAL_TARGET][:effective_nimages_perclass],
@@ -160,46 +163,128 @@ def generate_dataloader_images(dataloader, nimages_perclass=20) -> torch.Tensor:
             imgs[y == ANOMALY_TARGET][:effective_nimages_perclass], 
             gtmaps[y == ANOMALY_TARGET][:effective_nimages_perclass],
         ),
-    ))
-    
-
-def generate_dataloader_preview(dataloader, nimages_perclass):
-    print('Generating dataset preview...')
-    print('Generating images...')
-    ((normal_imgs, normal_gtmaps), (anomalous_imgs, anomalous_gtmaps)) = generate_dataloader_images(dataloader, nimages_perclass)
-    print('Images generated.')
-
-    assert anomalous_imgs.shape == normal_imgs.shape
-    assert anomalous_gtmaps.shape == normal_gtmaps.shape
-
-    assert anomalous_imgs[0].shape == anomalous_gtmaps[0].shape
-    assert anomalous_imgs[-2:].shape == anomalous_gtmaps[-2:].shape
-
-    assert normal_imgs[0].shape == normal_gtmaps[0].shape
-    assert normal_imgs[-2:].shape == normal_gtmaps[-2:].shape
-
-    effective_nimages_perclass, imgs_nchannels, height, width = normal_imgs
-    
-    
-    
-if __name__ == "__main__":
-    from mvtec_dataset_dev01 import MVTecAnomalyDetectionDataModule, PREPROCESSING_LCNAUG1, SUPERVISE_MODE_REAL_ANOMALY
-    mvtecad_datamodule = MVTecAnomalyDetectionDataModule(
-        root="../../data/datasets",
-        normal_class=0,
-        # preproc=PREPROCESSING_NONE,
-        preproc=PREPROCESSING_LCNAUG1,
-        # supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
-        supervise_mode=SUPERVISE_MODE_REAL_ANOMALY,
-        batch_size=128,
-        nworkers=2,
-        pin_memory=False,
-        raw_shape=(3, 50, 50),
-        net_shape=(3, 50, 50),
-        real_anomaly_limit=1,
     )
-    mvtecad_datamodule.prepare_data()
-    mvtecad_datamodule.setup()
-    generate_dataloader_preview(mvtecad_datamodule.train_dataloader(), nimages_perclass=5)
     
-    # about test: create option to use original gtmaps or not (resized gtmaps)
+    print('Images generated.')
+    return ret
+    
+
+def generate_dataloader_preview_multiple_fig(
+    normal_imgs: torch.Tensor, 
+    normal_gtmaps: torch.Tensor, 
+    anomalous_imgs: torch.Tensor,
+    anomalous_gtmaps: torch.Tensor,
+    dpi=80,
+) -> List[Figure]:
+    """
+    normal_imgs, anomalous_imgs: tensors of shape (n x 3 x h x w)
+    normal_gtmaps,anomalous_gtmaps: tensors of shape (n x 1 x h x w)
+    """
+    print('Generating dataset preview...')
+
+    assert normal_imgs.shape[1] == 3, f"normal imgs: expected 3 channels, got {normal_imgs[1]}"
+    assert normal_gtmaps.shape[1] == 1, f"normal gtmaps: expected 1 channel, got {normal_gtmaps[1]}"
+    
+    assert anomalous_imgs.shape == normal_imgs.shape, f"images have different shapes: anomalous:{anomalous_imgs.shape} vs normal:{normal_imgs.shape}"
+    assert anomalous_gtmaps.shape == normal_gtmaps.shape, f"gtmaps have different shapes: anomalous:{anomalous_gtmaps.shape} vs normal:{normal_gtmaps.shape}"
+
+    assert anomalous_imgs.shape[0] == anomalous_gtmaps.shape[0], f"anomalous images and gtmaps have different number of samples: anomalous:{anomalous_imgs.shape[0]} vs normal:{anomalous_gtmaps.shape[0]}"
+    assert anomalous_imgs.shape[2:] == anomalous_gtmaps.shape[2:], f"anomalous images and gtmaps have different shapes: anomalous:{anomalous_imgs.shape} vs anomalous:{anomalous_gtmaps.shape}"
+
+    assert normal_imgs.shape[0] == normal_gtmaps.shape[0], f"normal images and gtmaps have different number of samples: imgs:{normal_imgs.shape[0]} vs gtmaps:{normal_gtmaps.shape[0]}"
+    assert normal_imgs.shape[2:] == normal_gtmaps.shape[2:], f"normal images and gtmaps have different shapes: imgs:{normal_imgs.shape} vs gtmaps:{normal_gtmaps.shape}"
+
+    _, _, height, width = normal_imgs.shape
+    
+    figsize = (height / dpi, width / dpi)
+       
+    def do(imgs: torch.Tensor, gtmaps: torch.Tensor, label_prefix: str) -> List[Figure]:
+        """([n, 3, h, w], [n, 1, h, w]) -> n plt figures"""
+        
+        prevs = [
+            # dim 1 = height ==> vertical concatenation
+            # the repeat(3) is there to make the gtmap "RGB" while keeping it gray 
+            torch.cat([img, gtmap.repeat(3, 1, 1)], dim=1)
+            for img, gtmap in zip(imgs, gtmaps)
+        ]
+        figs = []
+        for idx, prev in enumerate(prevs):
+            fig_kw = dict(frameon=False)
+            fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi, **fig_kw)
+            fig.label = f"{label_prefix}_{idx}"
+            ax.imshow(np.transpose(prev.numpy(), (1, 2, 0)))   
+            ax.axis("off")
+            figs.append(fig)         
+        return figs
+    
+    normal_figs = do(normal_imgs, normal_gtmaps, "normal")
+    anomalous_figs = do(anomalous_imgs, anomalous_gtmaps, "anomalous")
+    
+    print('Dataset preview generated.')
+    
+    return normal_figs, anomalous_figs
+
+
+def generate_dataloader_preview_single_fig(
+    normal_imgs: torch.Tensor, 
+    normal_gtmaps: torch.Tensor, 
+    anomalous_imgs: torch.Tensor,
+    anomalous_gtmaps: torch.Tensor,
+    dpi=80,
+) -> List[Figure]:
+    """
+    normal_imgs, anomalous_imgs: tensors of shape (n x 3 x h x w)
+    normal_gtmaps,anomalous_gtmaps: tensors of shape (n x 1 x h x w)
+    """
+    print('Generating dataset preview...')
+
+    assert normal_imgs.shape[1] == 3, f"normal imgs: expected 3 channels, got {normal_imgs[1]}"
+    assert normal_gtmaps.shape[1] == 1, f"normal gtmaps: expected 1 channel, got {normal_gtmaps[1]}"
+    
+    assert anomalous_imgs.shape == normal_imgs.shape, f"images have different shapes: anomalous:{anomalous_imgs.shape} vs normal:{normal_imgs.shape}"
+    assert anomalous_gtmaps.shape == normal_gtmaps.shape, f"gtmaps have different shapes: anomalous:{anomalous_gtmaps.shape} vs normal:{normal_gtmaps.shape}"
+
+    assert anomalous_imgs.shape[0] == anomalous_gtmaps.shape[0], f"anomalous images and gtmaps have different number of samples: anomalous:{anomalous_imgs.shape[0]} vs normal:{anomalous_gtmaps.shape[0]}"
+    assert anomalous_imgs.shape[2:] == anomalous_gtmaps.shape[2:], f"anomalous images and gtmaps have different shapes: anomalous:{anomalous_imgs.shape} vs anomalous:{anomalous_gtmaps.shape}"
+
+    assert normal_imgs.shape[0] == normal_gtmaps.shape[0], f"normal images and gtmaps have different number of samples: imgs:{normal_imgs.shape[0]} vs gtmaps:{normal_gtmaps.shape[0]}"
+    assert normal_imgs.shape[2:] == normal_gtmaps.shape[2:], f"normal images and gtmaps have different shapes: imgs:{normal_imgs.shape} vs gtmaps:{normal_gtmaps.shape}"
+
+    nimages, _, height, width = normal_imgs.shape
+    
+    # 4 accounts for: normal img, normal gtmap, anomalous img, anomalous gtmap
+    figsize = (4 * height / dpi, nimages * width / dpi)
+       
+    def do(imgs: torch.Tensor, gtmaps: torch.Tensor) -> List[Figure]:
+        """([n, 3, h, w], [n, 1, h, w]) -> n plt figures"""
+        
+        # concatenates img/gtmap vertically
+        prevs = [
+            # dim 1 = height ==> vertical concatenation
+            # the repeat(3) is there to make the gtmap "RGB" while keeping it gray 
+            torch.cat([img, gtmap.repeat(3, 1, 1)], dim=1)
+            for img, gtmap in zip(imgs, gtmaps)
+        ]
+        # concatenate the many prevs horizontally
+        return torch.cat(prevs, dim=2)
+    
+    normal_prevs = do(normal_imgs, normal_gtmaps)
+    anomalous_prevs = do(anomalous_imgs, anomalous_gtmaps)
+    
+    # concatenate normal/anomalous previews vertically
+    prev = torch.cat([normal_prevs, anomalous_prevs], dim=1)
+    
+    fig_kw = dict(frameon=False)
+    fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi, **fig_kw)
+    fig.label = f"preview_{nimages:02d}_images"
+    ax.imshow(np.transpose(prev.numpy(), (1, 2, 0)))   
+    ax.axis("off")
+    
+    print('Dataset preview generated.')
+    
+    return fig
+
+
+
+
+# about test: create option to use original gtmaps or not (resized gtmaps)
