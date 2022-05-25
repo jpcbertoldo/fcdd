@@ -101,6 +101,10 @@ LOSS_PIXEL_WISE_AVERAGE_DISTANCE_PER_IMAGE = "pixel-wise-average-distance-per-im
 LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE = "pixel-wise-averages-per-image"
 LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE_BALANCED = "pixel-wise-averages-per-image-balanced"
 
+LOSS_PIXEL_LEVEL_BALANCED_POST_HUBER = "pixel-level-balanced-post-hubert"
+LOSS_PIXEL_LEVEL_BALANCED_HUBER_FACTOR_AVERAGE = "pixel-level-balanced-hubert-factor-average"
+
+
 LOSS_MODES = (
     LOSS_PIXEL_LEVEL, 
     LOSS_PIXEL_LEVEL_BALANCED, 
@@ -110,6 +114,8 @@ LOSS_MODES = (
     LOSS_PIXEL_WISE_AVERAGE_DISTANCE_PER_IMAGE,
     LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE,
     LOSS_PIXEL_WISE_AVERAGES_PER_IMAGE_BALANCED,
+    LOSS_PIXEL_LEVEL_BALANCED_POST_HUBER,
+    LOSS_PIXEL_LEVEL_BALANCED_HUBER_FACTOR_AVERAGE,
 )
 
 # In[]:
@@ -1183,7 +1189,8 @@ class FCDDTrainer:
         
         assert isinstance(self.net, FCDDNet)
         
-        loss = outs ** 2
+        # outs \in R^{N x d x H x W}
+        loss = (outs ** 2).sum(dim=1, keepdim=True)
         loss = (loss + 1).sqrt() - 1
         
         if not self.net.training:
@@ -1193,6 +1200,58 @@ class FCDDTrainer:
         
         std = self.gauss_std
         loss = self.net.receptive_upsample(loss, reception=True, std=std, cpu=False)
+         
+        if self.loss_mode == LOSS_PIXEL_LEVEL_BALANCED_POST_HUBER:
+            loss = (outs ** 2).sum(dim=1, keepdim=True).sqrt()
+            
+            loss = self.net.receptive_upsample(loss, reception=True, std=self.gauss_std, cpu=False)
+            
+            # these have raw/converted values or 0, and they are complementary
+            norm_loss_maps = (loss * (1 - gtmaps))
+            anom_loss_maps = -(((1 - (-loss).exp()) + 1e-31).log())
+            anom_loss_maps = anom_loss_maps * gtmaps
+
+            # apply the hubert trick
+            loss = (loss**2 + 1).sqrt() - 1
+
+            # balancing ratio
+            n_pixels_normal = (1 - gtmaps).sum()
+            n_pixels_anomalous = gtmaps.sum()
+            ratio_norm_anom = n_pixels_normal / (n_pixels_anomalous + 1)
+            
+            # combine them such that there is no 0, so the batch-wise average can be computed
+            loss = norm_loss_maps + ratio_norm_anom * anom_loss_maps   
+            
+            batch_size = loss.size(0)
+            return loss.view(batch_size, -1).mean(-1)
+            
+        if self.loss_mode == LOSS_PIXEL_LEVEL_BALANCED_HUBER_FACTOR_AVERAGE:
+            
+            loss = (outs ** 2).sum(dim=1, keepdim=True)
+            
+            # apply the hubert trick with a factor computed from the average distance
+            avg_dist = loss.sqrt().mean()
+            loss = (((loss / (avg_dist  + 1e-31)) + 1).sqrt() - 1) * avg_dist.sqrt()
+            
+            loss = self.net.receptive_upsample(loss, reception=True, std=self.gauss_std, cpu=False)
+            
+            # these have raw/converted values or 0, and they are complementary
+            norm_loss_maps = (loss * (1 - gtmaps))
+            anom_loss_maps = -(((1 - (-loss).exp()) + 1e-31).log())
+            anom_loss_maps = anom_loss_maps * gtmaps
+
+            # balancing ratio
+            n_pixels_normal = (1 - gtmaps).sum()
+            n_pixels_anomalous = gtmaps.sum()
+            ratio_norm_anom = n_pixels_normal / (n_pixels_anomalous + 1)
+            
+            # combine them such that there is no 0, so the batch-wise average can be computed
+            loss = norm_loss_maps + ratio_norm_anom * anom_loss_maps   
+            
+            batch_size = loss.size(0)
+            return loss.view(batch_size, -1).mean(-1)
+        
+        # ============================================================
         
         if self.loss_mode == LOSS_PIXEL_WISE_AVERAGE_DISTANCES:
             # here i'm actually taking the average distances in the batch
