@@ -209,7 +209,7 @@ def merge_image_and_synthetic_noise(
         img: torch.Tensor, 
         gt: torch.Tensor, 
         generated_noise: torch.Tensor, 
-        invert_threshold: float = 0.025,
+        invert_threshold: float = 0.00025,
     ):
         assert (img.dim() == 4 or img.dim() == 3) and generated_noise.shape == img.shape
         anom = img.clone()
@@ -217,15 +217,19 @@ def merge_image_and_synthetic_noise(
         # invert noise if difference of malformed and original is less than threshold and inverted difference is higher
         diff = ((anom.int() + generated_noise).clamp(0, 255) - anom.int())
         diff = diff.reshape(anom.size(0), -1).sum(1).float().div(np.prod(anom.shape)).abs()
+        
         diffi = ((anom.int() - generated_noise).clamp(0, 255) - anom.int())
         diffi = diffi.reshape(anom.size(0), -1).sum(1).float().div(np.prod(anom.shape)).abs()
+        
         inv = [i for i, (d, di) in enumerate(zip(diff, diffi)) if d < invert_threshold and di > d]
         generated_noise[inv] = -generated_noise[inv]
 
         anom = (anom.int() + generated_noise).clamp(0, 255).byte()
 
-        gt = (img != anom).max(1)[0].clone().float()
+        gt = (img != anom).max(1)[0].clone().float() 
         gt = gt.unsqueeze(1)  # value 1 will be put to anom_label in mvtec_bases get_item
+
+        # anom = anom.float() / 255.0
 
         return anom, gt
     
@@ -318,13 +322,15 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
             generated_noise = generated_noise_rgb + generated_noise
             # generated_noise = smooth_noise(generated_noise, 25, 5, 1.0)
             
+            # img, gtmap = merge_image_and_synthetic_noise(
             img, gtmap = merge_image_and_synthetic_noise(
-                img, 
+                (img * 255).int(), 
                 gtmap.squeeze(), 
                 generated_noise, 
                 invert_threshold=self.invert_threshold
             )
-            return img, gtmap, ANOMALY_TARGET
+            img = img.float() / 255.0
+            return img[0], gtmap[0], ANOMALY_TARGET
             
         elif self.supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
             
@@ -748,7 +754,7 @@ class MvTec(VisionDataset, Dataset):
             assert target_ in (NOMINAL_TARGET, ANOMALY_TARGET), f'Expected target to be either {NOMINAL_TARGET} or {ANOMALY_TARGET}, got {target_}'
             assert img_.min() >= 0, f'Expected img to have values >= 0, got {img_.min()}'
             assert img_.max() <= 1, f'Expected img to have values <= 1, got {img_.max()}'
-            assert tuple(sorted(gtmap.unique().tolist())) in ((0., 1.), (0.,)), f"Expected gtmap to have values (0., 1.), got {tuple(sorted(gtmap.unique().tolist()))}"
+            assert tuple(sorted(gtmap_.unique().tolist())) in ((0., 1.), (0.,)), f"Expected gtmap to have values (0., 1.), got {tuple(sorted(gtmap.unique().tolist()))}"
 
         # this try/catch makes it easier to debug because you cans see self
         validate(img, gtmap, target)
@@ -1311,7 +1317,7 @@ if __name__ == "__main__":
         # plt.figure(fig.label)
         # plt.show()
         
-    savefig(single_preview_fig, savedir / f"train.{single_preview_fig.label}.png", preview_image_size_factor=.4)
+    savefig(single_preview_fig, savedir / f"train.{single_preview_fig.label}.png", preview_image_size_factor=1)
     
     # test
     ((normal_imgs, normal_gtmaps), (anomalous_imgs, anomalous_gtmaps)) = generate_dataloader_images(
