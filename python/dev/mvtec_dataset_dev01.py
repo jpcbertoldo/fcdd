@@ -25,7 +25,7 @@ from torchvision.datasets.imagenet import check_integrity
 from tqdm import tqdm
 
 from data_dev01 import (ImgGtmapLabelTransform, ImgGtmapTensorsToUint8,
-                        ImgGtmapToPIL, MultiCompose, NOMINAL_TARGET, ANOMALY_TARGET)
+                        ImgGtmapToPIL, MultiCompose, NOMINAL_TARGET, ANOMALY_TARGET, generate_dataloader_images, generate_dataloader_preview_multiple_fig, generate_dataloader_preview_single_fig)
 
 CLASSES_LABELS = (
     'bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather',
@@ -51,8 +51,7 @@ SUPERVISE_MODES_DOC = {
 }
 
 PREPROCESSING_LCNAUG1 = 'lcnaug1'
-PREPROCESSING_NONE = 'none'
-PREPROCESSING_CHOICES = (PREPROCESSING_LCNAUG1, PREPROCESSING_NONE)
+PREPROCESSING_CHOICES = (PREPROCESSING_LCNAUG1,)
 
 TARGZ_DOWNLOAD_URL = "ftp://guest:GU%2E205dldo@ftp.softronics.ch/mvtec_anomaly_detection/mvtec_anomaly_detection.tar.xz"
 TARGZ_FNAME = 'mvtec_anomaly_detection.tar.xz'
@@ -262,16 +261,18 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
         
         else:
             raise NotImplementedError(f'Supervise mode `{self.supervise_mode}` unknown.')        
-
-    def setup_real_anomaly_dataloader(self, dataloader: torch.utils.data.DataLoader):
-        assert self.supervise_mode == SUPERVISE_MODE_REAL_ANOMALY, f"setup_real_anomaly_dataloader() should only be called on supervise mode {SUPERVISE_MODE_REAL_ANOMALY}"
-        self._real_anomaly_dataloader = cycle(dataloader)
-
+    
     @property
     def real_anomaly_dataloader(self) -> torch.utils.data.DataLoader:
         assert self.supervise_mode == SUPERVISE_MODE_REAL_ANOMALY, f"real_anomaly_dataloader (@property) should only be called on supervise mode {SUPERVISE_MODE_REAL_ANOMALY}"
-        assert self._real_anomaly_dataloader is not None, 'real anomaly sampler is required for real anomaly mode, please run setup_real_anomaly_dataloader() before calling this property'
-        return self._real_anomaly_dataloader
+        assert self._real_anomaly_dataloader is not None, '_real_anomaly_dataloader is required for real anomaly mode, please set _real_anomaly_dataloader before getting it'
+        return self._real_anomaly_dataloader_cycle
+    
+    @real_anomaly_dataloader.setter
+    def real_anomaly_dataloader(self, dataloader: torch.utils.data.DataLoader):
+        assert self.supervise_mode == SUPERVISE_MODE_REAL_ANOMALY, f"real_anomaly_dataloader should only be set on supervise mode {SUPERVISE_MODE_REAL_ANOMALY}"
+        self._real_anomaly_dataloader = dataloader
+        self._real_anomaly_dataloader_cycle = cycle(self._real_anomaly_dataloader)
     
     def __call__(self, img: torch.Tensor, gtmap: torch.Tensor, label: int) -> Tuple[torch.Tensor, torch.Tensor, int]:
         """
@@ -291,7 +292,7 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
         img = img.unsqueeze(0) if img is not None else img
         
         # gt value 1 will be put to anom_label in mvtec_bases get_item
-        gtmap = gtmap.unsqueeze(0).unsqueeze(0).fill_(1).float() if gtmap is not None else gtmap
+        gtmap = gtmap.unsqueeze(0).fill_(1).float() if gtmap is not None else gtmap
         
         if self.supervise_mode == SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI:
              
@@ -319,7 +320,7 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
             
             img, gtmap = merge_image_and_synthetic_noise(
                 img, 
-                gtmap, 
+                gtmap.squeeze(), 
                 generated_noise, 
                 invert_threshold=self.invert_threshold
             )
@@ -327,15 +328,19 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
             
         elif self.supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
             
-            try:
-                anom_img, gtmap = next(self.real_anomaly_dataloader)
-                
-            except RuntimeError:
-                anom_img, gtmap = next(self.real_anomaly_dataloader)
-                print(f'Had to resample in online_supervisor __call__ next(self.noise_sampler) because of {traceback.format_exc()}')
+            img_, target, gtmap_ = next(self.real_anomaly_dataloader)
+
+            assert img_.shape == img.shape, f"img.shape {img.shape} != img_.shape {img_.shape}"
+            assert gtmap_.shape == gtmap.shape, f"gtmap.shape {gtmap.shape} != gtmap_.shape {gtmap_.shape}"
             
-            img = anom_img.clamp(0, 255).byte() 
-            return img, gtmap, ANOMALY_TARGET
+            img = img_
+            gtmap = gtmap_
+
+            assert target.shape == (1,), f"target.shape should be (1,), but is {target.shape}"
+            assert target[0] == ANOMALY_TARGET, f"target should be {ANOMALY_TARGET}"
+            
+            # img = anom_img.clamp(0, 255).byte() 
+            return img[0], gtmap[0], ANOMALY_TARGET  # [0] gets rid of the batch idx axis
         
         else:
             raise NotImplementedError('Supervise mode {self.supervise_mode} unknown.')
@@ -357,7 +362,7 @@ class MvTec(VisionDataset, Dataset):
         root: str, 
         split: str, 
         normal_class: int, 
-        shape: Tuple[int, int, int] = (3, 240, 240),
+        shape: Tuple[int, int, int] = (240, 240),
         img_and_gtmap_transform: Callable = None, 
         img_transform: Callable = None, 
         all_transform: Callable = None,
@@ -406,11 +411,10 @@ class MvTec(VisionDataset, Dataset):
         self.split = split
         
         # validate shape
-        assert len(shape) == 3, "shape must be a tuple of length 3"
-        nchannels, width, height = shape
+        assert len(shape) == 2, "shape must be a tuple of length 3"
+        width, height = shape
         assert width == height, f"shape: width={width} != height={height}"
-        assert nchannels in (1, 3), f"shape: nchannels={nchannels} not in (1, 3)"
-        del nchannels, width, height
+        del width, height
         self.shape = shape
         
         # there are 15 classes in the MVTEC dataset´
@@ -470,8 +474,7 @@ class MvTec(VisionDataset, Dataset):
     def original_gtmaps(self):
         if self._original_gtmaps is None:
             raise RuntimeError("MVTec dataset not setup yet. Please call setup() first.")
-        return self._original_gtmaps        
-        return self._original_gtmaps.unsqueeze(1).div(255)        
+        return self._original_gtmaps               
     
     @property
     def tar_fpath(self):
@@ -479,7 +482,7 @@ class MvTec(VisionDataset, Dataset):
     
     @staticmethod
     def data_fname(cls: int, shape: Tuple[int, int, int]):
-        return f"admvtec_class_{cls:02}_shape_{shape[1]:04}x{shape[2]:04}.pt"
+        return f"admvtec_class_{cls:02}_shape_w{shape[1]:04}xh{shape[0]:04}.pt"
     
     @property
     def data_fpath(self) -> Path:
@@ -604,7 +607,7 @@ class MvTec(VisionDataset, Dataset):
         original_dataset_dict = torch.load(self.original_data_fpath)
         
         # see the end of the function download_original_data() 
-        size_interpolate = self.shape[1:]  # [height, width]
+        size_interpolate = self.shape  # [height, width]
 
         dataset_dict = {
             'train_imgs': torch_interpolate(
@@ -620,9 +623,9 @@ class MvTec(VisionDataset, Dataset):
             'test_labels': original_dataset_dict['test_labels'],
             # gtmaps dont have the channel axis so it's added then removed again (unsqueeze and squeeze)
             'test_gtmaps': torch_interpolate(
-                input=original_dataset_dict['test_gtmaps'].unsqueeze(1), 
+                input=original_dataset_dict['test_gtmaps'], 
                 size=size_interpolate,
-            ).squeeze().byte(), 
+            ).byte(), 
             'test_anomaly_labels': original_dataset_dict['test_anomaly_labels'],
             'anomaly_label_strings': original_dataset_dict['anomaly_label_strings'],
         }
@@ -645,11 +648,15 @@ class MvTec(VisionDataset, Dataset):
         if self.split == SPLIT_TRAIN:
             self._imgs = dataset_dict['train_imgs']
             self._labels = dataset_dict['train_labels']
-            self._gtmaps = torch.zeros_like(self._imgs).byte()
+            imgs_shape = self.imgs.shape
+            gtmaps_shape = (imgs_shape[0], 1,) + tuple(imgs_shape[2:])  # imgs have 3 channels, gtmaps just 1
+            self._gtmaps = torch.zeros(gtmaps_shape).byte()
             self._anomaly_labels = dataset_dict['train_anomaly_labels']
             
             original_dataset_dict = torch.load(self.original_data_fpath)
-            self._original_gtmaps = torch.zeros_like(original_dataset_dict["train_imgs"]).byte()
+            imgs_shape = original_dataset_dict["train_imgs"].shape
+            gtmaps_shape = (imgs_shape[0], 1,) + tuple(imgs_shape[2:])  # imgs have 3 channels, gtmaps just 1
+            self._original_gtmaps = torch.zeros(gtmaps_shape).byte()
             
         elif self.split == SPLIT_TEST:
             self._imgs = dataset_dict['test_imgs']
@@ -663,26 +670,101 @@ class MvTec(VisionDataset, Dataset):
         else:
             raise ValueError(f'Unknown split {self.split}.')
         
+        # =============================================================================
+        # ================================ validation ================================
+        # =============================================================================
+        
+        # ndim
+        assert self.imgs.ndim == 4, f'Expected imgs to have 4 dimensions, got {self.imgs.ndim}'
+        assert self.gtmaps.ndim == 4, f'Expected gtmaps to have 4 dimensions, got {self.gtmaps.ndim}'
+        assert self.original_gtmaps.ndim == 4, f'Expected gtmaps to have 4 dimensions, got {self.original_gtmaps.ndim}'
+        assert self.labels.ndim == 1, f'Expected labels to have 1 dimensions, got {self.labels.ndim}'
+        assert self.anomaly_labels.ndim == 1, f'Expected anomaly_labels to have 1 dimensions, got {self.anomaly_labels.ndim}'
+        
+        # coherence of the shapes
+        assert self.imgs.shape[2:] == self.shape, f'Expected imgs to have shape {self.shape}, got {self.imgs.shape[2:]}'
+        assert self.imgs.shape[2:] == self.gtmaps.shape[2:], f'Expected imgs and gtmaps to have the same shape, got {self.imgs.shape} and {self.gtmaps.shape}'
+        assert self.imgs.shape[0] == self.gtmaps.shape[0], f'Expected imgs and original_gtmaps to have the same number of samples, got {self.imgs.shape[0]} and {self.gtmaps.shape[0]}'
+        assert self.imgs.shape[0] == self.original_gtmaps.shape[0], f'Expected imgs and original_gtmaps to have the same number of samples, got {self.imgs.shape[0]} and {self.original_gtmaps.shape[0]}'
+        assert self.imgs.shape[0] == self.labels.shape[0], f'Expected imgs and labels to have the same number of samples, got {self.imgs.shape[0]} and {self.labels.shape[0]}'
+        assert self.imgs.shape[0] == self.anomaly_labels.shape[0], f'Expected imgs and anomaly_labels to have the same number of samples, got {self.imgs.shape[0]} and {self.anomaly_labels.shape[0]}'
+        
+        # nchannels
+        assert self.imgs.shape[1] == 3, f'Expected imgs to have 3 channels, got {self.imgs.shape[1]}'
+        assert self.gtmaps.shape[1] == 1, f'Expected gtmaps to have 1 channel, got {self.gtmaps.shape[1]}'
+        
+        # dtype
+        assert self.imgs.dtype == torch.uint8, f'Expected imgs to have dtype torch.uint8, got {self.imgs.dtype}'
+        assert self.gtmaps.dtype == torch.uint8, f'Expected gtmaps to have dtype torch.uint8, got {self.gtmaps.dtype}'
+        assert self.labels.dtype == torch.int32, f'Expected labels to have dtype torch.int32, got {self.labels.dtype}'
+        assert self.anomaly_labels.dtype == torch.int32, f'Expected anomaly_labels to have dtype torch.int32, got {self.anomaly_labels.dtype}'
+        
+        # values
+        assert tuple(sorted(self.gtmaps.unique().tolist())) in ((0, 255), (0,)), f"Expected gtmaps to have values (0, 255), got {tuple(sorted(self.gtmaps.unique().tolist()))}"
+        assert tuple(sorted(self.labels.unique().tolist())) in tuple((c,) for c in range(NCLASSES)), f'Expected labels to have values 0 to {NCLASSES-1}, got {self.labels.unique()}'
+        assert (self.labels == self.normal_class).all(), f'Expected labels to be all {self.normal_class}'
+        
+        # =============================================================================
+        self._imgs = self._imgs / 255.
+        self._gtmaps = self._gtmaps / 255.
+        self._original_gtmaps = self._original_gtmaps / 255.
+        
         print('Dataset setup.')
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, int, torch.Tensor]:
         
         img, class_label, anomaly_label = self.imgs[index], self.labels[index], self.anomaly_labels[index]
+        
         assert class_label == self.normal_class, f'Expected class label {self.normal_class} but got {class_label}'
         gtmap = self.gtmaps[index]
-
+        
         # no more label_transform
         target = NOMINAL_TARGET if anomaly_label == NORMAL_LABEL_IDX else ANOMALY_TARGET
 
+        def validate(img_: torch.Tensor, gtmap_: torch.Tensor, target_: int) -> None:
+            """make sure things are as expected after each transformation"""
+            
+            # type
+            assert type(img_) == torch.Tensor, f'Expected img to be a torch.Tensor, got {type(img_)}'
+            assert type(gtmap_) == torch.Tensor, f'Expected gtmap to be a torch.Tensor, got {type(gtmap_)}'
+            assert type(target_) == int, f'Expected target to be an int, got {type(target_)}'
+                        
+            # ndim
+            assert img_.ndim == 3, f'Expected img to have 3 dimensions, got {img_.ndim}'
+            assert gtmap_.ndim == 3, f'Expected gtmap to have 3 dimensions, got {gtmap_.ndim}'
+            
+            # coherence of the shapes
+            assert img_.shape[1:] == gtmap_.shape[1:], f'Expected img and gtmap to have the same shape, got {img_.shape} and {gtmap_.shape}'
+            
+            # nchannels
+            assert img_.shape[0] == 3, f'Expected img to have 3 channels, got {img_.shape[0]}'
+            assert gtmap_.shape[0] == 1, f'Expected gtmap to have 1 channel, got {gtmap_.shape[0]}'
+            
+            # dtype
+            assert img_.dtype == torch.float32, f'Expected img to have dtype torch.float32, got {img_.dtype}'
+            assert gtmap_.dtype == torch.float32, f'Expected gtmap to have dtype torch.float32, got {gtmap_.dtype}'
+            
+            # values
+            assert target_ in (NOMINAL_TARGET, ANOMALY_TARGET), f'Expected target to be either {NOMINAL_TARGET} or {ANOMALY_TARGET}, got {target_}'
+            assert img_.min() >= 0, f'Expected img to have values >= 0, got {img_.min()}'
+            assert img_.max() <= 1, f'Expected img to have values <= 1, got {img_.max()}'
+            assert tuple(sorted(gtmap.unique().tolist())) in ((0., 1.), (0.,)), f"Expected gtmap to have values (0., 1.), got {tuple(sorted(gtmap.unique().tolist()))}"
+
+        # this try/catch makes it easier to debug because you cans see self
+        validate(img, gtmap, target)
+
         if self.all_transform is not None:
             img, gtmap, target = self.all_transform((img, gtmap, target))
+            validate(img, gtmap, target)
 
         if self.img_and_gtmap_transform is not None:
             img, gtmap = self.img_and_gtmap_transform((img, gtmap))
-
+            validate(img, gtmap, target)
+            
         if self.img_transform is not None:
             img = self.img_transform(img)
-
+            validate(img, gtmap, target)
+        
         return img, target, gtmap
 
     def __len__(self) -> int:
@@ -781,7 +863,7 @@ class MvTec(VisionDataset, Dataset):
 
             test_imgs = torch.stack(test_imgs)
             test_labels = torch.IntTensor(test_labels)
-            test_gtmaps = torch.stack(test_gtmaps)[:, 0, :, :]  # r=g=b -> grayscale
+            test_gtmaps = torch.stack(test_gtmaps)[:, 0:1, :, :]  # r=g=b -> grayscale (0:1 makes it keep the dimension)
             test_anomaly_labels = torch.IntTensor(test_anomaly_labels)
 
             # invert the mapping to get the anomaly type name from the anomaly type id
@@ -896,7 +978,9 @@ normalize_mean_std_perclass = {
     for normal_class_ in range(NCLASSES)
 }
 
-img_color_augmentation_sequence = [
+clamp01 = transforms.Lambda(lambda x: x.clamp(0, 1))
+
+img_color_augmentation_sequence = transforms.Compose([
     transforms.ToPILImage(),
     transforms.RandomChoice([
         transforms.ColorJitter(0.04, 0.04, 0.04, 0.04),
@@ -907,9 +991,10 @@ img_color_augmentation_sequence = [
         lambda x: (
             x 
             + torch.randn_like(x).mul(np.random.randint(0, 2)).mul(0.1 * x.std())
-        ).clamp(0, 1)
+        )
     ),
-]
+    clamp01,
+])
         
         
 class MVTecAnomalyDetectionDataModule(LightningDataModule):
@@ -923,27 +1008,25 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         batch_size: int,
         nworkers: int,
         pin_memory: bool,
-        raw_shape: Tuple[int, int, int] = (3, 240, 240), 
-        net_shape: Tuple[int, int, int] = (3, 224, 224),
+        raw_shape: Tuple[int, int, int] = (240, 240), 
+        net_shape: Tuple[int, int, int] = (224, 224),
         real_anomaly_limit: int = None, 
     ):
         super().__init__()
                 
         # validate raw_shape
-        assert len(raw_shape) == 3, "raw_shape must be a tuple of length 3"
+        assert len(raw_shape) == 2, "raw_shape must be a tuple of length 3"
         
-        nchannels, width, height = raw_shape
+        width, height = raw_shape
         assert width == height, f"raw_shape: width={width} != height={height}"
-        assert nchannels == 3, f"raw_shape: nchannels={nchannels} != 3"
-        del nchannels, width, height
+        del width, height
         
         # validate net_shape
-        assert len(net_shape) == 3, "net_shape must be a tuple of length 3"
+        assert len(net_shape) == 2, "net_shape must be a tuple of length 3"
         
-        nchannels, width, height = net_shape
+        width, height = net_shape
         assert width == height, f"net_shape: width={width} != height={height}"
-        assert nchannels == 3, f"net_shape: nchannels={nchannels} != 3"
-        del nchannels, width, height
+        del width, height
                 
         # validate preproc
         assert preproc in PREPROCESSING_CHOICES, f'`preproc` must be one of {PREPROCESSING_CHOICES}'
@@ -975,54 +1058,58 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         if preproc == PREPROCESSING_LCNAUG1:
             
             # img and gtmap - train
-            train_img_and_gtmap_transform = transforms.Compose([
-                # ImgGtmapTensorsToUint8(), 
+            # train_img_and_gtmap_transform = transforms.Compose([
+            #     # ImgGtmapTensorsToUint8(), 
+            #     ImgGtmapToPIL(),
+            #     # these apply equally to the img and the gtmap
+            #     MultiCompose([
+            #         transforms.RandomChoice([
+            #             transforms.RandomCrop(img_width_height, padding=0), 
+            #             transforms.Resize(img_width_height, Image.NEAREST),
+            #         ]),
+            #         transforms.ToTensor(),
+            #     ]),
+            # ])
+            train_img_and_gtmap_transform = MultiCompose([
                 ImgGtmapToPIL(),
-                # these apply equally to the img and the gtmap
-                MultiCompose([
-                    transforms.RandomChoice([
-                        transforms.RandomCrop(img_width_height, padding=0), 
-                        transforms.Resize(img_width_height, Image.NEAREST),
-                    ]),
-                    transforms.ToTensor(),
+                transforms.RandomChoice([
+                    transforms.RandomCrop(img_width_height, padding=0), 
+                    transforms.Resize(img_width_height, Image.NEAREST),
                 ]),
+                transforms.ToTensor(),
             ])
             
             # img - train
             train_img_transform = transforms.Compose([
                 img_color_augmentation_sequence,
                 lcn_transform, 
-                lcn_global_normalization_transform_perclasss[normal_class]
+                lcn_global_normalization_transform_perclasss[normal_class],
+                clamp01,
             ])
             
             # image and gtmap - test
-            test_img_and_gtmap_transform = transforms.Compose([
+            # test_img_and_gtmap_transform = transforms.Compose([
+            #     ImgGtmapTensorsToUint8(), 
+            #     ImgGtmapToPIL(),
+            #     # use this one or 
+            #     # these apply equally to the img and the gtmap
+            #     MultiCompose([
+            #         transforms.Resize(img_width_height, Image.NEAREST), 
+            #         transforms.ToTensor()
+            #     ]),
+            # ])
+            test_img_and_gtmap_transform = MultiCompose([
                 ImgGtmapTensorsToUint8(), 
                 ImgGtmapToPIL(),
-                # use this one or 
-                # these apply equally to the img and the gtmap
-                MultiCompose([
-                    transforms.Resize(img_width_height, Image.NEAREST), 
-                    transforms.ToTensor()
-                ]),
+                transforms.Resize(img_width_height, Image.NEAREST), 
+                transforms.ToTensor()
             ])
             
             # img - test
             test_img_transform = transforms.Compose([
                 lcn_transform, 
-                lcn_global_normalization_transform_perclasss[normal_class]
-            ])
-            
-        elif preproc == PREPROCESSING_NONE:
-            
-            assert self.raw_shape == self.net_shape, 'in case of no augmentation, raw shape needs to fit net input shape'
-            
-            # gtmap - train & test
-            train_img_and_gtmap_transform = test_img_and_gtmap_transform = None
-            
-            # img - train & test
-            train_img_transform = test_img_transform = transforms.Compose([
-                normalize_mean_std_perclass[normal_class],
+                lcn_global_normalization_transform_perclasss[normal_class],
+                clamp01,
             ])
             
         else:
@@ -1078,7 +1165,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                 
                 if idx == NORMAL_LABEL_IDX:  # 0
                     self.test_subsplits_indices_per_anomalytype[idx] = dict(
-                        supervision=np.array([]),
+                        supervision=np.array([], dtype=int),
                         test=all_indices,
                     )
                     continue
@@ -1104,23 +1191,29 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                 ))),
             )
             
+            # create a copy with all none cuz the train transforms are already applied
+            self.real_anomaly_mvtec = MvTec(
+                root=self.test_mvtec.root,
+                split=self.test_mvtec.split,
+                normal_class=self.test_mvtec.normal_class,
+                shape=self.test_mvtec.shape,
+            )
+            # no need to prepare data, it's already done in the test set
+            self.real_anomaly_mvtec.setup()
+            self.real_anomaly_mvtec = Subset(
+                self.real_anomaly_mvtec, 
+                self.test_subsplits_indices["supervision"],
+            )
             self.test_mvtec = Subset(self.test_mvtec, self.test_subsplits_indices["test"])
             
-            self.real_anomaly_mvtec = deepcopy(self.test_mvtec)
-            self.real_anomaly_mvtec.img_and_gtmap_transform = deepcopy(self.train_mvtec.img_and_gtmap_transform)
-            self.real_anomaly_mvtec.img_transform = deepcopy(self.train_mvtec.img_transform)
-            self.real_anomaly_mvtec.all_transform = None
-            self.real_anomaly_mvtec = Subset(self.real_anomaly_mvtec, self.test_subsplits_indices["supervision"])
-            
-            self.real_anomaly_dataloader = DataLoader(
+            self._online_instance_replacer.real_anomaly_dataloader = DataLoader(
                 dataset=self.real_anomaly_mvtec, 
                 batch_size=1,
                 shuffle=True,
-                num_workers=1, 
+                num_workers=0, 
                 pin_memory=False, 
                 persistent_workers=False,
             )
-            self._online_instance_replacer.setup_real_anomaly_dataloader(self.real_anomaly_dataloader)
 
     def train_dataloader(self):
         return DataLoader(
@@ -1145,30 +1238,29 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
 
 if __name__ == "__main__":
     
-    mvtec = MvTec(
-        root="../../data/datasets", 
-        split=SPLIT_TEST, 
-        # split=SPLIT_TRAIN, 
-        normal_class=0,
-        # shape=(3, 100, 100),
-        shape=(3, 50, 50),
-    )
-    mvtec.prepare_data()
-    mvtec.setup()
-    pass
+    # mvtec = MvTec(
+    #     root="../../data/datasets", 
+    #     split=SPLIT_TEST, 
+    #     # split=SPLIT_TRAIN, 
+    #     normal_class=0,
+    #     # shape=(3, 100, 100),
+    #     shape=(3, 50, 50),
+    # )
+    # mvtec.prepare_data()
+    # mvtec.setup()
+    # pass
 
     mvtecad_datamodule = MVTecAnomalyDetectionDataModule(
         root="../../data/datasets",
         normal_class=0,
-        # preproc=PREPROCESSING_NONE,
         preproc=PREPROCESSING_LCNAUG1,
-        # supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
-        supervise_mode=SUPERVISE_MODE_REAL_ANOMALY,
+        supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
+        # supervise_mode=SUPERVISE_MODE_REAL_ANOMALY,
         batch_size=128,
-        nworkers=2,
+        nworkers=0,
         pin_memory=False,
-        raw_shape=(3, 50, 50),
-        net_shape=(3, 50, 50),
+        raw_shape=(240, 240),
+        net_shape=(224, 224),
         real_anomaly_limit=1,
     )
     
@@ -1176,4 +1268,58 @@ if __name__ == "__main__":
     mvtecad_datamodule.setup()
     train_dl = mvtecad_datamodule.train_dataloader()
     test_dl = mvtecad_datamodule.test_dataloader()
-    pass
+
+    savedir = Path.home() / "tmp"
+    savedir.mkdir(exist_ok=True)
+    
+    # train
+    ((normal_imgs, normal_gtmaps), (anomalous_imgs, anomalous_gtmaps)) = generate_dataloader_images(
+        train_dl, 
+        nimages_perclass=10,
+    )
+    single_preview_fig = generate_dataloader_preview_single_fig(
+        normal_imgs, normal_gtmaps, anomalous_imgs, anomalous_gtmaps,
+    )
+    
+    def savefig(fig, fname, preview_image_size_factor=1):
+        # estimated from the nb of pixel bc each one is a byte
+        # in KiB
+        png_size = fig.get_figheight() * fig.get_figwidth() / 1024. * preview_image_size_factor ** 2
+        
+        REFERENCE_LIMIT_PNG_SIZE_KiB = 300
+        relative_size = png_size / REFERENCE_LIMIT_PNG_SIZE_KiB
+        WARNING_RELATIVE_PNG_SIZE = 1.20
+        HARD_LIMIT_PNG_SIZE_KiB = 3000
+        
+        assert png_size < HARD_LIMIT_PNG_SIZE_KiB, f"The PNG size is {png_size} KiB, which is too big. Please reduce the size of the images."
+        
+        if relative_size > WARNING_RELATIVE_PNG_SIZE:
+            # todo make this a warning in wandb 
+            print(f"The PNG size is {png_size} KiB, which is too big. Please reduce the size of the images.")
+        
+        
+        fig.savefig(
+            fname=fname,
+            # this makes sure that the number of pixels in the image is exactly the 
+            # same as the number of pixels in the tensors 
+            # (other conditions in the functions that generate the images)
+            dpi=preview_image_size_factor, 
+            pad_inches=0, bbox_inches='tight', 
+        )
+        
+        # import matplotlib.pyplot as plt
+        # plt.figure(fig.label)
+        # plt.show()
+        
+    savefig(single_preview_fig, savedir / f"train.{single_preview_fig.label}.png", preview_image_size_factor=.4)
+    
+    # test
+    ((normal_imgs, normal_gtmaps), (anomalous_imgs, anomalous_gtmaps)) = generate_dataloader_images(
+        test_dl, 
+        nimages_perclass=20,
+    )
+    single_preview_fig = generate_dataloader_preview_single_fig(
+        normal_imgs, normal_gtmaps, anomalous_imgs, anomalous_gtmaps,
+    )
+    savefig(single_preview_fig, savedir / f"test.{single_preview_fig.label}.png", preview_image_size_factor=.4)
+    

@@ -125,6 +125,27 @@ class MultiCompose(transforms.Compose):
         return imgs
 
 
+# class RandomChoice(RandomTransforms):
+#     """
+#     Apply single transformation randomly picked from a list. This transform does not support torchscript.
+#     Joao: I am re-implementing this to control the seed. Original implementation copied from torchvision.transforms.transforms.
+#     """
+#     def __init__(self, transforms, p=None):
+#         super().__init__(transforms)
+#         if p is not None and not isinstance(p, Sequence):
+#             raise TypeError("Argument transforms should be a sequence")
+#         self.p = p
+
+#     def __call__(self, *args):
+#         t = random.choices(self.transforms, weights=self.p)[0]
+#         return t(*args)
+
+#     def __repr__(self):
+#         format_string = super().__repr__()
+#         format_string += '(p={0})'.format(self.p)
+#         return format_string
+
+
 def generate_dataloader_images(dataloader, nimages_perclass=20) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]:
     """
     Generates a preview of the dataset, i.e. it generates an image of some randomly chosen outputs
@@ -174,11 +195,51 @@ def generate_dataloader_preview_multiple_fig(
     normal_gtmaps: torch.Tensor, 
     anomalous_imgs: torch.Tensor,
     anomalous_gtmaps: torch.Tensor,
-    dpi=80,
 ) -> List[Figure]:
     """
     normal_imgs, anomalous_imgs: tensors of shape (n x 3 x h x w)
     normal_gtmaps,anomalous_gtmaps: tensors of shape (n x 1 x h x w)
+    
+    example code to use this function:
+    
+    ```
+    mvtecad_datamodule = MVTecAnomalyDetectionDataModule(
+        root="../../data/datasets",
+        normal_class=0,
+        # preproc=PREPROCESSING_NONE,
+        preproc=PREPROCESSING_LCNAUG1,
+        # supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
+        supervise_mode=SUPERVISE_MODE_REAL_ANOMALY,
+        batch_size=128,
+        nworkers=0,
+        pin_memory=False,
+        raw_shape=(3, 224, 224),
+        net_shape=(3, 224, 224),
+        real_anomaly_limit=1,
+    )
+    
+    mvtecad_datamodule.prepare_data()
+    mvtecad_datamodule.setup()
+    train_dl = mvtecad_datamodule.train_dataloader()
+    test_dl = mvtecad_datamodule.test_dataloader()
+
+    savedir = Path.home() / "tmp"
+    savedir.mkdir(exist_ok=True)
+    
+    ((normal_imgs, normal_gtmaps), (anomalous_imgs, anomalous_gtmaps)) = generate_dataloader_images(train_dl, nimages_perclass=10)
+
+    normal_figs, anomalous_figs = generate_dataloader_preview_multiple_fig(normal_imgs, normal_gtmaps, anomalous_imgs, anomalous_gtmaps)
+    for fig in [*normal_figs, *anomalous_figs]:
+        fig.savefig(
+        fname=savedir / f"{fig.label}.png", 
+        # this makes sure that the number of pixels in the image is exactly the 
+        # same as the number of pixels in the tensors 
+        # (other conditions in the functions that generate the images)
+        dpi=1, 
+        pad_inches=0, bbox_inches='tight', 
+    )
+    ```
+    
     """
     print('Generating dataset preview...')
 
@@ -196,11 +257,11 @@ def generate_dataloader_preview_multiple_fig(
 
     _, _, height, width = normal_imgs.shape
     
-    figsize = (height / dpi, width / dpi)
-       
     def do(imgs: torch.Tensor, gtmaps: torch.Tensor, label_prefix: str) -> List[Figure]:
         """([n, 3, h, w], [n, 1, h, w]) -> n plt figures"""
-        
+        # 2 accounts for: img, gtmap
+        nonlocal width, height
+        figsize = (width, 2 * height)
         prevs = [
             # dim 1 = height ==> vertical concatenation
             # the repeat(3) is there to make the gtmap "RGB" while keeping it gray 
@@ -209,12 +270,21 @@ def generate_dataloader_preview_multiple_fig(
         ]
         figs = []
         for idx, prev in enumerate(prevs):
-            fig_kw = dict(frameon=False)
-            fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi, **fig_kw)
+            
+            # this peculiar way of creating a figure is because of the way matplotlib works
+            # so i can get a png at the same size as the original image in terms of pixels
+            # src: https://stackoverflow.com/a/13714915/9582881
+            fig = plt.figure(frameon=False)
+            fig.set_size_inches(*figsize)
+            ax = plt.Axes(fig, [0., 0., 1., 1.])
+            ax.set_axis_off()
+            fig.add_axes(ax)
+ 
+            ax.imshow(np.transpose(prev.numpy(), (1, 2, 0)), aspect=1)   
             fig.label = f"{label_prefix}_{idx}"
-            ax.imshow(np.transpose(prev.numpy(), (1, 2, 0)))   
-            ax.axis("off")
+
             figs.append(fig)         
+ 
         return figs
     
     normal_figs = do(normal_imgs, normal_gtmaps, "normal")
@@ -230,11 +300,52 @@ def generate_dataloader_preview_single_fig(
     normal_gtmaps: torch.Tensor, 
     anomalous_imgs: torch.Tensor,
     anomalous_gtmaps: torch.Tensor,
-    dpi=80,
 ) -> List[Figure]:
     """
     normal_imgs, anomalous_imgs: tensors of shape (n x 3 x h x w)
     normal_gtmaps,anomalous_gtmaps: tensors of shape (n x 1 x h x w)
+    
+    example code to use this function:
+    
+    ```
+    mvtecad_datamodule = MVTecAnomalyDetectionDataModule(
+        root="../../data/datasets",
+        normal_class=0,
+        # preproc=PREPROCESSING_NONE,
+        preproc=PREPROCESSING_LCNAUG1,
+        # supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
+        supervise_mode=SUPERVISE_MODE_REAL_ANOMALY,
+        batch_size=128,
+        nworkers=0,
+        pin_memory=False,
+        raw_shape=(3, 224, 224),
+        net_shape=(3, 224, 224),
+        real_anomaly_limit=1,
+    )
+    
+    mvtecad_datamodule.prepare_data()
+    mvtecad_datamodule.setup()
+    train_dl = mvtecad_datamodule.train_dataloader()
+    test_dl = mvtecad_datamodule.test_dataloader()
+
+    savedir = Path.home() / "tmp"
+    savedir.mkdir(exist_ok=True)
+    
+    ((normal_imgs, normal_gtmaps), (anomalous_imgs, anomalous_gtmaps)) = generate_dataloader_images(train_dl, nimages_perclass=10)
+
+    single_preview_fig = generate_dataloader_preview_single_fig(
+        normal_imgs, normal_gtmaps, anomalous_imgs, anomalous_gtmaps,
+    )
+    single_preview_fig.savefig(
+        fname=savedir / f"{single_preview_fig.label}.png",
+        # this makes sure that the number of pixels in the image is exactly the 
+        # same as the number of pixels in the tensors 
+        # (other conditions in the functions that generate the images)
+        dpi=1, 
+        pad_inches=0, bbox_inches='tight', 
+    )
+    ```
+    
     """
     print('Generating dataset preview...')
 
@@ -252,9 +363,6 @@ def generate_dataloader_preview_single_fig(
 
     nimages, _, height, width = normal_imgs.shape
     
-    # 4 accounts for: normal img, normal gtmap, anomalous img, anomalous gtmap
-    figsize = (4 * height / dpi, nimages * width / dpi)
-       
     def do(imgs: torch.Tensor, gtmaps: torch.Tensor) -> List[Figure]:
         """([n, 3, h, w], [n, 1, h, w]) -> n plt figures"""
         
@@ -274,11 +382,20 @@ def generate_dataloader_preview_single_fig(
     # concatenate normal/anomalous previews vertically
     prev = torch.cat([normal_prevs, anomalous_prevs], dim=1)
     
-    fig_kw = dict(frameon=False)
-    fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi, **fig_kw)
+    # 4 accounts for: normal img, normal gtmap, anomalous img, anomalous gtmap
+    figsize = (width, height) = (nimages * width, 4 * height)
+    
+    # this peculiar way of creating a figure is because of the way matplotlib works
+    # so i can get a png at the same size as the original image in terms of pixels
+    # src: https://stackoverflow.com/a/13714915/9582881
+    fig = plt.figure(frameon=False)
+    fig.set_size_inches(*figsize)
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    
+    ax.imshow(np.transpose(prev.numpy(), (1, 2, 0)), aspect=1)   
     fig.label = f"preview_{nimages:02d}_images"
-    ax.imshow(np.transpose(prev.numpy(), (1, 2, 0)))   
-    ax.axis("off")
     
     print('Dataset preview generated.')
     
