@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, List, Tuple
 
 import numpy as np
+from pyparsing import Optional
 import torch
 import torchvision.transforms as transforms
 from kornia import gaussian_blur2d
@@ -23,9 +24,18 @@ from torch.utils.data.dataset import Dataset
 from torchvision.datasets import VisionDataset
 from torchvision.datasets.imagenet import check_integrity
 from tqdm import tqdm
+from numpy.random import PCG64, SeedSequence, Generator
+import numpy.random
+import random
+from random import Random
 
 from data_dev01 import (ImgGtmapLabelTransform, ImgGtmapTensorsToUint8,
-                        ImgGtmapToPIL, MultiCompose, NOMINAL_TARGET, ANOMALY_TARGET, generate_dataloader_images, generate_dataloader_preview_multiple_fig, generate_dataloader_preview_single_fig)
+                        ImgGtmapToPIL, MultiCompose, NOMINAL_TARGET, ANOMALY_TARGET, 
+                        generate_dataloader_images, 
+                        generate_dataloader_preview_multiple_fig, 
+                        generate_dataloader_preview_single_fig,
+                        RandomChoice,
+                        )
 
 CLASSES_LABELS = (
     'bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather',
@@ -59,6 +69,41 @@ TARGZ_FNAME = 'mvtec_anomaly_detection.tar.xz'
 BASE_FOLDER = 'mvtec'
 
 
+def seed_str2int(seed: str):
+    assert isinstance(seed, str), f"entropy must be a string, got {type(seed)}"
+    assert seed.startswith("0x"), f"entropy must start with 0x, got {seed}"
+    # [2:] cuts off the "0x"
+    assert set(seed[2:]).issubset("0123456789abcdef"), f"entropy must be a hexadecimal string, got {seed}"
+    return int(seed, base=16)
+
+
+def seed_int2str(seed: int):
+    assert isinstance(seed, int), f"entropy must be an integer, got {type(seed)}"
+    return f"0x{seed:x}"
+
+
+# these two functions make sure that all generators are of the same type
+
+def create_seed() -> int:
+    ss = SeedSequence()
+    print(f"random seed generated from the system entropy using SeedSequence: {seed_int2str(ss.entropy)}")
+    return ss.entropy
+
+    
+def create_numpy_random_generator(seed: int) -> numpy.random.Generator:
+    assert isinstance(seed, int), f"seed must be an integer, got {type(seed)}"
+    assert seed >= 0, f"seed must be >= 0, got {seed_int2str(seed)}"
+    print(f"random generator instantiaed from the provided seed: {seed_int2str(seed)}")
+    return Generator(PCG64(SeedSequence(seed)))
+    
+    
+def create_python_random_generator(seed: int) -> random.Random:
+    assert isinstance(seed, int), f"seed must be an integer, got {type(seed)}"
+    assert seed >= 0, f"seed must be >= 0, got {seed_int2str(seed)}"
+    print(f"random generator instantiaed from the provided seed: {seed_int2str(seed)}")
+    return Random(seed)
+
+
 def confetti_noise(
     size: torch.Size, 
     p: float = 0.01,
@@ -70,7 +115,8 @@ def confetti_noise(
     clamp: bool = False, 
     onlysquared: bool = True, 
     rotation: int = 0,
-    colorrange: Tuple[int, int] = None
+    colorrange: Tuple[int, int] = None, 
+    random_generator: numpy.random.Generator = None,  # it should never be none, but i put it like this to not change the signature
 ) -> torch.Tensor:
     """
     Generates "confetti" noise, as seen in the paper.
@@ -97,6 +143,7 @@ def confetti_noise(
         First value can be negative.
     :return: torch tensor containing n noise images. Either (n x c x h x w) or (n x h x w), depending on size.
     """
+    assert random_generator is not None, f"random_generator must not be None"
     assert len(size) == 4 or len(size) == 3, 'size must be n x c x h x w'
     if isinstance(blobshaperange[0], int) and isinstance(blobshaperange[1], int):
         blobshaperange = (blobshaperange, blobshaperange)
@@ -174,7 +221,7 @@ def confetti_noise(
         res = res.unsqueeze(1) if res.dim() != 4 else res
         res = res.transpose(1, 3).transpose(1, 2)
         for pick, blbctr in zip(picks, mask.nonzero()):
-            rot = np.random.uniform(-rotation, rotation)
+            rot = random_generator.uniform(-rotation, rotation)
             p1, p2 = all_shps[pick]
             dims = (
                 blbctr[0],
@@ -240,7 +287,8 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
 
     def __init__(
         self, 
-        supervise_mode: str, 
+        supervise_mode: str,
+        random_generator: numpy.random.Generator, 
         p: float = 0.5, 
     ):
         """
@@ -254,17 +302,20 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
         :param real_anomaly_dataloader: a dataloader for the real anomalies to be used in case of outlier exposure based noise (it will be ciclycally iterated).
         """
         self.supervise_mode = supervise_mode
-        self._real_anomaly_dataloader = None
+        self.random_generator: numpy.random.Generator = random_generator
         self.p = p
+        
+        self._real_anomaly_dataloader = None
         
         if self.supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
             pass
             
         elif self.supervise_mode == SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI:
-            pass
+            assert random_generator is not None, f"confetti_random_generator must be provided for supervise mode {self.supervise_mode}"
         
         else:
             raise NotImplementedError(f'Supervise mode `{self.supervise_mode}` unknown.')        
+    
     
     @property
     def real_anomaly_dataloader(self) -> torch.utils.data.DataLoader:
@@ -286,7 +337,7 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
         :param target: some label
         :return: (img, gt, target)
         """
-        if random.random() < self.p:
+        if self.random_generator.random() < self.p:
             return self.replace(img, gtmap, label)
             
         return img, gtmap, label
@@ -299,8 +350,8 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
         gtmap = gtmap.unsqueeze(0).fill_(1).float() if gtmap is not None else gtmap
         
         if self.supervise_mode == SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI:
-             
             generated_noise_rgb = confetti_noise(
+             
                 img.shape, 
                 0.000018, 
                 ((8, 8), (54, 54)), 
@@ -309,6 +360,7 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
                 awgn=0, 
                 rotation=45, 
                 colorrange=(-256, 0),
+                random_generator=self.random_generator,
             )
             generated_noise = confetti_noise(
                 img.shape, 
@@ -318,6 +370,7 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
                 clamp=False, 
                 awgn=0, 
                 rotation=45,
+                random_generator=self.random_generator,
             )
             generated_noise = generated_noise_rgb + generated_noise
             # generated_noise = smooth_noise(generated_noise, 25, 5, 1.0)
@@ -327,7 +380,7 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
                 (img * 255).int(), 
                 gtmap.squeeze(), 
                 generated_noise, 
-                invert_threshold=self.invert_threshold
+                invert_threshold=self.invert_threshold,
             )
             img = img.float() / 255.0
             return img[0], gtmap[0], ANOMALY_TARGET
@@ -985,22 +1038,6 @@ normalize_mean_std_perclass = {
 }
 
 clamp01 = transforms.Lambda(lambda x: x.clamp(0, 1))
-
-img_color_augmentation_sequence = transforms.Compose([
-    transforms.ToPILImage(),
-    transforms.RandomChoice([
-        transforms.ColorJitter(0.04, 0.04, 0.04, 0.04),
-        transforms.ColorJitter(0.005, 0.0005, 0.0005, 0.0005),
-    ]),
-    transforms.ToTensor(),
-    transforms.Lambda(
-        lambda x: (
-            x 
-            + torch.randn_like(x).mul(np.random.randint(0, 2)).mul(0.1 * x.std())
-        )
-    ),
-    clamp01,
-])
         
         
 class MVTecAnomalyDetectionDataModule(LightningDataModule):
@@ -1014,6 +1051,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         batch_size: int,
         nworkers: int,
         pin_memory: bool,
+        seed: int,
         raw_shape: Tuple[int, int, int] = (240, 240), 
         net_shape: Tuple[int, int, int] = (224, 224),
         real_anomaly_limit: int = None, 
@@ -1044,19 +1082,32 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
 
         assert nworkers >= 0, f"nworkers must be >= 0, found {nworkers}"
         
+        # files
         self.root = root
+        
+        # modes and their subparameters        
         self.preproc = preproc
         self.supervise_mode = supervise_mode
-        self.batch_size = batch_size
-        self.nworkers = nworkers
-        self.pin_memory = pin_memory
-        self.raw_shape = raw_shape
-        self.net_shape = net_shape
         self.real_anomaly_limit = real_anomaly_limit
         
+        # data parameters
+        self.raw_shape = raw_shape
+        self.net_shape = net_shape
         self.normal_class = normal_class
-        self.outlier_classes = list(range(NCLASSES))
-        self.outlier_classes.remove(self.normal_class)
+
+        # training parameters
+        self.batch_size = batch_size
+
+        # processing parameters
+        self.nworkers = nworkers
+        self.pin_memory = pin_memory
+
+        # randomness
+        # seeds are validated in create_random_generator()
+        self.seed = seed
+        self.online_replacer_random_generator = create_python_random_generator(self.seed)
+        if self.supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
+            self.real_anomaly_split_random_generator = create_numpy_random_generator(self.seed)
         
         img_width_height = self.net_shape[-1]
         
@@ -1064,25 +1115,42 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         if preproc == PREPROCESSING_LCNAUG1:
             
             # img and gtmap - train
-            # train_img_and_gtmap_transform = transforms.Compose([
-            #     # ImgGtmapTensorsToUint8(), 
-            #     ImgGtmapToPIL(),
-            #     # these apply equally to the img and the gtmap
-            #     MultiCompose([
-            #         transforms.RandomChoice([
-            #             transforms.RandomCrop(img_width_height, padding=0), 
-            #             transforms.Resize(img_width_height, Image.NEAREST),
-            #         ]),
-            #         transforms.ToTensor(),
-            #     ]),
-            # ])
             train_img_and_gtmap_transform = MultiCompose([
                 ImgGtmapToPIL(),
-                transforms.RandomChoice([
-                    transforms.RandomCrop(img_width_height, padding=0), 
-                    transforms.Resize(img_width_height, Image.NEAREST),
-                ]),
+                # my own implmentation of RandomChoice
+                RandomChoice(
+                    [
+                        # RandomCrop uses torch.randint()
+                        transforms.RandomCrop(img_width_height, padding=0), 
+                        transforms.Resize(img_width_height, Image.NEAREST),
+                    ], 
+                    # this mode is required for MultiCompose
+                    mode=RandomChoice.RETURN_MODE_TRANSFORM_FUNCTION,
+                    random_generator=create_python_random_generator(self.seed),
+                ),
                 transforms.ToTensor(),
+            ], random_generator=create_numpy_random_generator(self.seed),)
+            
+            random_generator_ = create_numpy_random_generator(self.seed)
+            img_color_augmentation_sequence = transforms.Compose([
+                transforms.ToPILImage(),
+                # my own implmentation of RandomChoice
+                RandomChoice(
+                    [
+                        transforms.ColorJitter(0.04, 0.04, 0.04, 0.04),
+                        transforms.ColorJitter(0.005, 0.0005, 0.0005, 0.0005),
+                    ], 
+                    mode=RandomChoice.RETURN_MODE_TRANSFORMED_IMAGE,
+                    random_generator=create_python_random_generator(self.seed),
+                ),
+                transforms.ToTensor(),
+                transforms.Lambda(
+                    lambda x: (
+                        x 
+                        + torch.randn_like(x).mul(random_generator_.integers(0, 2)).mul(0.1 * x.std())
+                    )
+                ),
+                clamp01,
             ])
             
             # img - train
@@ -1094,22 +1162,12 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             ])
             
             # image and gtmap - test
-            # test_img_and_gtmap_transform = transforms.Compose([
-            #     ImgGtmapTensorsToUint8(), 
-            #     ImgGtmapToPIL(),
-            #     # use this one or 
-            #     # these apply equally to the img and the gtmap
-            #     MultiCompose([
-            #         transforms.Resize(img_width_height, Image.NEAREST), 
-            #         transforms.ToTensor()
-            #     ]),
-            # ])
             test_img_and_gtmap_transform = MultiCompose([
                 ImgGtmapTensorsToUint8(), 
                 ImgGtmapToPIL(),
                 transforms.Resize(img_width_height, Image.NEAREST), 
                 transforms.ToTensor()
-            ])
+            ], random_generator=create_numpy_random_generator(self.seed),)
             
             # img - test
             test_img_transform = transforms.Compose([
@@ -1121,17 +1179,22 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         else:
             raise ValueError(f'Preprocessing pipeline `{preproc}` is not known.')
 
-        self._online_instance_replacer = OnlineInstanceReplacer(supervise_mode)
-        online_supervisor_transform = MultiCompose([
+        # nex
+        # check where python/numpy generators should be used
+        self._online_instance_replacer = OnlineInstanceReplacer(
+            supervise_mode=supervise_mode,
+            random_generator=self.online_replacer_random_generator,
+        )
+        all_transform = MultiCompose([
             self._online_instance_replacer,
-        ])
+        ], random_generator=create_numpy_random_generator(self.seed),)
                 
         self.train_mvtec = MvTec(
             root=self.root, 
             split=SPLIT_TRAIN, 
             img_and_gtmap_transform=train_img_and_gtmap_transform, 
             img_transform=train_img_transform, 
-            all_transform=online_supervisor_transform,
+            all_transform=all_transform,
             shape=self.raw_shape, 
             normal_class=self.normal_class,
         )
@@ -1177,7 +1240,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                     continue
                     
                 # those used in the online supervisor
-                supervision_indices = np.random.choice(
+                supervision_indices = self.real_anomaly_split_random_generator.choice(
                     all_indices, size=min(self.real_anomaly_limit, all_indices.numel()), replace=False,
                 )
                 test_indices = np.array(sorted(set(all_indices) - set(supervision_indices)))
@@ -1260,14 +1323,15 @@ if __name__ == "__main__":
         root="../../data/datasets",
         normal_class=0,
         preproc=PREPROCESSING_LCNAUG1,
-        supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
-        # supervise_mode=SUPERVISE_MODE_REAL_ANOMALY,
+        # supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
+        supervise_mode=SUPERVISE_MODE_REAL_ANOMALY,
         batch_size=128,
         nworkers=0,
         pin_memory=False,
         raw_shape=(240, 240),
         net_shape=(224, 224),
         real_anomaly_limit=1,
+        seed=0,
     )
     
     mvtecad_datamodule.prepare_data()

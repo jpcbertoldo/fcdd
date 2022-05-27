@@ -33,11 +33,12 @@ from fcdd.util.logging import Logger
 from pytorch_lightning.loggers import WandbLogger
 from torch import Tensor, gt
 from torch.hub import load_state_dict_from_url
+import time
 
 import wandb
 
 import mvtec_dataset_dev01 as mvtec_datamodule
-from mvtec_dataset_dev01 import MVTecAnomalyDetectionDataModule
+from mvtec_dataset_dev01 import MVTecAnomalyDetectionDataModule, create_seed
 from train_mvtec_dev01_aux import single_save
 
 from train_mvtec_dev01_aux import compute_gtmap_roc, compute_gtmap_pr
@@ -747,6 +748,7 @@ def run_one(
     #
     nworkers: int, 
     pin_memory: bool,
+    seed: int,
     #
     **kwargs,
 ):
@@ -774,6 +776,7 @@ def run_one(
         batch_size=batch_size,
         nworkers=nworkers,
         pin_memory=pin_memory,
+        seed=seed,
     )
             
     # generate preview
@@ -861,9 +864,28 @@ def run(**kwargs) -> dict:
     classes = cls_restrictions or range(dataset_nclasses(dataset))
 
     number_it = kwargs.pop('it')
-    its_restrictions = kwargs.pop("its_restrictions", None)
-    its = its_restrictions or range(number_it)
-
+    seeds = kwargs.pop('seeds')
+    
+    if seeds is None:
+        assert number_it is not None, "seeds or number_it must be specified"
+        print('no seeds specified, using default: auto generated seeds from the system entropy')
+        its = list(range(number_it))
+        seeds = []
+        for _ in its:
+            seeds.append(create_seed())
+            time.sleep(1/3)  # let the system state change
+    else:
+        if number_it is None:
+            number_it = len(seeds)
+            print(f"number_it is not specified, using {number_it} (from the seeds given)")
+        assert len(seeds) == number_it, f"number_it {number_it} != len(seeds) {len(seeds)}"
+        for s in seeds:
+            assert type(s) == int, f"seed must be an int, got {type(s)}"
+            assert s >= 0, f"seed must be >= 0, got {s}"
+        assert len(set(seeds)) == len(seeds), f"seeds must be unique, got {s}"
+        
+    its = list(range(len(seeds)))
+        
     results = []
     
     for c in classes:
@@ -872,7 +894,7 @@ def run(**kwargs) -> dict:
         kwargs['normal_class'] = c
         kwargs['normal_class_label'] = dataset_class_labels(dataset)[c]
     
-        for i in its:
+        for i, seed in zip(its, seeds):
             logdir = (cls_logdir / 'it_{:02}'.format(i)).absolute()
             
             wandb_project = kwargs.pop("wandb_project", None)
@@ -890,8 +912,11 @@ def run(**kwargs) -> dict:
                     logdir=str(logdir),  # overwrite logdir
                     it=i,
                     datadir=str(Path(kwargs["datadir"]).absolute()),
+                    seed=seed,
                 )
             }
+            
+            torch.manual_seed(seed)
             
             wandb_logger = WandbLogger(
                 project=wandb_project, 

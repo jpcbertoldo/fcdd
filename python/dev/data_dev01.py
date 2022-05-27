@@ -11,6 +11,7 @@ import torch
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
 from PIL import Image
+from collections.abc import Sequence
 
 from matplotlib.figure import Figure
 
@@ -71,12 +72,76 @@ class ImgGtmapToPIL(ImgGtmapTransform):
         return transforms.ToPILImage(mode="RGB")(img), transforms.ToPILImage("L")(gtmap)
 
 
+class RandomTransforms:
+    """Base class for a list of transformations with randomness
+    (joao) implementation copied from torchvision.transforms so the class below could use it
+    Args:
+        transforms (sequence): list of transformations
+    """
+
+    def __init__(self, transforms):
+        if not isinstance(transforms, Sequence):
+            raise TypeError("Argument transforms should be a sequence")
+        self.transforms = transforms
+
+    def __call__(self, *args, **kwargs):
+        raise NotImplementedError()
+
+    def __repr__(self):
+        format_string = self.__class__.__name__ + '('
+        for t in self.transforms:
+            format_string += '\n'
+            format_string += '    {0}'.format(t)
+        format_string += '\n)'
+        return format_string
+
+
+class RandomChoice(RandomTransforms):
+    """
+    Pick a transformation randomly picked from a list. This transform does not support torchscript.
+    Joao: I am re-implementing this to control the seed. Original implementation copied from torchvision.transforms.transforms.
+    """
+    
+    RETURN_MODE_TRANSFORM_FUNCTION = "transform_function"
+    RETURN_MODE_TRANSFORMED_IMAGE = "transformed_image"
+    
+    def __init__(self, transforms, p=None, random_generator=None, mode=RETURN_MODE_TRANSFORM_FUNCTION):
+        super().__init__(transforms)
+        assert mode in [self.RETURN_MODE_TRANSFORM_FUNCTION, self.RETURN_MODE_TRANSFORMED_IMAGE], f"mode should be one of {[self.RETURN_MODE_TRANSFORM_FUNCTION, self.RETURN_MODE_TRANSFORMED_IMAGE]}"
+        if p is not None and not isinstance(p, Sequence):
+            raise TypeError("Argument transforms should be a sequence")
+        self.p = p
+        self.random_generator = random_generator
+        self.mode = mode
+        
+    def __call__(self, *args):
+        picked_transform = self.random_generator.choices(self.transforms, weights=self.p)[0]
+        if self.mode == self.RETURN_MODE_TRANSFORM_FUNCTION:
+            return picked_transform      
+        elif self.mode == self.RETURN_MODE_TRANSFORMED_IMAGE:
+            return picked_transform(*args)
+        else:
+            raise ValueError(f"Unknown mode {self.mode}")
+
+    def __repr__(self):
+        format_string = super().__repr__()
+        format_string += '(p={0})'.format(self.p)
+        format_string += f"(random_generator={self.random_generator})"
+        return format_string
+
+
 class MultiCompose(transforms.Compose):
     """
     Like transforms.Compose, but applies all transformations to a multitude of variables, instead of just one.
     More importantly, for random transformations (like RandomCrop), applies the same choice of transformation, i.e.
     e.g. the same crop for all variables.
     """
+    
+    def __init__(self, *args, random_generator=None, **kwargs):
+        assert random_generator is not None, "You need to pass a random generator to MultiCompose"
+        super(MultiCompose, self).__init__(*args, **kwargs)
+        self.random_generator = random_generator
+    
     def __call__(self, imgs: List):
         for t in self.transforms:
             imgs = list(imgs)
@@ -97,11 +162,11 @@ class MultiCompose(transforms.Compose):
             for idx, img in enumerate(imgs):
                 imgs[idx] = TF.crop(img, i, j, h, w) if img is not None else img
         elif isinstance(t, transforms.RandomHorizontalFlip):
-            if random.random() > 0.5:
+            if self.random_generator.random() > 0.5:
                 for idx, img in enumerate(imgs):
                     imgs[idx] = TF.hflip(img)
         elif isinstance(t, transforms.RandomVerticalFlip):
-            if random.random() > 0.5:
+            if self.random_generator.random() > 0.5:
                 for idx, img in enumerate(imgs):
                     imgs[idx] = TF.vflip(img)
         elif isinstance(t, transforms.ToTensor):
@@ -116,34 +181,16 @@ class MultiCompose(transforms.Compose):
             assert t.n == len(imgs)
             imgs = t(*imgs)
         elif isinstance(t, transforms.RandomChoice):
-            t_picked = random.choice(t.transforms)
+            raise Exception(f"torchvision.transforms.RandomChoice should be replaced by the implementation in the data module")
+        elif isinstance(t, RandomChoice):
+            assert t.mode == RandomChoice.RETURN_MODE_TRANSFORM_FUNCTION, f"RandomChoice.mode should be {RandomChoice.RETURN_MODE_TRANSFORM_FUNCTION}"
+            t_picked = t()
             imgs = self.__multi_apply(imgs, t_picked)
         elif isinstance(t, MultiCompose):
             imgs = t(imgs)
         else:
             raise NotImplementedError('There is no multi compose version of {} yet.'.format(t.__class__))
         return imgs
-
-
-# class RandomChoice(RandomTransforms):
-#     """
-#     Apply single transformation randomly picked from a list. This transform does not support torchscript.
-#     Joao: I am re-implementing this to control the seed. Original implementation copied from torchvision.transforms.transforms.
-#     """
-#     def __init__(self, transforms, p=None):
-#         super().__init__(transforms)
-#         if p is not None and not isinstance(p, Sequence):
-#             raise TypeError("Argument transforms should be a sequence")
-#         self.p = p
-
-#     def __call__(self, *args):
-#         t = random.choices(self.transforms, weights=self.p)[0]
-#         return t(*args)
-
-#     def __repr__(self):
-#         format_string = super().__repr__()
-#         format_string += '(p={0})'.format(self.p)
-#         return format_string
 
 
 def generate_dataloader_images(dataloader, nimages_perclass=20) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]:
