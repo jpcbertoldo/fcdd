@@ -3,17 +3,14 @@ import os
 import random
 import tarfile
 import tempfile
-import traceback
-from copy import deepcopy
 from itertools import cycle
 from pathlib import Path
 from typing import Callable, List, Tuple
 
 import numpy as np
-from pyparsing import Optional
+import numpy.random
 import torch
 import torchvision.transforms as transforms
-from kornia import gaussian_blur2d
 from PIL import Image
 from pytorch_lightning import LightningDataModule
 from six.moves import urllib
@@ -24,18 +21,13 @@ from torch.utils.data.dataset import Dataset
 from torchvision.datasets import VisionDataset
 from torchvision.datasets.imagenet import check_integrity
 from tqdm import tqdm
-from numpy.random import PCG64, SeedSequence, Generator
-import numpy.random
-import random
-from random import Random
 
-from data_dev01 import (ImgGtmapLabelTransform, ImgGtmapTensorsToUint8,
-                        ImgGtmapToPIL, MultiCompose, NOMINAL_TARGET, ANOMALY_TARGET, 
-                        generate_dataloader_images, 
-                        generate_dataloader_preview_multiple_fig, 
-                        generate_dataloader_preview_single_fig,
-                        RandomChoice,
-                        )
+from common_dev01 import (create_numpy_random_generator,
+                          create_python_random_generator)
+from data_dev01 import (ANOMALY_TARGET, NOMINAL_TARGET, ImgGtmapLabelTransform,
+                        ImgGtmapTensorsToUint8, ImgGtmapToPIL, MultiCompose,
+                        RandomChoice, generate_dataloader_images,
+                        generate_dataloader_preview_single_fig)
 
 CLASSES_LABELS = (
     'bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather',
@@ -67,41 +59,6 @@ TARGZ_DOWNLOAD_URL = "ftp://guest:GU%2E205dldo@ftp.softronics.ch/mvtec_anomaly_d
 TARGZ_FNAME = 'mvtec_anomaly_detection.tar.xz'
 
 BASE_FOLDER = 'mvtec'
-
-
-def seed_str2int(seed: str):
-    assert isinstance(seed, str), f"entropy must be a string, got {type(seed)}"
-    assert seed.startswith("0x"), f"entropy must start with 0x, got {seed}"
-    # [2:] cuts off the "0x"
-    assert set(seed[2:]).issubset("0123456789abcdef"), f"entropy must be a hexadecimal string, got {seed}"
-    return int(seed, base=16)
-
-
-def seed_int2str(seed: int):
-    assert isinstance(seed, int), f"entropy must be an integer, got {type(seed)}"
-    return f"0x{seed:x}"
-
-
-# these two functions make sure that all generators are of the same type
-
-def create_seed() -> int:
-    ss = SeedSequence()
-    print(f"random seed generated from the system entropy using SeedSequence: {seed_int2str(ss.entropy)}")
-    return ss.entropy
-
-    
-def create_numpy_random_generator(seed: int) -> numpy.random.Generator:
-    assert isinstance(seed, int), f"seed must be an integer, got {type(seed)}"
-    assert seed >= 0, f"seed must be >= 0, got {seed_int2str(seed)}"
-    print(f"random generator instantiaed from the provided seed: {seed_int2str(seed)}")
-    return Generator(PCG64(SeedSequence(seed)))
-    
-    
-def create_python_random_generator(seed: int) -> random.Random:
-    assert isinstance(seed, int), f"seed must be an integer, got {type(seed)}"
-    assert seed >= 0, f"seed must be >= 0, got {seed_int2str(seed)}"
-    print(f"random generator instantiaed from the provided seed: {seed_int2str(seed)}")
-    return Random(seed)
 
 
 def confetti_noise(
@@ -1339,7 +1296,7 @@ if __name__ == "__main__":
     train_dl = mvtecad_datamodule.train_dataloader()
     test_dl = mvtecad_datamodule.test_dataloader()
 
-    savedir = Path.home() / "tmp"
+    savedir = Path.home() / "fcdd/data/tmp"
     savedir.mkdir(exist_ok=True)
     
     # train
@@ -1366,7 +1323,6 @@ if __name__ == "__main__":
         if relative_size > WARNING_RELATIVE_PNG_SIZE:
             # todo make this a warning in wandb 
             print(f"The PNG size is {png_size} KiB, which is too big. Please reduce the size of the images.")
-        
         
         fig.savefig(
             fname=fname,

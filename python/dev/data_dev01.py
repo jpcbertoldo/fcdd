@@ -1,9 +1,7 @@
-from bdb import effective
 from collections import Counter
-import random
 from abc import abstractmethod
-from copy import deepcopy
 from typing import Callable, List, Tuple
+import matplotlib
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -193,7 +191,7 @@ class MultiCompose(transforms.Compose):
         return imgs
 
 
-def generate_dataloader_images(dataloader, nimages_perclass=20) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]:
+def generate_dataloader_images(dataloader, nimages_perclass=20) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Generates a preview of the dataset, i.e. it generates an image of some randomly chosen outputs
     of the dataloader, including ground-truth maps.
@@ -223,14 +221,10 @@ def generate_dataloader_images(dataloader, nimages_perclass=20) -> Tuple[Tuple[t
         print(f"could not find {nimages_perclass} on each class, only generated {effective_nimages_perclass} of each")
     
     ret = (
-        (
-            imgs[y == NOMINAL_TARGET][:effective_nimages_perclass], 
-            gtmaps[y == NOMINAL_TARGET][:effective_nimages_perclass],
-        ),
-        (
-            imgs[y == ANOMALY_TARGET][:effective_nimages_perclass], 
-            gtmaps[y == ANOMALY_TARGET][:effective_nimages_perclass],
-        ),
+        imgs[y == NOMINAL_TARGET][:effective_nimages_perclass], 
+        gtmaps[y == NOMINAL_TARGET][:effective_nimages_perclass],
+        imgs[y == ANOMALY_TARGET][:effective_nimages_perclass], 
+        gtmaps[y == ANOMALY_TARGET][:effective_nimages_perclass],
     )
     
     print('Images generated.')
@@ -250,43 +244,7 @@ def generate_dataloader_preview_multiple_fig(
     example code to use this function:
     
     ```
-    mvtecad_datamodule = MVTecAnomalyDetectionDataModule(
-        root="../../data/datasets",
-        normal_class=0,
-        # preproc=PREPROCESSING_NONE,
-        preproc=PREPROCESSING_LCNAUG1,
-        # supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
-        supervise_mode=SUPERVISE_MODE_REAL_ANOMALY,
-        batch_size=128,
-        nworkers=0,
-        pin_memory=False,
-        raw_shape=(3, 224, 224),
-        net_shape=(3, 224, 224),
-        real_anomaly_limit=1,
-    )
-    
-    mvtecad_datamodule.prepare_data()
-    mvtecad_datamodule.setup()
-    train_dl = mvtecad_datamodule.train_dataloader()
-    test_dl = mvtecad_datamodule.test_dataloader()
-
-    savedir = Path.home() / "tmp"
-    savedir.mkdir(exist_ok=True)
-    
-    ((normal_imgs, normal_gtmaps), (anomalous_imgs, anomalous_gtmaps)) = generate_dataloader_images(train_dl, nimages_perclass=10)
-
-    normal_figs, anomalous_figs = generate_dataloader_preview_multiple_fig(normal_imgs, normal_gtmaps, anomalous_imgs, anomalous_gtmaps)
-    for fig in [*normal_figs, *anomalous_figs]:
-        fig.savefig(
-        fname=savedir / f"{fig.label}.png", 
-        # this makes sure that the number of pixels in the image is exactly the 
-        # same as the number of pixels in the tensors 
-        # (other conditions in the functions that generate the images)
-        dpi=1, 
-        pad_inches=0, bbox_inches='tight', 
-    )
     ```
-    
     """
     print('Generating dataset preview...')
 
@@ -347,7 +305,7 @@ def generate_dataloader_preview_single_fig(
     normal_gtmaps: torch.Tensor, 
     anomalous_imgs: torch.Tensor,
     anomalous_gtmaps: torch.Tensor,
-) -> List[Figure]:
+) -> matplotlib.figure.Figure:
     """
     normal_imgs, anomalous_imgs: tensors of shape (n x 3 x h x w)
     normal_gtmaps,anomalous_gtmaps: tensors of shape (n x 1 x h x w)
@@ -355,42 +313,6 @@ def generate_dataloader_preview_single_fig(
     example code to use this function:
     
     ```
-    mvtecad_datamodule = MVTecAnomalyDetectionDataModule(
-        root="../../data/datasets",
-        normal_class=0,
-        # preproc=PREPROCESSING_NONE,
-        preproc=PREPROCESSING_LCNAUG1,
-        # supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
-        supervise_mode=SUPERVISE_MODE_REAL_ANOMALY,
-        batch_size=128,
-        nworkers=0,
-        pin_memory=False,
-        raw_shape=(3, 224, 224),
-        net_shape=(3, 224, 224),
-        real_anomaly_limit=1,
-    )
-    
-    mvtecad_datamodule.prepare_data()
-    mvtecad_datamodule.setup()
-    train_dl = mvtecad_datamodule.train_dataloader()
-    test_dl = mvtecad_datamodule.test_dataloader()
-
-    savedir = Path.home() / "tmp"
-    savedir.mkdir(exist_ok=True)
-    
-    ((normal_imgs, normal_gtmaps), (anomalous_imgs, anomalous_gtmaps)) = generate_dataloader_images(train_dl, nimages_perclass=10)
-
-    single_preview_fig = generate_dataloader_preview_single_fig(
-        normal_imgs, normal_gtmaps, anomalous_imgs, anomalous_gtmaps,
-    )
-    single_preview_fig.savefig(
-        fname=savedir / f"{single_preview_fig.label}.png",
-        # this makes sure that the number of pixels in the image is exactly the 
-        # same as the number of pixels in the tensors 
-        # (other conditions in the functions that generate the images)
-        dpi=1, 
-        pad_inches=0, bbox_inches='tight', 
-    )
     ```
     
     """
@@ -416,8 +338,8 @@ def generate_dataloader_preview_single_fig(
         # concatenates img/gtmap vertically
         prevs = [
             # dim 1 = height ==> vertical concatenation
-            # the repeat(3) is there to make the gtmap "RGB" while keeping it gray 
             torch.cat([img, gtmap.repeat(3, 1, 1)], dim=1)
+            # the repeat(3, 1, 1) is there to make the gtmap "RGB" while keeping it gray 
             for img, gtmap in zip(imgs, gtmaps)
         ]
         # concatenate the many prevs horizontally
@@ -447,8 +369,6 @@ def generate_dataloader_preview_single_fig(
     print('Dataset preview generated.')
     
     return fig
-
-
 
 
 # about test: create option to use original gtmaps or not (resized gtmaps)

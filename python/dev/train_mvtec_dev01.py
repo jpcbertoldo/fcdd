@@ -12,16 +12,19 @@
 # In[1]:
 
 
+import contextlib
 import json
 import os.path as pt
+import pathlib
 import random
 import time
 from argparse import ArgumentParser
 from collections import namedtuple
-from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple, Union
+from typing import List, Tuple
+import PIL
+
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -31,19 +34,17 @@ import torchvision
 from fcdd.models.bases import ReceptiveNet
 from fcdd.util.logging import Logger
 from pytorch_lightning.loggers import WandbLogger
-from torch import Tensor, gt
+from torch import Tensor
 from torch.hub import load_state_dict_from_url
-import time
-
-import wandb
+from torch.profiler import tensorboard_trace_handler
+from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET, generate_dataloader_images, generate_dataloader_preview_single_fig
 
 import mvtec_dataset_dev01 as mvtec_datamodule
-from mvtec_dataset_dev01 import MVTecAnomalyDetectionDataModule, create_seed
-from train_mvtec_dev01_aux import single_save
-
-from train_mvtec_dev01_aux import compute_gtmap_roc, compute_gtmap_pr
-
-from torch.profiler import tensorboard_trace_handler
+import wandb
+from mvtec_dataset_dev01 import MVTecAnomalyDetectionDataModule
+from common_dev01 import create_seed, seed_int2str, seed_str2int
+from train_mvtec_dev01_aux import (compute_gtmap_pr, compute_gtmap_roc,
+                                   single_save)
 
 # # utils
 
@@ -135,6 +136,7 @@ LIGHTNING_ACCELERATOR_CHOICES = (LIGHTNING_ACCELERATOR_CPU, LIGHTNING_ACCELERATO
 
 # In[]:
 from pytorch_lightning import LightningModule
+
 
 class FCDD_CNN224_VGG(LightningModule):
     """
@@ -549,16 +551,20 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
     # ===================================== directories and logging =====================================
     # 
     parser.add_argument(
-        '--logdir', type=str, default=pt.join('..', '..', 'data', 'results', 'fcdd_{t}'),
-        help='Directory where log data is to be stored. The pattern {t} is replaced by the start time. '
-             'Defaults to ../../data/results/fcdd_{t}. '
+        '--logdir', type=pathlib.Path, default=pathlib.Path("../../data/results/fcdd"),
+        help='Directory where log data is to be stored. The start time is put after the dir name. '
+             'Defaults to ../../data/results/fcdd_{t} where {t} is the start time.'
     )
     parser.add_argument(
         '--logdir-suffix', type=str, default='',
-        help='String suffix for log directory, again {t} is replaced by the start time. '
+        help='String suffix for log directory. '
     )
     parser.add_argument(
-        '--datadir', type=str, default=pt.join('..', '..', 'data', 'datasets'),
+        '--logdir-prefix', type=str, default='',
+        help='String prefix for log directory. '
+    )
+    parser.add_argument(
+        '--datadir', type=pathlib.Path, default=pt.join('..', '..', 'data', 'datasets'),
         help='Directory where datasets are found or to be downloaded to. Defaults to ../../data/datasets.',
     )
     
@@ -574,6 +580,7 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
         help='Determines the kind of preprocessing pipeline (augmentations and such). '
              'Have a look at the code (dataset implementation, e.g. fcdd.datasets.cifar.py) for details.'
     )
+    parser.add_argument("--preview-nimages", type=int, default=10, help="Number of images to preview per class (normal/anomalous).")
     
     # 
     # ===================================== wandb =====================================
@@ -604,6 +611,23 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument(
         "--lightning-ndevices", type=int, default=1,
     )
+
+    # 
+    # ===================================== iterations/classes =====================================
+    #
+    parser.add_argument(
+        '--it', type=int, default=None, 
+        help='Number of runs per class with different random seeds. If seeds is specified this is unnecessary.'
+    )
+    parser.add_argument(
+        "--seeds", type=seed_str2int, nargs='*', default=None,
+        help="If set, the model will be trained with the given seeds. Otherwise it will be trained with randomly generated seeds." \
+            "The seeds must be passed in hexadecimal format, e.g. 0x1234."
+    ),
+    parser.add_argument(
+        '--cls-restrictions', type=int, nargs='+', default=None,
+        help='Run only training sessions for some of the classes being nominal.'
+    )
     return parser
 
 
@@ -630,45 +654,47 @@ def default_parser_config_mvtec(parser: ArgumentParser) -> ArgumentParser:
         lightning_accelerator=LIGHTNING_ACCELERATOR_GPU,
         lightning_ndevices=1,
     )
-
-    parser.add_argument(
-        '--it', type=int, default=5, 
-        help='Number of runs per class with different random seeds.')
-    parser.add_argument(
-        '--cls-restrictions', type=int, nargs='+', default=None,
-        help='Run only training sessions for some of the classes being nominal.'
-    )
     return parser
 
 
 # In[4]:
 
 
-def time_format(i: float) -> str:
-    """ takes a timestamp (seconds since epoch) and transforms that into a datetime string representation """
-    return datetime.fromtimestamp(i).strftime('%Y%m%d%H%M%S')
-
-
 def args_post_parse(args_):
     
-    args_.logdir = Path(args_.logdir)
-    logdir_name = args_.logdir.name
-    
-    # it is duplicated for compatibility with setup_trainer
+    # ================================== start time ==================================
+    def time_format(i: float) -> str:
+        """ takes a timestamp (seconds since epoch) and transforms that into a datetime string representation """
+        return datetime.fromtimestamp(i).strftime('%Y%m%d%H%M%S')
     args_.log_start_time = int(time.time())
-    args_.log_start_time_str = time_format(args_.log_start_time)
-    
-    logdir_name = f"{args_.dataset}_" + logdir_name
-    
-    if 'logdir_suffix' in vars(args_):
-        logdir_name += args_.logdir_suffix
 
-        del vars(args_)['logdir_suffix']
-        
-    logdir_name = logdir_name.replace('{t}', args_.log_start_time_str)
+    # ================================== logdir ==================================
+    logdir_name = f"{args_.logdir_prefix}{'_' if args_.logdir_prefix else ''}{args_.logdir.name}_{time_format(args_.log_start_time)}{'_' if args_.logdir_suffix else ''}{args_.logdir_suffix}"
+    del vars(args_)['logdir_suffix']
+    del vars(args_)['logdir_prefix']
+    parent_dir = args_.logdir.parent 
+    if args_.wandb_project is not None:
+        parent_dir = parent_dir / args_.wandb_project    
+    parent_dir = parent_dir / args_.dataset
+    args_.logdir = parent_dir / logdir_name
     
-    args_.logdir = args_.logdir.parent / logdir_name
-            
+    # ================================== seeds ==================================
+    seeds = args_.seeds
+    if seeds is None:
+        number_it = args_.it
+        assert number_it is not None, "seeds or number_it must be specified"
+        print('no seeds specified, using default: auto generated seeds from the system entropy')
+        seeds = []
+        for _ in range(number_it):
+            seeds.append(create_seed())
+            time.sleep(1/3)  # let the system state change
+    else:
+        assert args_.it is None, f"seeds and number_it cannot be specified at the same time"
+        for s in seeds:
+            assert type(s) == int, f"seed must be an int, got {type(s)}"
+            assert s >= 0, f"seed must be >= 0, got {s}"
+        assert len(set(seeds)) == len(seeds), f"seeds must be unique, got {s}"
+        
     return args_
 
 
@@ -698,6 +724,7 @@ TrainSetup = namedtuple(
 # In[]:
 
 import pytorch_lightning as pl
+
 
 # # training
 class TorchTensorboardProfilerCallback(pl.Callback):
@@ -729,27 +756,29 @@ def run_one(
     # scheduler
     scheduler: str,
     lr_sched_param: list,
-    # else
-    config: str, 
-    it: int, 
-    epochs: int,
-    test: bool,
-    normal_class_label: str,
-    wandb_logger,
+    # training
     supervise_mode: str,
-    dataset: str,
     preproc: str,
-    datadir: str,
-    normal_class: int,
     batch_size: int,
+    epochs: int,
     real_anomaly_limit: int,
-    logdir: str,
-    log_start_time,
-    #
+    # data
+    dataset: str,
+    normal_class: int,
+    normal_class_label: str,
+    preview_nimages: int,
+    # saving and logging
+    test: bool,
+    datadir: pathlib.Path,
+    logdir: pathlib.Path,
+    # wandb
+    wandb_logger: WandbLogger,
+    wandb_profile,
+    # computing 
     nworkers: int, 
     pin_memory: bool,
+    # random
     seed: int,
-    #
     **kwargs,
 ):
     """
@@ -764,15 +793,20 @@ def run_one(
     assert preproc in PREPROCESSING_CHOICES, f"Invalid preproc: {preproc}, chose from {PREPROCESSING_CHOICES}"
     assert preproc in dataset_preprocessing_choices(dataset), f"Invalid preproc: {preproc}, chose from {dataset_preprocessing_choices(dataset)}"
     
-    logger = Logger(logdir=logdir, exp_start_time=log_start_time,)
+    logdir.mkdir(parents=True, exist_ok=True)
+    (logdir / "seed.txt").write_text(seed_int2str(seed))
+        
+    torch.manual_seed(seed)
+    
+    # ================================ DATA ================================
     
     datamodule = MVTecAnomalyDetectionDataModule(
-        root=datadir,
+        root=str(datadir),
         normal_class=normal_class,
         preproc=preproc,
         supervise_mode=supervise_mode,
         real_anomaly_limit=real_anomaly_limit,
-        raw_shape=(1, 240, 240),
+        raw_shape=(260, 260),  # todo make me an argument
         batch_size=batch_size,
         nworkers=nworkers,
         pin_memory=pin_memory,
@@ -782,14 +816,34 @@ def run_one(
     # generate preview
     datamodule.prepare_data()
     datamodule.setup()
-    images = datamodule.torchvision_dataset.preview(percls=20, train=True)
-    logger.imsave(
-        name='ds_preview', 
-        tensors=torch.cat([*images]), 
-        nrow=images.size(1),
-        rowheaders=['norm', 'anom', '', 'gtno', 'gtan',],
-    )   
+
+    # ================================ PREVIEWS ================================
+
+    # train
+    norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps = generate_dataloader_images(datamodule.train_dataloader(), nimages_perclass=preview_nimages)
+    # train_preview_fig = generate_dataloader_preview_single_fig(norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps, )      
+    # savefig(train_preview_fig, logdir / f"train.{train_preview_fig.label}.png", preview_image_size_factor=.5)
+
+    def get_mask_dict(mask_tensor: torch.Tensor):
+        """mask_tensor \in int32^[1, H, W]"""
+        return dict(ground_truth=dict(
+            mask_data=mask_tensor.squeeze().numpy(), 
+            class_labels={NOMINAL_TARGET: "normal", ANOMALY_TARGET: "anomalous"}
+        ))
+
+    wandb.log({
+        "train/preview/normal": [
+            wandb.Image(img, caption=[f"train normal {idx:03d}"], masks=get_mask_dict(mask))
+            for idx, (img, mask) in enumerate(zip(norm_imgs, norm_gtmaps))
+        ],
+        "train/preview/anomalous": [
+            wandb.Image(img, caption=[f"train anomalous {idx:03d}"], masks=get_mask_dict(mask))
+            for idx, (img, mask) in enumerate(zip(anom_imgs, anom_gtmaps))
+        ],
+    })
     
+    return
+
     # ================================ NET & OPTIMIZER ================================
     try:
         # ds.shape: of the inputs the model expects (n x c x h x w).
@@ -813,23 +867,27 @@ def run_one(
             # else
             normal_class_label=normal_class_label,
         )
+        # todo: save net print in file too
+        print(net)
     
     except KeyError as err:
         raise KeyError(f'Model {net} is not implemented!') from err
 
-    logger.save_params(net, config)
+    if not wandb_profile:
+        profiler = contextlib.nullcontext()
     
-    # Set up profiler
-    wait, warmup, active, repeat = 1, 1, 2, 1
-    schedule =  torch.profiler.schedule(
-      wait=wait, warmup=warmup, active=active, repeat=repeat,
-    )
-    profile_dir = Path(f"{wandb_logger.save_dir}/latest-run/tbprofile").absolute()
-    profiler = torch.profiler.profile(
-      schedule=schedule, 
-      on_trace_ready=tensorboard_trace_handler(str(profile_dir)), 
-      with_stack=True,
-    )
+    else:
+        # Set up profiler
+        wait, warmup, active, repeat = 1, 1, 2, 1
+        schedule =  torch.profiler.schedule(
+        wait=wait, warmup=warmup, active=active, repeat=repeat,
+        )
+        profile_dir = Path(f"{wandb_logger.save_dir}/latest-run/tbprofile").absolute()
+        profiler = torch.profiler.profile(
+            schedule=schedule, 
+            on_trace_ready=tensorboard_trace_handler(str(profile_dir)), 
+            with_stack=True,
+        )
 
     with profiler:
         
@@ -845,9 +903,10 @@ def run_one(
         )
         trainer.fit(model=net, datamodule=datamodule)
 
-    profile_art = wandb.Artifact(f"trace-{wandb.run.id}", type="profile")
-    profile_art.add_file(str(next(profile_dir.glob("*.pt.trace.json"))), "trace.pt.trace.json")
-    wandb_logger.experiment.log_artifact(profile_art)
+    if wandb_profile:
+        profile_art = wandb.Artifact(f"trace-{wandb.run.id}", type="profile")
+        profile_art.add_file(str(next(profile_dir.glob("*.pt.trace.json"))), "trace.pt.trace.json")
+        wandb_logger.experiment.log_artifact(profile_art)
 
     if not test:
         return 
@@ -857,96 +916,95 @@ def run_one(
     
 def run(**kwargs) -> dict:
     
-    base_logdir = kwargs['logdir']
+    base_logdir = kwargs['logdir'].resolve().absolute()
     dataset = kwargs['dataset']
+    datadir = kwargs['datadir']
     
     cls_restrictions = kwargs.pop("cls_restrictions", None)
     classes = cls_restrictions or range(dataset_nclasses(dataset))
 
-    number_it = kwargs.pop('it')
-    seeds = kwargs.pop('seeds')
-    
-    if seeds is None:
-        assert number_it is not None, "seeds or number_it must be specified"
-        print('no seeds specified, using default: auto generated seeds from the system entropy')
-        its = list(range(number_it))
-        seeds = []
-        for _ in its:
-            seeds.append(create_seed())
-            time.sleep(1/3)  # let the system state change
-    else:
-        if number_it is None:
-            number_it = len(seeds)
-            print(f"number_it is not specified, using {number_it} (from the seeds given)")
-        assert len(seeds) == number_it, f"number_it {number_it} != len(seeds) {len(seeds)}"
-        for s in seeds:
-            assert type(s) == int, f"seed must be an int, got {type(s)}"
-            assert s >= 0, f"seed must be >= 0, got {s}"
-        assert len(set(seeds)) == len(seeds), f"seeds must be unique, got {s}"
-        
+    seeds = kwargs.pop('seeds')   
     its = list(range(len(seeds)))
-        
-    results = []
     
     for c in classes:
+        
         cls_logdir = base_logdir / f'normal_{c}'
         
-        kwargs['normal_class'] = c
-        kwargs['normal_class_label'] = dataset_class_labels(dataset)[c]
-    
+        kwargs.update(dict(
+            normal_class=c,
+            normal_class_label=dataset_class_labels(dataset)[c],
+        ))
+        
         for i, seed in zip(its, seeds):
+            
+            kwargs.update(dict(
+                it=i,
+                seed=seed,
+            ))
+            
             logdir = (cls_logdir / 'it_{:02}'.format(i)).absolute()
             
+            wandb_offline = kwargs.pop("wandb_offline", False)
             wandb_project = kwargs.pop("wandb_project", None)
             wandb_tags = kwargs.pop("wandb_tags", None) or []
-            wandb_profile = kwargs.pop("wandb_profile", False)
-            wandb_dir = str(logdir / 'wandb')
-            wandb_offline = kwargs.pop("wandb_offline", False)
-            
-            # wandb_init = wandb.init if wandb_project is not None else no_wandb_init 
-            del kwargs["log_start_time_str"]
+            wandb_name = f"{dataset}.{base_logdir.name}.cls{c:02}.it{i:02}"
             
             kwargs = {
                 **kwargs, 
                 **dict(
-                    logdir=str(logdir),  # overwrite logdir
-                    it=i,
-                    datadir=str(Path(kwargs["datadir"]).absolute()),
+                    wandb_project=wandb_project,
+                    wandb_name=wandb_name,
+                    logdir=logdir,  # overwrite logdir
+                    datadir=datadir,
                     seed=seed,
-                )
+            )
             }
             
-            torch.manual_seed(seed)
+            # it's super important that the dir must already exist for wandb logging           
+            logdir.mkdir(parents=True, exist_ok=True)
             
-            wandb_logger = WandbLogger(
-                project=wandb_project, 
-                name=f"{logdir.parent.parent.name}.{logdir.parent.name}.{logdir.name}",
-                entity="mines-paristech-cmm",
-                save_dir=wandb_dir,
-                offline=wandb_offline,
-                # id=wandb_id,  # to restart from a previous run
-                # kwargs
-                tags=wandb_tags,
-                config=kwargs,
-                # save_code=True,
-            )
-            
-            kwargs["config"] = json.dumps(kwargs)
-            run_one(
-                wandb_logger=wandb_logger,
+            # the ones added here don't go to the run_one()
+            wandb_config = {
                 **kwargs,
+                **dict(seeds_str=seed_int2str(seed)),
+            }
+            
+            wandb_init_kwargs = dict(
+                project=wandb_project, 
+                name=wandb_name,
+                entity="mines-paristech-cmm",
+                id=None,  # to restart from a previous run
+                tags=wandb_tags,
+                config=wandb_config,
+                save_code=True,
+                reinit=True,  # todo test several iters
+            )
+            wandb_logger = WandbLogger(
+                save_dir=str(logdir),
+                offline=wandb_offline,
+                **wandb_init_kwargs,
+            )    
+            # image logging is not working properly with the logger
+            # so i also use the default wandb interface for that
+            wandb.init(
+                dir=str(logdir),
+                **{
+                  **wandb_init_kwargs,
+                  # make sure both have the same run_id
+                  **dict(id=wandb_logger.experiment._run_id),  
+                },
             )
             
-            results.append(dict(class_idx=c, it=i, logdir=str(logdir)))
-
-    return results
-
-
-# %%
-
-# In[]:
-# # launch
-
+            try:
+                run_one(wandb_logger=wandb_logger, **kwargs,)
+            except Exception as ex:
+                wandb_logger.finalize("failed")
+                wandb.finish(1)
+                raise ex
+            else:
+                wandb_logger.finalize("success")
+                wandb.finish()
+            
 # In[22]:
 
 # import os
