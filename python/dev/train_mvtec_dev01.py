@@ -1,19 +1,11 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[]:
-# # train mvtec
-# 
-# i want to have a simpler script to integrate to wandb and later adapt it to unetdd
 
-# In[]:
-# # imports
-
-# In[1]:
+import pytorch_lightning as pl
 
 
 import contextlib
-import json
 import os.path as pt
 import pathlib
 import random
@@ -22,8 +14,7 @@ from argparse import ArgumentParser
 from collections import namedtuple
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
-import PIL
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
@@ -32,40 +23,20 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 from fcdd.models.bases import ReceptiveNet
-from fcdd.util.logging import Logger
+from pytorch_lightning import LightningModule
 from pytorch_lightning.loggers import WandbLogger
 from torch import Tensor
 from torch.hub import load_state_dict_from_url
 from torch.profiler import tensorboard_trace_handler
-from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET, generate_dataloader_images, generate_dataloader_preview_single_fig
 
 import mvtec_dataset_dev01 as mvtec_datamodule
 import wandb
-from mvtec_dataset_dev01 import MVTecAnomalyDetectionDataModule
 from common_dev01 import create_seed, seed_int2str, seed_str2int
+from data_dev01 import (ANOMALY_TARGET, NOMINAL_TARGET,
+                        generate_dataloader_images,)
+from mvtec_dataset_dev01 import MVTecAnomalyDetectionDataModule
 from train_mvtec_dev01_aux import (compute_gtmap_pr, compute_gtmap_roc,
                                    single_save)
-
-# # utils
-
-def balance_labels(data: Tensor, labels: List[int], err=True) -> Tensor:
-    """ balances data by removing samples for the more frequent label until both labels have equally many samples """
-    lblset = list(set(labels))
-    if err:
-        assert len(lblset) == 2, 'binary labels required'
-    else:
-        assert len(lblset) <= 2, 'binary labels required'
-        if len(lblset) == 1:
-            return data
-    l0 = (torch.from_numpy(np.asarray(labels)) == lblset[0]).nonzero().squeeze(-1).tolist()
-    l1 = (torch.from_numpy(np.asarray(labels)) == lblset[1]).nonzero().squeeze(-1).tolist()
-    if len(l0) > len(l1):
-        rmv = random.sample(l0, len(l0) - len(l1))
-    else:
-        rmv = random.sample(l1, len(l1) - len(l0))
-    ids = [i for i in range(len(labels)) if i not in rmv]
-    data = data[ids]
-    return data
 
 
 # In[]:
@@ -128,14 +99,19 @@ LIGHTNING_ACCELERATOR_CPU = "cpu"
 LIGHTNING_ACCELERATOR_GPU = "gpu"
 LIGHTNING_ACCELERATOR_CHOICES = (LIGHTNING_ACCELERATOR_CPU, LIGHTNING_ACCELERATOR_GPU)
 
-# In[]:
-# # model
 
-# In[]:
-# ## new (torch lightning)
+# ======================================== wandb ========================================
 
-# In[]:
-from pytorch_lightning import LightningModule
+WANDB_CHECKPOINT_MODE_NONE = "none"
+WANDB_CHECKPOINT_MODE_LAST = "last"
+WANDB_CHECKPOINT_MODE_BEST = "best"
+WANDB_CHECKPOINT_MODE_ALL = "all"
+WANDB_CHECKPOINT_MODES = (
+    WANDB_CHECKPOINT_MODE_NONE,
+    WANDB_CHECKPOINT_MODE_LAST,
+    # WANDB_CHECKPOINT_MODE_BEST,
+    # WANDB_CHECKPOINT_MODE_ALL, 
+)
 
 
 class FCDD_CNN224_VGG(LightningModule):
@@ -172,7 +148,7 @@ class FCDD_CNN224_VGG(LightningModule):
         # ReceptiveNet.__init__(self, in_shape, bias)
         # LightningModule.__init__(self)
         
-        self._receptive_field_net = ReceptiveNet(in_shape, bias)
+        self._receptive_field_net = ReceptiveNet((3,) + in_shape, bias)
         self.biases = bias
         self.in_shape = in_shape
         self.gauss_std = gauss_std
@@ -320,9 +296,9 @@ class FCDD_CNN224_VGG(LightningModule):
             loss_normal = loss_maps[gtmaps == 0].mean()
             loss_anomaly = loss_maps[gtmaps == 1].mean()
             
-        self.log("train/loss/normal", loss_normal, on_step=True, on_epoch=True)
-        self.log("train/loss/anomaly", loss_anomaly, on_step=True, on_epoch=True)
-        self.log("train/loss", loss, on_step=True, on_epoch=True)
+        self.log("train/loss/normal", loss_normal, on_step=False, on_epoch=True)
+        self.log("train/loss/anomaly", loss_anomaly, on_step=False, on_epoch=True)
+        self.log("train/loss", loss, on_step=False, on_epoch=True)
         
         return loss
     
@@ -580,7 +556,7 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
         help='Determines the kind of preprocessing pipeline (augmentations and such). '
              'Have a look at the code (dataset implementation, e.g. fcdd.datasets.cifar.py) for details.'
     )
-    parser.add_argument("--preview-nimages", type=int, default=10, help="Number of images to preview per class (normal/anomalous).")
+    parser.add_argument("--preview-nimages", type=int, default=5, help="Number of images to preview per class (normal/anomalous).")
     
     # 
     # ===================================== wandb =====================================
@@ -600,6 +576,19 @@ def default_parser_config(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument(
         "--wandb-offline", action="store_true",
         help="If set, the model will be logged to wandb without the need for an internet connection.",
+    )
+    parser.add_argument(
+        # choices taken from wandb/sdk/wandb_watch.py => watch()
+        "--wandb-watch", type=str, default=None, choices=(None, "gradients", "all", "parameters"), 
+        help="Argument for wandb_logger.watch(..., log=THIS).",
+    )
+    parser.add_argument(
+        "--wandb-watch-log-freq", type=int, default=100,  # wandb's default
+        help="Argument for wandb_logger.watch(..., log_freq=THIS).",
+    )
+    parser.add_argument(        
+        "--wandb-checkpoint-mode", type=str, default=WANDB_CHECKPOINT_MODE_LAST, choices=WANDB_CHECKPOINT_MODES,
+        help="How to save checkpoints."
     )
     
     # 
@@ -657,6 +646,8 @@ def default_parser_config_mvtec(parser: ArgumentParser) -> ArgumentParser:
     return parser
 
 
+# %%
+
 # In[4]:
 
 
@@ -688,45 +679,18 @@ def args_post_parse(args_):
         for _ in range(number_it):
             seeds.append(create_seed())
             time.sleep(1/3)  # let the system state change
+        args_.seeds = seeds
     else:
         assert args_.it is None, f"seeds and number_it cannot be specified at the same time"
         for s in seeds:
             assert type(s) == int, f"seed must be an int, got {type(s)}"
             assert s >= 0, f"seed must be >= 0, got {s}"
         assert len(set(seeds)) == len(seeds), f"seeds must be unique, got {s}"
+    del vars(args_)['it']
         
     return args_
 
 
-# In[]:
-# # setup
-
-
-# In[5]:
-
-
-TrainSetup = namedtuple(
-    "TrainSetup",
-    [
-        "net",
-        "opt",
-        "sched",
-        "logger",
-        "device",
-        "quantile",
-        "resdown",
-        "blur_heatmaps",
-    ]
-)
-
-
-
-# In[]:
-
-import pytorch_lightning as pl
-
-
-# # training
 class TorchTensorboardProfilerCallback(pl.Callback):
   """Quick-and-dirty Callback for invoking TensorboardProfiler during training.
   
@@ -741,7 +705,6 @@ class TorchTensorboardProfilerCallback(pl.Callback):
     self.profiler.step()
     pl_module.log_dict(outputs)  # also logging the loss, while we're here
 
-# In[]:
 
 def run_one(
     # net
@@ -773,7 +736,9 @@ def run_one(
     logdir: pathlib.Path,
     # wandb
     wandb_logger: WandbLogger,
-    wandb_profile,
+    wandb_profile: bool,
+    wandb_watch: Optional[str],
+    wandb_watch_log_freq: int,
     # computing 
     nworkers: int, 
     pin_memory: bool,
@@ -815,12 +780,19 @@ def run_one(
             
     # generate preview
     datamodule.prepare_data()
-    datamodule.setup()
 
     # ================================ PREVIEWS ================================
+    datamodule.setup("fit")
 
     # train
-    norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps = generate_dataloader_images(datamodule.train_dataloader(), nimages_perclass=preview_nimages)
+    norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps = generate_dataloader_images(
+        datamodule.train_dataloader(
+            batch_size_override=2 * preview_nimages, 
+            # make sure to use the preprocessing of the training data
+            embed_preprocessing=True, 
+        ), 
+        nimages_perclass=preview_nimages
+    )
     # train_preview_fig = generate_dataloader_preview_single_fig(norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps, )      
     # savefig(train_preview_fig, logdir / f"train.{train_preview_fig.label}.png", preview_image_size_factor=.5)
 
@@ -841,37 +813,41 @@ def run_one(
             for idx, (img, mask) in enumerate(zip(anom_imgs, anom_gtmaps))
         ],
     })
-    
-    return
 
     # ================================ NET & OPTIMIZER ================================
     try:
-        # ds.shape: of the inputs the model expects (n x c x h x w).
-        net = MODEL_CLASSES[net](
-            
-            # model
-            in_shape=datamodule.net_shape, 
-            gauss_std=gauss_std,
-            bias=bias, 
-            pixel_level_loss=pixel_level_loss,
-            
-            # optimizer
-            optimizer_name=optimizer,
-            lr=learning_rate,
-            weight_decay=weight_decay,
-            
-            # scheduler
-            scheduler_name=scheduler,
-            lr_sched_param=lr_sched_param,
-            
-            # else
-            normal_class_label=normal_class_label,
-        )
-        # todo: save net print in file too
-        print(net)
-    
+        net_class = MODEL_CLASSES[net]
+       
     except KeyError as err:
-        raise KeyError(f'Model {net} is not implemented!') from err
+        raise NotImplementedError(f'Model {net} is not implemented!') from err
+
+    model = net_class(
+        # model
+        in_shape=datamodule.net_shape, 
+        gauss_std=gauss_std,
+        bias=bias, 
+        pixel_level_loss=pixel_level_loss,
+        # optimizer
+        optimizer_name=optimizer,
+        lr=learning_rate,
+        weight_decay=weight_decay,
+        # scheduler
+        scheduler_name=scheduler,
+        lr_sched_param=lr_sched_param,
+        # else
+        normal_class_label=normal_class_label,
+    )
+
+    model_str = str(model)
+    print(model_str)
+    model_str_fpath = logdir / "model.txt"
+    model_str_fpath.write_text(model_str)
+    wandb.save(str(model_str_fpath), policy="now")  # now = dont keep syncing if it changes
+    
+    if wandb_watch is not None:
+        wandb_logger.watch(model, log=wandb_watch, log_freq=wandb_watch_log_freq)
+
+    callbacks = []
 
     if not wandb_profile:
         profiler = contextlib.nullcontext()
@@ -880,7 +856,7 @@ def run_one(
         # Set up profiler
         wait, warmup, active, repeat = 1, 1, 2, 1
         schedule =  torch.profiler.schedule(
-        wait=wait, warmup=warmup, active=active, repeat=repeat,
+            wait=wait, warmup=warmup, active=active, repeat=repeat,
         )
         profile_dir = Path(f"{wandb_logger.save_dir}/latest-run/tbprofile").absolute()
         profiler = torch.profiler.profile(
@@ -888,20 +864,21 @@ def run_one(
             on_trace_ready=tensorboard_trace_handler(str(profile_dir)), 
             with_stack=True,
         )
+        callbacks.append(TorchTensorboardProfilerCallback(profiler))
 
     with profiler:
-        
-        profiler_callback = TorchTensorboardProfilerCallback(profiler)
-        
         trainer = pl.Trainer(
             logger=wandb_logger,  
             log_every_n_steps=1,  
             gpus=1, 
             max_epochs=epochs,    
             deterministic=True,
-            callbacks=[profiler_callback],   
+            callbacks=callbacks,   
         )
-        trainer.fit(model=net, datamodule=datamodule)
+        trainer.fit(model=model, datamodule=datamodule)
+    
+    if wandb_watch is not None:
+        wandb_logger.experiment.unwatch(model)
 
     if wandb_profile:
         profile_art = wandb.Artifact(f"trace-{wandb.run.id}", type="profile")
@@ -911,7 +888,7 @@ def run_one(
     if not test:
         return 
     
-    trainer.test(model=net, datamodule=datamodule)    
+    trainer.test(model=model, datamodule=datamodule)    
     
     
 def run(**kwargs) -> dict:
@@ -919,6 +896,12 @@ def run(**kwargs) -> dict:
     base_logdir = kwargs['logdir'].resolve().absolute()
     dataset = kwargs['dataset']
     datadir = kwargs['datadir']
+    
+    wandb_offline = kwargs.pop("wandb_offline", False)
+    wandb_project = kwargs.pop("wandb_project", None)
+    wandb_tags = kwargs.pop("wandb_tags", None) or []
+    wandb_checkpoint_mode = kwargs.pop("wandb_checkpoint_mode", WANDB_CHECKPOINT_MODE_LAST)
+    assert wandb_checkpoint_mode in WANDB_CHECKPOINT_MODES, f"wandb_checkpoint_mode={wandb_checkpoint_mode} is not valid! chose from {WANDB_CHECKPOINT_MODES}"
     
     cls_restrictions = kwargs.pop("cls_restrictions", None)
     classes = cls_restrictions or range(dataset_nclasses(dataset))
@@ -944,9 +927,6 @@ def run(**kwargs) -> dict:
             
             logdir = (cls_logdir / 'it_{:02}'.format(i)).absolute()
             
-            wandb_offline = kwargs.pop("wandb_offline", False)
-            wandb_project = kwargs.pop("wandb_project", None)
-            wandb_tags = kwargs.pop("wandb_tags", None) or []
             wandb_name = f"{dataset}.{base_logdir.name}.cls{c:02}.it{i:02}"
             
             kwargs = {
@@ -982,6 +962,7 @@ def run(**kwargs) -> dict:
             wandb_logger = WandbLogger(
                 save_dir=str(logdir),
                 offline=wandb_offline,
+                log_model=True if wandb_checkpoint_mode == WANDB_CHECKPOINT_MODE_LAST else False,
                 **wandb_init_kwargs,
             )    
             # image logging is not working properly with the logger

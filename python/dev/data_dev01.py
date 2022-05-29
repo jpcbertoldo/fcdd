@@ -12,62 +12,10 @@ from PIL import Image
 from collections.abc import Sequence
 
 from matplotlib.figure import Figure
-
+from torch.utils.data import DataLoader
 
 ANOMALY_TARGET = 1
 NOMINAL_TARGET = 0
-
-
-class MultiTransform(object):
-    """ Class to mark a transform operation that expects multiple inputs """
-    n = 0  # amount of expected inputs
-    def __init__(self) -> None:
-        pass
-
-
-class ImgGtmapLabelTransform(MultiTransform):
-    """ Class to mark a transform operation that expects three inputs: (image, ground-truth map, label) """
-    n = 3
-    
-    @abstractmethod
-    def __call__(self, img: torch.Tensor, gtmap: torch.Tensor, target: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return img, gtmap, target
-
-
-class ImgGtmapTransform(MultiTransform):
-    """ Class to mark a transform operation that expects two inputs: (image, ground-truth map) """
-    n = 2
-    @abstractmethod
-    def __call__(self, img: torch.Tensor, gtmap: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        return img, gtmap
-
-
-class ImgGtmapTensorsToUint8(ImgGtmapTransform):
-    """Make sure that the tensors are uint8 and the min/max are 0/255"""
-    
-    def __call__(self, img: torch.Tensor, gtmap: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        gtmap = (
-            gtmap.mul(255).byte() 
-            if gtmap.dtype != torch.uint8 else 
-            gtmap
-        )
-        img = (
-            img.sub(img.min()).div(img.max() - img.min()).mul(255).byte() if img.dtype != torch.uint8 else 
-            img
-        )
-        return img, gtmap
-
-
-class ImgGtmapToPIL(ImgGtmapTransform):
-    """
-    This one has to be called so that mvtec data is consistent with all other datasets to return a PIL Image.
-    """
-    
-    def __call__(self, img: torch.Tensor, gtmap: torch.Tensor) -> Tuple[Image.Image, Image.Image]:
-        #  the transpose is putting the axes as height, width, channel
-        # img = Image.fromarray(np.transpose(img.numpy(), (1, 2, 0)), mode='RGB')
-        # gtmap = Image.fromarray(gtmap.squeeze(0).numpy(), mode='L')           
-        return transforms.ToPILImage(mode="RGB")(img), transforms.ToPILImage("L")(gtmap)
 
 
 class RandomTransforms:
@@ -140,58 +88,59 @@ class MultiCompose(transforms.Compose):
         super(MultiCompose, self).__init__(*args, **kwargs)
         self.random_generator = random_generator
     
-    def __call__(self, imgs: List):
+    def __call__(self, imgs: List[torch.Tensor]):
+        
+        for img in imgs:
+            assert isinstance(img, torch.Tensor), f"MultiCompose only works with torch.Tensor, not {type(img)}"
+            assert img.ndim() == 4, f"MultiCompose only works with 4D tensors (batch tensors), not {img.ndim()}"
+        
         for t in self.transforms:
-            imgs = list(imgs)
             imgs = self.__multi_apply(imgs, t)
+            
         return imgs
 
     def __multi_apply(self, imgs: List, t: Callable):
-        if isinstance(t, transforms.RandomCrop):
-            for idx, img in enumerate(imgs):
-                if t.padding is not None and t.padding > 0:
-                    img = TF.pad(img, t.padding, t.fill, t.padding_mode) if img is not None else img
-                if t.pad_if_needed and img.size[0] < t.size[1]:
-                    img = TF.pad(img, (t.size[1] - img.size[0], 0), t.fill, t.padding_mode) if img is not None else img
-                if t.pad_if_needed and img.size[1] < t.size[0]:
-                    img = TF.pad(img, (0, t.size[0] - img.size[1]), t.fill, t.padding_mode) if img is not None else img
-                imgs[idx] = img
-            i, j, h, w = t.get_params(imgs[0], output_size=t.size)
-            for idx, img in enumerate(imgs):
-                imgs[idx] = TF.crop(img, i, j, h, w) if img is not None else img
-        elif isinstance(t, transforms.RandomHorizontalFlip):
-            if self.random_generator.random() > 0.5:
-                for idx, img in enumerate(imgs):
-                    imgs[idx] = TF.hflip(img)
-        elif isinstance(t, transforms.RandomVerticalFlip):
-            if self.random_generator.random() > 0.5:
-                for idx, img in enumerate(imgs):
-                    imgs[idx] = TF.vflip(img)
-        elif isinstance(t, transforms.ToTensor):
-            for idx, img in enumerate(imgs):
-                imgs[idx] = TF.to_tensor(img) if img is not None else None
-        elif isinstance(
-                t, (transforms.Resize, transforms.Lambda, transforms.ToPILImage, transforms.ToTensor,)
-        ):
-            for idx, img in enumerate(imgs):
-                imgs[idx] = t(img) if img is not None else None
-        elif isinstance(t, MultiTransform):
-            assert t.n == len(imgs)
-            imgs = t(*imgs)
+        # if isinstance(t, transforms.RandomCrop):
+        #     for idx, img in enumerate(imgs):
+        #         if t.padding is not None and t.padding > 0:
+        #             img = TF.pad(img, t.padding, t.fill, t.padding_mode) if img is not None else img
+        #         if t.pad_if_needed and img.size[0] < t.size[1]:
+        #             img = TF.pad(img, (t.size[1] - img.size[0], 0), t.fill, t.padding_mode) if img is not None else img
+        #         if t.pad_if_needed and img.size[1] < t.size[0]:
+        #             img = TF.pad(img, (0, t.size[0] - img.size[1]), t.fill, t.padding_mode) if img is not None else img
+        #         imgs[idx] = img
+        #     i, j, h, w = t.get_params(imgs[0], output_size=t.size)
+        #     for idx, img in enumerate(imgs):
+        #         imgs[idx] = TF.crop(img, i, j, h, w) if img is not None else img
+        # elif isinstance(t, transforms.RandomHorizontalFlip):
+        #     if self.random_generator.random() > 0.5:
+        #         for idx, img in enumerate(imgs):
+        #             imgs[idx] = TF.hflip(img)
+        # elif isinstance(t, transforms.RandomVerticalFlip):
+        #     if self.random_generator.random() > 0.5:
+        #         for idx, img in enumerate(imgs):
+        #             imgs[idx] = TF.vflip(img)
+        
+        if isinstance(t, (transforms.Resize, transforms.Lambda,)):
+            return tuple(t(img) for img in imgs)
+                
         elif isinstance(t, transforms.RandomChoice):
             raise Exception(f"torchvision.transforms.RandomChoice should be replaced by the implementation in the data module")
+        
         elif isinstance(t, RandomChoice):
             assert t.mode == RandomChoice.RETURN_MODE_TRANSFORM_FUNCTION, f"RandomChoice.mode should be {RandomChoice.RETURN_MODE_TRANSFORM_FUNCTION}"
-            t_picked = t()
-            imgs = self.__multi_apply(imgs, t_picked)
+            imgs = self.__multi_apply(imgs, t())
+        
         elif isinstance(t, MultiCompose):
             imgs = t(imgs)
+            
         else:
-            raise NotImplementedError('There is no multi compose version of {} yet.'.format(t.__class__))
+            raise Exception(f"Unknown transform {t}")
+        
         return imgs
 
 
-def generate_dataloader_images(dataloader, nimages_perclass=20) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def generate_dataloader_images(dataloader: DataLoader, nimages_perclass=20) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Generates a preview of the dataset, i.e. it generates an image of some randomly chosen outputs
     of the dataloader, including ground-truth maps.
