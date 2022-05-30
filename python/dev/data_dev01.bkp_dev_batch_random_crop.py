@@ -20,6 +20,7 @@ from torch.utils.data import DataLoader
 from torch import Tensor
 
 
+
 ANOMALY_TARGET = 1
 NOMINAL_TARGET = 0
 
@@ -351,21 +352,6 @@ class MultiBatchCompose(MultiBatchTransformMixin, TransformsMixin):
 
 class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin, torch.nn.Module):
     """
-    Cut crops of the same size in a batch; each has different positions.
-
-    This function only uses tensor operations (no for-loop).
-    It is actually slower (.5x) than using a for-loop on the CPU but much faster on the GPU (+50x).
-    
-    You can find a for-loop version to compare in `dev/data_dev01.bkp_dev_batch_random_crop.py`
-
-    Rationale:
-    First cut on the height direction then on the width direction (the transpose(-2, -1) swaps height/width axis.).add()
-    To deal with the channels, the transpose(0, 1) will put them in the axis=0. 
-
-    Good luck to decrypt this function :)
-    There is a snippet that should convince you that it works in `dev/data_dev01.bkp_dev_snippets00.py`.
-    It is also easier to test and play with. Go ahead.
-    
     Padding is not supported!
     """
     
@@ -408,7 +394,6 @@ class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin, torch.nn.M
     
     @staticmethod
     def crop(batch: Tensor, top: Tensor, left: Tensor, output_size: Tuple[int, int], ) -> Tensor:
-        
         assert batch.shape[0] == top.shape[0] == left.shape[0], f"batch, top, left, must have the same batch size, but got {batch.shape[0]}, {top.shape[0]}, {left.shape[0]}"
        
         assert (left >= 0).all(), f"left must be >= 0, but got {left}"
@@ -451,208 +436,102 @@ class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin, torch.nn.M
         i, j = self.get_params(batch, self.size, self.generator)
         return self.crop(batch, i, j, self.size)         
     
-    
-# =============================================== DATALOADER PREVIEW ===============================================
 
 
-def generate_dataloader_images(dataloader: DataLoader, nimages_perclass=20) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+class BatchRandomCrop_ForLoop(BatchTransformMixin, NumpyRandomTransformMixin, torch.nn.Module):
     """
-    Generates a preview of the dataset, i.e. it generates an image of some randomly chosen outputs
-    of the dataloader, including ground-truth maps.
-    The data samples already have been augmented by the preprocessing pipeline.
-    This method is useful to have an overview of how the preprocessed samples look like and especially
-    to have an early look at the artificial anomalies.
-    :param nimages_perclass: how many samples are shown per class, i.e. for anomalies and nominal samples each
-    :return: four Tensors of images of shape (n x c x h x w): ((normal_imgs, normal_gtmaps), (anomalous_imgs, anomalous_gtmaps)) 
+    Padding is not supported!
     """
-    print('Generating images...')
     
-    imgs, y, gtmaps = torch.FloatTensor(), torch.LongTensor(), torch.FloatTensor()
-    
-    for imgb, yb, gtmapb in dataloader:
+    @NumpyRandomTransformMixin._init_generator
+    def __init__(self, size):
+        super().__init__()
+        self.size: Tuple[int, int] = tuple(T._setup_size(
+            size, 
+            error_msg="Please provide only two dimensions (h, w) for size."
+        ))
         
-        imgs, y, gtmaps = torch.cat([imgs, imgb]), torch.cat([y, yb]), torch.cat([gtmaps, gtmapb])
+    @staticmethod
+    def get_params(batch: Tensor, output_size: Tuple[int, int], generator: np.random.Generator) -> Tuple[Tensor, Tensor]:
+        """
+        Get a batch of random crop parameters: [i, j]
+
+        Args:
+            batch (batch): Images to be cropped.
+            output_size (tuple): Expected output size of the crop.
+
+        Returns:
+            (Tensor,Tensor): (i, j), each \in int64^B, where B is the batch size.
+            i is for the height direction, j is for the width direction.
+        """
+        batchsize, _, h, w = batch.shape
+        th, tw = output_size
+
+        if h + 1 < th or w + 1 < tw:
+            raise ValueError(
+                "Required crop size {} is larger then input image size {}".format((th, tw), (h, w))
+            )
+
+        if w == tw and h == th:
+            return torch.tensor([[0, 0, h, w]]).repeat((batchsize, 1))
+
+        i = torch.tensor(generator.integers(low=0, high=h - th + 1, size=(batchsize,), dtype=np.int64))
+        j = torch.tensor(generator.integers(low=0, high=w - tw + 1, size=(batchsize,), dtype=np.int64))
         
-        # the number of anomalous in a batch can be random, so we have to keep iterating and checking 
-        if (y == NOMINAL_TARGET).sum() >= nimages_perclass and (y == ANOMALY_TARGET).sum() >= nimages_perclass:
-            break
+        return i, j
+    
+    @staticmethod
+    def crop(batch: Tensor, top: Tensor, left: Tensor, output_size: Tuple[int, int], ) -> Tensor:
+        assert batch.shape[0] == top.shape[0] == left.shape[0], f"batch, top, left, must have the same batch size, but got {batch.shape[0]}, {top.shape[0]}, {left.shape[0]}"
+       
+        assert (left >= 0).all(), f"left must be >= 0, but got {left}"
+        assert (top >= 0).all(), f"top must be >= 0, but got {top}"
         
-    n_unique_values_in_gts = len(set(gtmaps.reshape(-1).tolist()))
-    assert n_unique_values_in_gts <= 2, 'training process assumes zero-one gtmaps'
-    
-    effective_nimages_perclass = min(min(Counter(y.tolist()).values()), nimages_perclass)
-    if effective_nimages_perclass < nimages_perclass:
-        print(f"could not find {nimages_perclass} on each class, only generated {effective_nimages_perclass} of each")
-    
-    ret = (
-        imgs[y == NOMINAL_TARGET][:effective_nimages_perclass], 
-        gtmaps[y == NOMINAL_TARGET][:effective_nimages_perclass],
-        imgs[y == ANOMALY_TARGET][:effective_nimages_perclass], 
-        gtmaps[y == ANOMALY_TARGET][:effective_nimages_perclass],
-    )
-    
-    print('Images generated.')
-    return ret
-    
-
-def generate_dataloader_preview_multiple_fig(
-    normal_imgs: Tensor, 
-    normal_gtmaps: Tensor, 
-    anomalous_imgs: Tensor,
-    anomalous_gtmaps: Tensor,
-) -> List[Figure]:
-    """
-    normal_imgs, anomalous_imgs: tensors of shape (n x 3 x h x w)
-    normal_gtmaps,anomalous_gtmaps: tensors of shape (n x 1 x h x w)
-    
-    example code to use this function:
-    
-    ```
-    ```
-    """
-    print('Generating dataset preview...')
-
-    assert normal_imgs.shape[1] == 3, f"normal imgs: expected 3 channels, got {normal_imgs[1]}"
-    assert normal_gtmaps.shape[1] == 1, f"normal gtmaps: expected 1 channel, got {normal_gtmaps[1]}"
-    
-    assert anomalous_imgs.shape == normal_imgs.shape, f"images have different shapes: anomalous:{anomalous_imgs.shape} vs normal:{normal_imgs.shape}"
-    assert anomalous_gtmaps.shape == normal_gtmaps.shape, f"gtmaps have different shapes: anomalous:{anomalous_gtmaps.shape} vs normal:{normal_gtmaps.shape}"
-
-    assert anomalous_imgs.shape[0] == anomalous_gtmaps.shape[0], f"anomalous images and gtmaps have different number of samples: anomalous:{anomalous_imgs.shape[0]} vs normal:{anomalous_gtmaps.shape[0]}"
-    assert anomalous_imgs.shape[2:] == anomalous_gtmaps.shape[2:], f"anomalous images and gtmaps have different shapes: anomalous:{anomalous_imgs.shape} vs anomalous:{anomalous_gtmaps.shape}"
-
-    assert normal_imgs.shape[0] == normal_gtmaps.shape[0], f"normal images and gtmaps have different number of samples: imgs:{normal_imgs.shape[0]} vs gtmaps:{normal_gtmaps.shape[0]}"
-    assert normal_imgs.shape[2:] == normal_gtmaps.shape[2:], f"normal images and gtmaps have different shapes: imgs:{normal_imgs.shape} vs gtmaps:{normal_gtmaps.shape}"
-
-    _, _, height, width = normal_imgs.shape
-    
-    def do(imgs: Tensor, gtmaps: Tensor, label_prefix: str) -> List[Figure]:
-        """([n, 3, h, w], [n, 1, h, w]) -> n plt figures"""
-        # 2 accounts for: img, gtmap
-        nonlocal width, height
-        figsize = (width, 2 * height)
-        prevs = [
-            # dim 1 = height ==> vertical concatenation
-            # the repeat(3) is there to make the gtmap "RGB" while keeping it gray 
-            torch.cat([img, gtmap.repeat(3, 1, 1)], dim=1)
-            for img, gtmap in zip(imgs, gtmaps)
-        ]
-        figs = []
-        for idx, prev in enumerate(prevs):
-            
-            # this peculiar way of creating a figure is because of the way matplotlib works
-            # so i can get a png at the same size as the original image in terms of pixels
-            # src: https://stackoverflow.com/a/13714915/9582881
-            fig = plt.figure(frameon=False)
-            fig.set_size_inches(*figsize)
-            ax = plt.Axes(fig, [0., 0., 1., 1.])
-            ax.set_axis_off()
-            fig.add_axes(ax)
- 
-            ax.imshow(np.transpose(prev.numpy(), (1, 2, 0)), aspect=1)   
-            fig.label = f"{label_prefix}_{idx}"
-
-            figs.append(fig)         
- 
-        return figs
-    
-    normal_figs = do(normal_imgs, normal_gtmaps, "normal")
-    anomalous_figs = do(anomalous_imgs, anomalous_gtmaps, "anomalous")
-    
-    print('Dataset preview generated.')
-    
-    return normal_figs, anomalous_figs
-
-
-def generate_dataloader_preview_single_fig(
-    normal_imgs: Tensor, 
-    normal_gtmaps: Tensor, 
-    anomalous_imgs: Tensor,
-    anomalous_gtmaps: Tensor,
-) -> matplotlib.figure.Figure:
-    """
-    normal_imgs, anomalous_imgs: tensors of shape (n x 3 x h x w)
-    normal_gtmaps,anomalous_gtmaps: tensors of shape (n x 1 x h x w)
-    
-    example code to use this function:
-    
-    ```
-    ```
-    
-    """
-    print('Generating dataset preview...')
-
-    assert normal_imgs.shape[1] == 3, f"normal imgs: expected 3 channels, got {normal_imgs[1]}"
-    assert normal_gtmaps.shape[1] == 1, f"normal gtmaps: expected 1 channel, got {normal_gtmaps[1]}"
-    
-    assert anomalous_imgs.shape == normal_imgs.shape, f"images have different shapes: anomalous:{anomalous_imgs.shape} vs normal:{normal_imgs.shape}"
-    assert anomalous_gtmaps.shape == normal_gtmaps.shape, f"gtmaps have different shapes: anomalous:{anomalous_gtmaps.shape} vs normal:{normal_gtmaps.shape}"
-
-    assert anomalous_imgs.shape[0] == anomalous_gtmaps.shape[0], f"anomalous images and gtmaps have different number of samples: anomalous:{anomalous_imgs.shape[0]} vs normal:{anomalous_gtmaps.shape[0]}"
-    assert anomalous_imgs.shape[2:] == anomalous_gtmaps.shape[2:], f"anomalous images and gtmaps have different shapes: anomalous:{anomalous_imgs.shape} vs anomalous:{anomalous_gtmaps.shape}"
-
-    assert normal_imgs.shape[0] == normal_gtmaps.shape[0], f"normal images and gtmaps have different number of samples: imgs:{normal_imgs.shape[0]} vs gtmaps:{normal_gtmaps.shape[0]}"
-    assert normal_imgs.shape[2:] == normal_gtmaps.shape[2:], f"normal images and gtmaps have different shapes: imgs:{normal_imgs.shape} vs gtmaps:{normal_gtmaps.shape}"
-
-    nimages, _, height, width = normal_imgs.shape
-    
-    def do(imgs: Tensor, gtmaps: Tensor) -> List[Figure]:
-        """([n, 3, h, w], [n, 1, h, w]) -> n plt figures"""
+        batchsize, nchannels, im_height, im_width = batch.shape
+        height, width = output_size
         
-        # concatenates img/gtmap vertically
-        prevs = [
-            # dim 1 = height ==> vertical concatenation
-            torch.cat([img, gtmap.repeat(3, 1, 1)], dim=1)
-            # the repeat(3, 1, 1) is there to make the gtmap "RGB" while keeping it gray 
-            for img, gtmap in zip(imgs, gtmaps)
-        ]
-        # concatenate the many prevs horizontally
-        return torch.cat(prevs, dim=2)
-    
-    normal_prevs = do(normal_imgs, normal_gtmaps)
-    anomalous_prevs = do(anomalous_imgs, anomalous_gtmaps)
-    
-    # concatenate normal/anomalous previews vertically
-    prev = torch.cat([normal_prevs, anomalous_prevs], dim=1)
-    
-    # 4 accounts for: normal img, normal gtmap, anomalous img, anomalous gtmap
-    figsize = (width, height) = (nimages * width, 4 * height)
-    
-    # this peculiar way of creating a figure is because of the way matplotlib works
-    # so i can get a png at the same size as the original image in terms of pixels
-    # src: https://stackoverflow.com/a/13714915/9582881
-    fig = plt.figure(frameon=False)
-    fig.set_size_inches(*figsize)
-    ax = plt.Axes(fig, [0., 0., 1., 1.])
-    ax.set_axis_off()
-    fig.add_axes(ax)
-    
-    ax.imshow(np.transpose(prev.numpy(), (1, 2, 0)), aspect=1)   
-    fig.label = f"preview_{nimages:02d}_images"
-    
-    print('Dataset preview generated.')
-    
-    return fig
-
-
-# about test: create option to use original gtmaps or not (resized gtmaps)
-# todo dont forget to manage channel dim (dont repeat indices 3 times)
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser("test_data_module")
-    parser.add_argument(
-        "--test", type=str, nargs=1, default="batch-random-crop", choices=("batch-random-crop",),
-    )
-    args = parser.parse_args()
-    
-    if args.test == "batch-random-crop":
+        right = left + width
+        bottom = top + height
         
-        from common_dev01 import create_numpy_random_generator
+        assert (right <= im_width).all(), f"right must be <= image width, but got {right}"
+        assert (bottom <= im_height).all(), f"bottom must be <= image height, but got {bottom}"
+        
+        crop_batch = torch.empty((batchsize, nchannels, height, width))
+        for idx in range(batchsize):
+            crop_batch[idx] = batch[idx, :, top[idx]:bottom[idx], left[idx]:right[idx]]
+                
+        return crop_batch
 
-        # todo change this by real images and inspect them with matplotlib
-        random_batch = torch.randn((128, 3, 260, 260), device="cuda")
-        crop_size = (224, 224)
-        generator = create_numpy_random_generator(0)
-        batch_random_crop = BatchRandomCrop(crop_size, generator=generator)
-        croped_batch = batch_random_crop(random_batch)
+    @BatchTransformMixin._validate_before_and_after
+    def forward(self, batch: Tensor) -> Tensor:
+        i, j = self.get_params(batch, self.size, self.generator)
+        return self.crop(batch, i, j, self.size)    
+
+from common_dev01 import create_numpy_random_generator
+
+random_batch = torch.randn((128, 3, 260, 260), device="cuda")
+crop_size = (224, 224)
+generator = create_numpy_random_generator(0)
+     
+batch_random_crop = BatchRandomCrop(crop_size, generator=generator)
+batch_random_crop_foorloop = BatchRandomCrop_ForLoop(crop_size, generator=generator)
+
+# # In[]           
+# %timeit _ = batch_random_crop(random_batch)
+# # In[]        
+# %timeit _ = batch_random_crop_foorloop(random_batch)
+# # In[]        
+
+"""
+Conclusion
+
+on the cpu the for loop is twice as fast (30 ms vs. 60 ms)
+on the gpu the tensorial version is 60x faster (1ms vs. 60ms) 
+
+i tested on my computer cpu and cuda's gpu
+
+not a very controled test but it's clear that there is an order of magnitude 
+in the gpu, so whatever
+
+"""
+        
