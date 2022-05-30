@@ -945,10 +945,20 @@ def _local_contrast_normalization_transform():
     Apply local contrast normalization to tensor, i.e. subtract mean across features (pixels) and normalize by the the standard deviation with L1- across features (pixels).
     Note this is a *per sample* normalization globally across features (and not across the dataset).
     """
-    def lcn(x: torch.tensor):
-        x = x - torch.mean(x)  # mean over all features (pixels) per sample
-        x_scale = torch.mean(torch.abs(x))
-        x /= (x_scale if x_scale != 0 else 1)
+    def lcn(x: torch.Tensor):
+        # mean over all features (pixels) per sample
+        # the first view
+        assert x.ndim == 4, f"Expected 4D tensor, got {x.ndim}D"
+        assert x.shape[1] in (1, 3), f"x.shape[1] should be 1 or 3, but is {x.shape[1]}"
+        assert x.dtype in (torch.float16, torch.float32, torch.float64), f"x.dtype should be float16, float32 or float64, but is {x.dtype}"
+        batchsize = x.shape[0]
+        subtract_mean_viewshape = batchsize + tuple(1 for _ in range(x.ndim - 1))
+        # x \in R^{N x C x H x W}
+        # the first view makes it R^{N x (C*H*W)}, the average R^N, then the 2nd view makes it R^{N x 1 x 1 x 1}
+        x = x - x.view(batchsize, -1).mean(dim=-1).view(subtract_mean_viewshape)
+        x_scale = x.abs().view(batchsize, -1).mean(dim=-1).view(subtract_mean_viewshape)
+        x_scale[x_scale == 0] = 1
+        x = x / x_scale
         return x
     return transforms.Lambda(lambda x: lcn(x))
 
@@ -1197,7 +1207,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                         random_generator=create_python_random_generator(self.seed),
                     )
                 ],
-                random_generator=create_numpy_random_generator(self.seed),
+                # random_generator=create_numpy_random_generator(self.seed),
             )
                         
             # img - train
