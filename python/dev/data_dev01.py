@@ -684,12 +684,10 @@ def generate_dataloader_preview_single_fig(
 
 if __name__ == "__main__":
     import argparse
-    BATCH_RANDOM_CROP = "batch-random-crop"
-    BATCH_GAUSSIAN_NOISE = "batch-gaussian-noise"
     parser = argparse.ArgumentParser("test_data_module")
     parser.add_argument(
-        "--test", type=str, default=BATCH_RANDOM_CROP, 
-        choices=(BATCH_RANDOM_CROP, BATCH_GAUSSIAN_NOISE),
+        "--test", type=str, default="batch-random-crop", 
+        choices=("batch-random-crop", "batch-gaussian-noise"),
     )
     parser.add_argument(
         "--device", type=str, default="cuda", choices=("cpu", "cuda")

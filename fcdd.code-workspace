@@ -41,6 +41,37 @@
 		"version": "0.2.0",
 		"configurations": [    	
 			{
+				"name": "[fcdd_rc21] current file",
+				"type": "python",
+				"request": "launch",
+				"program": "${file}",
+				"console": "integratedTerminal",
+				"cwd": "${workspaceFolder:fcdd}/python/fcdd",
+				"python": "/home/jcasagrandebertoldo/miniconda3/envs/fcdd_rc21/bin/python",
+				"justMyCode": false
+			},
+			{
+				"name": "[fcdd] data dev01",
+				"python": "/home/jcasagrandebertoldo/miniconda3/envs/unetdd/bin/python",
+				"type": "python",
+				"request": "launch",
+				"program": "data_dev01.py",
+				"cwd": "${workspaceFolder:fcdd}/python/dev",
+				"args": [
+					"--device", "cpu",
+					"--data", "cifar10",
+					"--test", "batch-random-crop",
+					// "--test", "batch-gaussian-noise",
+					// "--show", "0", "1", "2",
+				],
+				"env": {
+					// "CUDA_VISIBLE_DEVICES": "3", 
+					// "TMPDIR": "/data/bertoldo/tmp"
+				},
+				"console": "integratedTerminal",
+				"host": "127.0.0.1"
+			}, 
+			{
 				"name": "[fcdd] train mvtec",
 				"python": "/home/bertoldo/miniconda3/envs/fcdd_rc21/bin/python",
 				"type": "python",
