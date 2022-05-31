@@ -11,6 +11,7 @@ from typing import Callable, List, Tuple
 import matplotlib
 import numpy as np
 import torch
+import torchvision
 import torchvision.transforms.transforms as T
 import torchvision.transforms.functional as TF
 import torchvision.transforms.functional_tensor as TFT
@@ -683,19 +684,70 @@ def generate_dataloader_preview_single_fig(
 
 if __name__ == "__main__":
     import argparse
+    BATCH_RANDOM_CROP = "batch-random-crop"
+    BATCH_GAUSSIAN_NOISE = "batch-gaussian-noise"
     parser = argparse.ArgumentParser("test_data_module")
     parser.add_argument(
-        "--test", type=str, nargs=1, default="batch-random-crop", choices=("batch-random-crop",),
+        "--test", type=str, default=BATCH_RANDOM_CROP, 
+        choices=(BATCH_RANDOM_CROP, BATCH_GAUSSIAN_NOISE),
+    )
+    parser.add_argument(
+        "--device", type=str, default="cuda", choices=("cpu", "cuda")
+    )
+    parser.add_argument(
+        "--data", type=str, default="random", choices=("random", "cifar10")
+    )
+    parser.add_argument(
+        "--show", type=int, nargs="*", default=None,
     )
     args = parser.parse_args()
     
-    if args.test == "batch-random-crop":
-        
-        from common_dev01 import create_numpy_random_generator
+    from common_dev01 import create_numpy_random_generator
 
-        # todo change this by real images and inspect them with matplotlib
-        random_batch = torch.randn((128, 3, 260, 260), device="cuda")
-        crop_size = (224, 224)
+    if args.data == "random":
         generator = create_numpy_random_generator(0)
-        batch_random_crop = BatchRandomCrop(crop_size, generator=generator)
-        croped_batch = batch_random_crop(random_batch)
+        img_batch = torch.from_numpy(generator.random(128, 3, 224, 224), device=args.device)
+        
+    elif args.data == "cifar10":
+        import os
+        TMPDIR = os.environ.get("TMPDIR", "/tmp")
+        dataset = torchvision.datasets.CIFAR10(root=TMPDIR, download=True, transform=T.ToTensor())
+        data_loader = torch.utils.data.DataLoader(
+            dataset, batch_size=128, shuffle=True, num_workers=0,
+        )
+        for img_batch, target_batch in data_loader:
+            break
+        
+    if args.test == "batch-random-crop":
+        generator = create_numpy_random_generator(0)
+        img_batch = torch.tensor(
+            generator.random((128, 3, 260, 260)), 
+            device=args.device,
+        )
+        # todo change this by real images and inspect them with matplotlib
+        batch_random_crop = BatchRandomCrop(size=(224, 224), generator=generator)
+        transformed_img_batch = batch_random_crop(img_batch)
+        assert transformed_img_batch.shape[-2:] == (224, 224)
+    
+    elif args.test == "batch-gaussian-noise":
+        batch_gaussian_noise = BatchGaussianNoise(
+            mode=BatchGaussianNoise.STD_MODE_AUTO_IMAGEWISE, 
+            std_factor=0.1, 
+            generator=create_numpy_random_generator(0),
+        )
+        transformed_img_batch = batch_gaussian_noise(img_batch)
+        
+    else:
+        raise NotImplementedError(f"test {args.test} not implemented")
+    
+    if args.show:
+        for idx in args.show:
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(1, 1)
+            ax.imshow(img_batch[idx].numpy().transpose(1, 2, 0))
+            ax.set_title("original")
+            fig, ax = plt.subplots(1, 1)
+            ax.imshow(transformed_img_batch[idx].numpy().transpose(1, 2, 0))
+            ax.set_title("transformed")
+            plt.show()
+
