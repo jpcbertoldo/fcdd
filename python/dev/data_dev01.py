@@ -4,8 +4,6 @@ import copy
 import functools
 from collections import Counter
 from collections.abc import Sequence
-from time import time
-from turtle import forward
 from typing import Callable, List, Tuple
 
 import matplotlib
@@ -60,20 +58,24 @@ class BatchTransformMixin:
         assert isinstance(batch, Tensor), f"batch must be a Tensor, got {type(batch)}"
         assert batch.ndimension() == 4, f"batch must be a batch of images (expected to have dimensions [B, C, H, W]), got {batch.ndimension()} dimensions"
     
-    def _validate_before_and_after(__call__: Callable[[Tensor], Tensor]):
+    def _validate_before_and_after(validate_same_size: bool = True):
         
-        @functools.wraps(__call__)
-        def wrapper(self, batch: Tensor, **kwargs) -> Tensor:
-            self._validate_batch(batch)
-            batchsize_before = batch.size(0)
-            batch = __call__(self, batch, **kwargs)
-            self._validate_batch(batch)
-            batchsize_after = batch.size(0)
-            assert batchsize_before == batchsize_after, f"batchsize before and after transform must be the same, got {batchsize_before} and {batchsize_after}"
-            return batch
+        def decorator(__call__: Callable[[Tensor], Tensor]):
+            
+            @functools.wraps(__call__)
+            def wrapper(self, batch: Tensor, **kwargs) -> Tensor:
+                self._validate_batch(batch)
+                batchsize_before = batch.size(0)
+                batch = __call__(self, batch, **kwargs)
+                self._validate_batch(batch)
+                batchsize_after = batch.size(0)
+                if validate_same_size:
+                   assert batchsize_before == batchsize_after, f"batchsize before and after transform must be the same, got {batchsize_before} and {batchsize_after}"
+                return batch
+            
+            return wrapper
         
-        return wrapper
-    
+        return decorator
     
 class MultiBatchTransformMixin:
     """Make sure to always have the same number of batches and that they all have the same batch size."""
@@ -159,42 +161,6 @@ class TransformsMixin:
 # =============================================== RANDOM CHOICE ===============================================
 
 
-def _apply_chosen_batch_transforms(
-    batch: Tensor, 
-    thresholds: np.ndarray, 
-    probabilities: np.ndarray, 
-    transforms: Sequence[Callable]
-) -> Tensor:
-
-    assert probabilities.ndim == 1, f"got {probabilities.ndim}"
-    assert thresholds.ndim == 1, f"got {thresholds.ndim}"
-    assert batch.shape[0] == probabilities.shape[0], f"got {batch.shape[0], probabilities.shape[0]}"
-    ntransforms = len(transforms)
-    assert ntransforms == thresholds.shape[0], f"got {ntransforms} transforms and {thresholds.shape[0]} thresholds"
-    
-    # probabilities are between 0 and 1
-    assert (0 <= probabilities < 1).all(), f"got probabilities {probabilities}, they must be between 0 and 1"
-    assert (0 <= thresholds < 1).all(), f"got thresholds {thresholds}, they must be between 0 and 1"
-    
-    # the thresholds are sorted and cannot be the same (< instead of <=)
-    assert (thresholds[:-1] < thresholds[1:]).all(), f"got thresholds {thresholds}, they must be sorted"
-    
-    # the reshapes + ">" will make a 2d table with true/false 
-    # where "true" means the probability at line i is higher than the threshold at column j
-    # so the sum(axis=-1) is counting how many thresholds the proba is higher than
-    # the -1 makes it a 0-starting index
-    selected_ops_indices = (probabilities.reshape(-1, 1) > thresholds.reshape(1, -1)).sum(axis=-1) - 1
-    
-    # idx: ndarray
-    # the idx is the index of the transform in self.transforms that will be applied to the
-    # group of instances whose indices are in ndarray
-    for idx, transf in enumerate(transforms):
-        select = selected_ops_indices == idx
-        batch[select] = transf(batch[select])
-        
-    return batch
-
-
 class BatchRandomChoice(NumpyRandomTransformMixin, BatchTransformMixin, TransformsMixin):
     """
     Pick a transformation randomly picked from a list for each instance in the batch. 
@@ -206,21 +172,81 @@ class BatchRandomChoice(NumpyRandomTransformMixin, BatchTransformMixin, Transfor
         .33 is bigger than 2 thresholds so the second operation (index=1)    
     """
     
+    @staticmethod
+    def _apply_chosen_batch_transforms(
+        batch: Tensor, 
+        thresholds: np.ndarray, 
+        probabilities: np.ndarray, 
+        transforms: Sequence[Callable],
+        inplace: bool = False,
+    ) -> Tensor:
+
+        assert probabilities.ndim == 1, f"got {probabilities.ndim}"
+        assert thresholds.ndim == 1, f"got {thresholds.ndim}"
+        assert batch.shape[0] == probabilities.shape[0], f"got {batch.shape[0], probabilities.shape[0]}"
+        ntransforms = len(transforms)
+        assert ntransforms == thresholds.shape[0], f"got {ntransforms} transforms and {thresholds.shape[0]} thresholds"
+        
+        # probabilities are between 0 and 1
+        assert torch.logical_and(0 <= probabilities, probabilities < 1).all(), f"got probabilities {probabilities}, they must be between 0 and 1"
+        assert torch.logical_and(0 <= thresholds, thresholds < 1).all(), f"got thresholds {thresholds}, they must be between 0 and 1"
+        
+        # the thresholds are sorted and cannot be the same (< instead of <=)
+        assert (thresholds[:-1] < thresholds[1:]).all(), f"got thresholds {thresholds}, they must be sorted"
+        
+        # the reshapes + ">" will make a 2d table with true/false 
+        # where "true" means the probability at line i is higher than the threshold at column j
+        # so the sum(axis=-1) is counting how many thresholds the proba is higher than
+        # the -1 makes it a 0-starting index
+        selected_ops_indices = (probabilities.reshape(-1, 1) > thresholds.reshape(1, -1)).sum(axis=-1) - 1
+        
+        transformed_batch_pieces = []
+        selects = []
+        
+        # idx: ndarray
+        # the idx is the index of the transform in self.transforms that will be applied to the
+        # group of instances whose indices are in ndarray
+        for idx, transf in enumerate(transforms):
+            select = selected_ops_indices == idx
+            selects.append(select)
+            transformed_batch_pieces.append(transf(batch[select]))
+            
+        # the output shape cannot be known in advance, so we use the shape of the first transformed batch piece
+        pieces_shapes = [piece.shape for piece in transformed_batch_pieces]
+        # [1:] ignores the first dimension, which is the batch size
+        assert all(piece[1:] == pieces_shapes[0][1:] for piece in pieces_shapes), f"all pieces must have the same shape, got {pieces_shapes}"
+
+        output_shape = tuple(batch.shape[:2]) + tuple(pieces_shapes[0][2:])
+        # i can assum it is 4D because of BatchTransformMixin._validate_before_after
+        output_batch = torch.empty(size=output_shape, device=batch.device, dtype=batch.dtype)
+        
+        # put the pieces back together
+        for select, piece in zip(selects, transformed_batch_pieces):
+            output_batch[select] = piece
+        
+        return output_batch
+    
     @NumpyRandomTransformMixin._init_generator
     @TransformsMixin._init_transforms
     def __init__(self):
-        self.ntransforms = len(self.transforms)
-        self._thresholds = np.linspace(0, 1, self.ntransforms, endpoint=False)
         
         for idx, transf in enumerate(self.transforms):
             assert isinstance(transf, BatchTransformMixin), f"transforms must be BatchTransformMixin, got {transf} at index {idx}"
             
-    @BatchTransformMixin._validate_before_and_after
+        self.ntransforms = len(self.transforms)
+        self._thresholds = np.linspace(0, 1, self.ntransforms, endpoint=False)
+        
+    # cannot validate same size because of crop and resize operations
+    @BatchTransformMixin._validate_before_and_after(validate_same_size=False) 
     def __call__(self, batch: Tensor) -> Tensor:
         # keep all the randomness separate from the transform logic
         batchsize = batch.shape[0]
-        probabilities = np.random.uniform(low=0, high=1, size=batchsize)
-        return _apply_chosen_batch_transforms(batch, self._thresholds, probabilities, self.transforms)
+        return self._apply_chosen_batch_transforms(
+            batch, 
+            torch.tensor(self._thresholds, device=batch.device), 
+            torch.tensor(self.generator.uniform(low=0, high=1, size=batchsize), device=batch.device), 
+            self.transforms,
+        )
 
 
 def _apply_chosen_multibatch_transforms(
@@ -317,7 +343,7 @@ class BatchCompose(BatchTransformMixin, TransformsMixin):
     def __init__(self) -> None:
         super().__init__()    
 
-    @BatchTransformMixin._validate_before_and_after
+    @BatchTransformMixin._validate_before_and_after(validate_same_size=False)
     def __call__(self, batch: Tensor) -> Tensor:
         for t in self.transforms:
             batch = t(batch)
@@ -350,7 +376,7 @@ class MultiBatchCompose(MultiBatchTransformMixin, TransformsMixin):
 # =============================================== MISC BATCH TRANSFORMS ===============================================
 
 
-class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin, torch.nn.Module):
+class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin):
     """
     Cut crops of the same size in a batch; each has different positions.
 
@@ -447,8 +473,8 @@ class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin, torch.nn.M
         
         return batch
 
-    @BatchTransformMixin._validate_before_and_after
-    def forward(self, batch: Tensor) -> Tensor:
+    @BatchTransformMixin._validate_before_and_after()
+    def __call__(self, batch: Tensor) -> Tensor:
         i, j = self.get_params(batch, self.size, self.generator)
         return self.crop(batch, i, j, self.size)         
     
@@ -464,17 +490,20 @@ class BatchGaussianNoise(NumpyRandomTransformMixin, BatchTransformMixin):
     STD_MODES = (STD_MODE_AUTO_IMAGEWISE,)
     
     @staticmethod
-    def add_gaussian_noise(batch: Tensor, gaussian: Tensor, mask: Tensor, std_factor: float) -> Tensor:
+    def add_gaussian_noise(batch: Tensor, standard_gaussian_noise: Tensor, mask: Tensor, std_factor: float) -> Tensor:
         # the original implementation was this
         # lambda x: x + torch.randn_like(x).mul(random_generator_.integers(0, 2)).mul(0.1 * x.std())
         assert batch.shape == mask.shape, f"got batch {batch.shape} and mask {mask.shape}"
-        assert batch.shape == gaussian.shape, f"got batch {batch.shape} and gaussian {gaussian.shape}"
-        assert mask.dtype == torch.int64, f"got {mask.dtype}"
+        assert batch.shape == standard_gaussian_noise.shape, f"got batch {batch.shape} and gaussian {standard_gaussian_noise.shape}"
+        assert mask.dtype == batch.dtype, f"got mask {mask.dtype} and batch {batch.dtype}"
+        assert standard_gaussian_noise.dtype == batch.dtype, f"got gaussian {standard_gaussian_noise.dtype} and batch {batch.dtype}"
+        
         mask_unique_values = tuple(sorted(mask.unique()))
         assert mask_unique_values in ((0., 1.), (0.,), (1.,)), f"got {mask_unique_values}"
         assert std_factor > 0., f"got {std_factor}"
+        
         # i can assume batch is 4d because of BatchTransformMixin._validate_before_and_after
-        return batch + gaussian * mask * (std_factor * batch.std(dim=(1, 2, 3), keepdim=True))
+        return batch + standard_gaussian_noise * mask * (std_factor * batch.std(dim=(1, 2, 3), keepdim=True))
     
     @NumpyRandomTransformMixin._init_generator
     def __init__(self, mode: str = STD_MODE_AUTO_IMAGEWISE, std_factor: float = 1.):
@@ -483,17 +512,60 @@ class BatchGaussianNoise(NumpyRandomTransformMixin, BatchTransformMixin):
             assert std_factor is not None and std_factor > 0., f"got {std_factor}"
         self.std_factor = std_factor
     
-    @BatchTransformMixin._validate_before_and_after
+    @BatchTransformMixin._validate_before_and_after()
     def __call__(self, batch: Tensor) -> Tensor:
         gaussian = torch.tensor(
             self.generator.normal(size=batch.shape),
             device=batch.device,
+            dtype=batch.dtype,
         )
         mask = torch.tensor(
             self.generator.integers(low=0, high=2, size=batch.shape,),
             device=batch.device, 
+            dtype=batch.dtype,
         )
-        return self.add_gaussian_noise(batch, gaussian, mask, self.std_factor)
+        return self.add_gaussian_noise(batch, gaussian, mask, torch.tensor(self.std_factor, dtype=batch.dtype,))
+
+
+class BatchLocalContrastNormalization(BatchTransformMixin):
+    """
+    Apply local contrast normalization to tensor, i.e. subtract mean across features (pixels) and normalize by the the standard deviation with L1- across features (pixels).
+    Note this is a *per sample* normalization globally across features (and not across the dataset).
+    """
+    
+    @staticmethod
+    def _lcn(batch: Tensor) -> Tensor:
+        """
+        x \in R^{N x C x H x W}
+        asserted in BatchTransformMixin._validate_before_and_after()
+        """
+        # mean over all features (pixels) per sample
+        assert batch.shape[1] in (1, 3), f"x.shape[1] should be 1 or 3, but is {batch.shape[1]}"
+        assert batch.dtype in (torch.float16, torch.float32, torch.float64), f"batch.dtype should be float, but is {batch.dtype}"
+        batch = batch - batch.mean(dim=(1, 2, 3), keepdim=True)
+        x_scale = batch.abs().mean(dim=(1, 2, 3), keepdim=True)
+        x_scale[x_scale == 0] = 1
+        batch = batch / x_scale
+        return batch
+     
+    @BatchTransformMixin._validate_before_and_after()
+    def __call__(self, batch: Tensor) -> Tensor:
+        return self._lcn(batch)
+
+
+class BatchResize(BatchTransformMixin):
+    """Resize the input image to the given size.
+    Wrapper of torchvision.transforms.transforms.Resize, which already supports batch tensor.
+    
+    """
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self._wrapped_transform = torchvision.transforms.Resize(*args, **kwargs)
+        
+    @BatchTransformMixin._validate_before_and_after(validate_same_size=False)
+    def __call__(self, *args, **kwargs):
+        return self._wrapped_transform(*args, **kwargs)
 
 
 # =============================================== DATALOADER PREVIEW ===============================================
@@ -687,7 +759,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("test_data_module")
     parser.add_argument(
         "--test", type=str, default="batch-random-crop", 
-        choices=("batch-random-crop", "batch-gaussian-noise", "batch-random-choice", "batch-compose"),
+        choices=("batch-random-crop", "batch-gaussian-noise", "batch-random-choice", "batch-random-choice-diff-size", "batch-compose"),
     )
     parser.add_argument(
         "--device", type=str, default="cuda", choices=("cpu", "cuda")
@@ -738,17 +810,36 @@ if __name__ == "__main__":
         transformed_img_batch = batch_gaussian_noise(img_batch)
         
     elif args.test == "batch-random-choice":
-        raise NotImplementedError()
+        assert args.data == "cifar10"
+        random_choice = BatchRandomChoice(
+            transforms=[
+                BatchGaussianNoise(generator=create_numpy_random_generator(0), std_factor=0.2),
+                BatchLocalContrastNormalization(),
+            ],
+            generator=create_numpy_random_generator(0),
+        )
+        transformed_img_batch = random_choice(img_batch)
+    
+    elif args.test == "batch-random-choice-diff-size":
+        assert args.data == "cifar10"
+        from torchvision.transforms import InterpolationMode
+        random_choice = BatchRandomChoice(
+            transforms=[
+                BatchRandomCrop(size=(16, 16), generator=create_numpy_random_generator(0)),
+                BatchResize(size=(16, 16), interpolation=InterpolationMode.NEAREST),
+            ],
+            generator=create_numpy_random_generator(0),
+        )
+        transformed_img_batch = random_choice(img_batch)
     
     elif args.test == "batch-compose":
-        assert args.data == "cifar10"
-        random_choice = BatchCompose(
+        bcompose = BatchCompose(
             transforms=[
                 BatchGaussianNoise(generator=create_numpy_random_generator(0), std_factor=0.1),
                 BatchRandomCrop(size=(24, 24), generator=create_numpy_random_generator(0)),
             ],
         )
-        transformed_img_batch = random_choice(img_batch)
+        transformed_img_batch = bcompose(img_batch)
         
     else:
         raise NotImplementedError(f"test {args.test} not implemented")
