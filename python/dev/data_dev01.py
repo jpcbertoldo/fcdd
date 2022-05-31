@@ -208,7 +208,7 @@ class BatchRandomChoice(NumpyRandomTransformMixin, BatchTransformMixin, Transfor
     
     @NumpyRandomTransformMixin._init_generator
     @TransformsMixin._init_transforms
-    def __init__(self, *args, **kwargs):
+    def __init__(self):
         self.ntransforms = len(self.transforms)
         self._thresholds = np.linspace(0, 1, self.ntransforms, endpoint=False)
         
@@ -687,7 +687,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("test_data_module")
     parser.add_argument(
         "--test", type=str, default="batch-random-crop", 
-        choices=("batch-random-crop", "batch-gaussian-noise"),
+        choices=("batch-random-crop", "batch-gaussian-noise", "batch-random-choice", "batch-compose"),
     )
     parser.add_argument(
         "--device", type=str, default="cuda", choices=("cpu", "cuda")
@@ -711,10 +711,12 @@ if __name__ == "__main__":
         TMPDIR = os.environ.get("TMPDIR", "/tmp")
         dataset = torchvision.datasets.CIFAR10(root=TMPDIR, download=True, transform=T.ToTensor())
         data_loader = torch.utils.data.DataLoader(
-            dataset, batch_size=128, shuffle=True, num_workers=0,
+            dataset, batch_size=128, num_workers=0,
         )
         for img_batch, target_batch in data_loader:
             break
+   
+    print(f"img_batch.shape: {img_batch.shape}")
         
     if args.test == "batch-random-crop":
         generator = create_numpy_random_generator(0)
@@ -734,6 +736,19 @@ if __name__ == "__main__":
             generator=create_numpy_random_generator(0),
         )
         transformed_img_batch = batch_gaussian_noise(img_batch)
+        
+    elif args.test == "batch-random-choice":
+        raise NotImplementedError()
+    
+    elif args.test == "batch-compose":
+        assert args.data == "cifar10"
+        random_choice = BatchCompose(
+            transforms=[
+                BatchGaussianNoise(generator=create_numpy_random_generator(0), std_factor=0.1),
+                BatchRandomCrop(size=(24, 24), generator=create_numpy_random_generator(0)),
+            ],
+        )
+        transformed_img_batch = random_choice(img_batch)
         
     else:
         raise NotImplementedError(f"test {args.test} not implemented")
