@@ -22,6 +22,7 @@ from torch.utils.data.dataset import Dataset
 from torchvision.datasets import VisionDataset
 from torchvision.datasets.imagenet import check_integrity
 from tqdm import tqdm
+from torch import Tensor
 
 from common_dev01 import (create_numpy_random_generator,
                           create_python_random_generator)
@@ -75,7 +76,7 @@ def confetti_noise(
     rotation: int = 0,
     colorrange: Tuple[int, int] = None, 
     random_generator: numpy.random.Generator = None,  # it should never be none, but i put it like this to not change the signature
-) -> torch.Tensor:
+) -> Tensor:
     """
     Generates "confetti" noise, as seen in the paper.
     The noise is based on sampling randomly many rectangles (in the following called blobs) at random positions.
@@ -199,9 +200,9 @@ def confetti_noise(
 
 
 def merge_image_and_synthetic_noise(
-        img: torch.Tensor, 
-        gt: torch.Tensor, 
-        generated_noise: torch.Tensor, 
+        img: Tensor, 
+        gt: Tensor, 
+        generated_noise: Tensor, 
         invert_threshold: float = 0.00025,
     ):
         assert (img.dim() == 4 or img.dim() == 3) and generated_noise.shape == img.shape
@@ -275,7 +276,7 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
         self._real_anomaly_dataloader = dataloader
         self._real_anomaly_dataloader_cycle = cycle(self._real_anomaly_dataloader)
     
-    def __call__(self, img: torch.Tensor, label: int, gtmap: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int]:
+    def __call__(self, img: Tensor, label: int, gtmap: Tensor) -> Tuple[Tensor, Tensor, int]:
         """
         Based on the probability defined in __init__, replaces (img, gt, target) with an artificial anomaly.
         :param img: some torch tensor image
@@ -294,7 +295,7 @@ class OnlineInstanceReplacer(ImgGtmapLabelTransform):
             
         return img, label, gtmap
 
-    def _replace(self, img: torch.Tensor, label: int, gtmap: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int]:
+    def _replace(self, img: Tensor, label: int, gtmap: Tensor) -> Tuple[Tensor, Tensor, int]:
                 
         assert img.dim() == 3, f"img must be a 3D tensor [3, h, w], got {img.shape}"
         assert gtmap.dim() == 3, f"gtmap must be a 3D tensor [1, h, w], got {gtmap.shape}"
@@ -811,7 +812,7 @@ class MvTec(VisionDataset, Dataset, LightningDataset):
         
         print('Dataset setup.')
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, int, torch.Tensor]:
+    def __getitem__(self, index: int) -> Tuple[Tensor, int, Tensor]:
         
         # using clone() to avoid modifying the original tensors
         class_label = self.labels[index].clone()
@@ -945,7 +946,7 @@ def _local_contrast_normalization_transform():
     Apply local contrast normalization to tensor, i.e. subtract mean across features (pixels) and normalize by the the standard deviation with L1- across features (pixels).
     Note this is a *per sample* normalization globally across features (and not across the dataset).
     """
-    def lcn(x: torch.Tensor):
+    def lcn(x: Tensor):
         # mean over all features (pixels) per sample
         # the first view
         assert x.ndim == 4, f"Expected 4D tensor, got {x.ndim}D"
@@ -1172,7 +1173,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         
         def random_crop_transform():
             return transforms.RandomCrop(img_width_height, padding=0)
-        
+
         def _img_color_augmentation():
             random_generator_ = create_numpy_random_generator(self.seed)
             return transforms.Compose([
@@ -1185,9 +1186,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                     mode=RandomChoice.RETURN_MODE_TRANSFORMED_IMAGE,
                     random_generator=create_python_random_generator(self.seed),
                 ),
-                transforms.Lambda(
-                    lambda x: x + torch.randn_like(x).mul(random_generator_.integers(0, 2)).mul(0.1 * x.std())
-                ),
+                AddGaussianNoise(),
             ])
         
         # ========================================== PREPROCESSING ==========================================
@@ -1352,7 +1351,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             raise ValueError(f'Unknown stage {stage}')
     
     @staticmethod       
-    def _validate_data(img_: torch.Tensor, target_: Union[int, torch.Tensor], gtmap_: torch.Tensor, mode="batch"):
+    def _validate_data(img_: Tensor, target_: Union[int, Tensor], gtmap_: Tensor, mode="batch"):
         """
         make sure things are as expected after each transformation
         yes, this function is verbosy and repeatedly used but it prevents the user from making silly mistakes
@@ -1361,11 +1360,11 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         assert mode in ("batch", "image"), f"mode {mode} is not known"
                 
         # type
-        assert type(img_) == torch.Tensor, f'Expected img to be a torch.Tensor, got {type(img_)}'
-        assert type(gtmap_) == torch.Tensor, f'Expected gtmap_ to be a torch.Tensor, got {type(gtmap_)}'
+        assert type(img_) == Tensor, f'Expected img to be a Tensor, got {type(img_)}'
+        assert type(gtmap_) == Tensor, f'Expected gtmap_ to be a Tensor, got {type(gtmap_)}'
 
         if mode == "batch":
-            assert type(target_) == torch.Tensor, f"target {target_} is not a torch.Tensor"
+            assert type(target_) == Tensor, f"target {target_} is not a Tensor"
         
         if mode == "image":
             assert type(target_) == int, f'Expected target to be an int, got {type(target_)}'
@@ -1463,12 +1462,12 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             def preprocessing(batch):
                 """this goes inside the dataloader, so the batch should actually be a single image"""
                 
-                img: torch.Tensor 
+                img: Tensor 
                 target: int
-                gtmap: torch.Tensor
+                gtmap: Tensor
                 img, target, gtmap = batch
                 img = img.unsqueeze(0)
-                target = torch.Tensor([target], dtype=torch.int64)
+                target = Tensor([target], dtype=torch.int64)
                 gtmap = gtmap.unsqueeze(0)
                 
                 MVTecAnomalyDetectionDataModule._validate_data(img, target, gtmap)
@@ -1512,12 +1511,12 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             
             def preprocessing(batch):
                 
-                img: torch.Tensor 
+                img: Tensor 
                 target: int
-                gtmap: torch.Tensor
+                gtmap: Tensor
                 img, target, gtmap = batch
                 img = img.unsqueeze(0)
-                target = torch.Tensor([target], dtype=torch.int64)
+                target = Tensor([target], dtype=torch.int64)
                 gtmap = gtmap.unsqueeze(0)
                 
                 MVTecAnomalyDetectionDataModule._validate_data(img, target, gtmap)
