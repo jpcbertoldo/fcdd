@@ -451,7 +451,50 @@ class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin, torch.nn.M
         i, j = self.get_params(batch, self.size, self.generator)
         return self.crop(batch, i, j, self.size)         
     
+            
+class BatchGaussianNoise(NumpyRandomTransformMixin, BatchTransformMixin):
+    """
+    Adds a gaussian noise based on the std of each image (multiplied by `std_factor`).
+    Only ~50% of the pixels get noised (randomly selected).
+    """
     
+    # this mode will use each image's std as the noise std multiplied by a factor
+    STD_MODE_AUTO_IMAGEWISE = "auto-imagewise"
+    STD_MODES = (STD_MODE_AUTO_IMAGEWISE,)
+    
+    @staticmethod
+    def add_gaussian_noise(batch: Tensor, gaussian: Tensor, mask: Tensor, std_factor: float) -> Tensor:
+        # the original implementation was this
+        # lambda x: x + torch.randn_like(x).mul(random_generator_.integers(0, 2)).mul(0.1 * x.std())
+        assert batch.shape == mask.shape, f"got batch {batch.shape} and mask {mask.shape}"
+        assert batch.shape == gaussian.shape, f"got batch {batch.shape} and gaussian {gaussian.shape}"
+        assert mask.dtype == torch.int64, f"got {mask.dtype}"
+        mask_unique_values = tuple(sorted(mask.unique()))
+        assert mask_unique_values in ((0., 1.), (0.,), (1.,)), f"got {mask_unique_values}"
+        assert std_factor > 0., f"got {std_factor}"
+        # i can assume batch is 4d because of BatchTransformMixin._validate_before_and_after
+        return batch + gaussian * mask * (std_factor * batch.std(dim=(1, 2, 3), keepdim=True))
+    
+    @NumpyRandomTransformMixin._init_generator
+    def __init__(self, mode: str = STD_MODE_AUTO_IMAGEWISE, std_factor: float = 1.):
+        assert mode in self.STD_MODES, f"got {mode}, but expected one of {self.STD_MODES}"
+        if mode == self.STD_MODE_AUTO_IMAGEWISE:
+            assert std_factor is not None and std_factor > 0., f"got {std_factor}"
+        self.std_factor = std_factor
+    
+    @BatchTransformMixin._validate_before_and_after
+    def __call__(self, batch: Tensor) -> Tensor:
+        gaussian = torch.tensor(
+            self.generator.normal(size=batch.shape),
+            device=batch.device,
+        )
+        mask = torch.tensor(
+            self.generator.integers(low=0, high=2, size=batch.shape,),
+            device=batch.device, 
+        )
+        return self.add_gaussian_noise(batch, gaussian, mask, self.std_factor)
+
+
 # =============================================== DATALOADER PREVIEW ===============================================
 
 
