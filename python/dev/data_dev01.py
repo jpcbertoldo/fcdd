@@ -1,5 +1,4 @@
-# In[]        
-
+import abc
 import copy
 import functools
 from collections import Counter
@@ -11,18 +10,33 @@ import matplotlib
 import numpy as np
 import torch
 import torchvision
-import torchvision.transforms.transforms as T
 import torchvision.transforms.functional as TF
 import torchvision.transforms.functional_tensor as TFT
+import torchvision.transforms.transforms as T
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
-from torch.utils.data import DataLoader
 from torch import Tensor
-
+from torch.utils.data import DataLoader
 
 ANOMALY_TARGET = 1
 NOMINAL_TARGET = 0
 
+
+class LightningDataset(abc.ABC):
+    """a dataset that follows the LightningDataset API"""
+    
+    @abc.abstractmethod
+    def prepare_data(self):
+        pass
+        
+    @abc.abstractmethod
+    def setup(self):
+        pass
+
+    @abc.abstractproperty
+    def is_setup(self):
+        pass
+    
 
 # =============================================== TRANSFORM MIXINS ===============================================
 
@@ -54,120 +68,146 @@ class BatchTransformMixin:
     Make sure that the argument given to the transform is a batch by checking the number of dimensions.
     Use @_validate_before_and_after on top of __call__ to make sure that the result is a batch as well.
     """
-    
-    def _validate_batch(self, batch: Tensor):
-        assert isinstance(batch, Tensor), f"batch must be a Tensor, got {type(batch)}"
-        assert batch.ndimension() == 4, f"batch must be a batch of images (expected to have dimensions [B, C, H, W]), got {batch.ndimension()} dimensions"
-    
-    def _validate_before_and_after(validate_same_size: bool = True):
+
+    def _validate_ndim(ndim: int):
+        def decorator(__call__: Callable[[Tensor], Tensor]):
+            @functools.wraps(__call__)
+            def wrapper(self, batch: Tensor, **kwargs) -> Tensor:
+                assert batch.ndim == ndim, f"batch must have {ndim} dimensions, got {batch.ndim}"
+                return __call__(self, batch, **kwargs)
+            return wrapper
+        return decorator
+
+    def _validate_before_and_after_is_same(
+        ndim: bool = True,
+        batchsize: bool = True,
+        instance_shape: bool = True,        
+        dtype: bool = True,
+    ):
         
         def decorator(__call__: Callable[[Tensor], Tensor]):
             
             @functools.wraps(__call__)
             def wrapper(self, batch: Tensor, **kwargs) -> Tensor:
-                self._validate_batch(batch)
-                batchsize_before = batch.size(0)
+                
+                assert isinstance(batch, Tensor), f"batch must be a Tensor, got {type(batch)}"
+                before = dict(
+                    ndim=batch.ndim,
+                    batchsize=batch.shape[0],
+                    instance_shape=batch.shape[1:],
+                    dtype=batch.dtype,
+                )
+                
                 batch = __call__(self, batch, **kwargs)
-                self._validate_batch(batch)
-                batchsize_after = batch.size(0)
-                if validate_same_size:
-                   assert batchsize_before == batchsize_after, f"batchsize before and after transform must be the same, got {batchsize_before} and {batchsize_after}"
+                
+                assert isinstance(batch, Tensor), f"batch must be a Tensor, got {type(batch)} after the transform {self.__class__.__name__}"
+                after = dict(
+                    ndim=batch.ndim,
+                    batchsize=batch.shape[0],
+                    instance_shape=batch.shape[1:],
+                    dtype=batch.dtype,
+                )
+                
+                if ndim:
+                    assert before["ndim"] == after["ndim"], f"batch must have the same number of dimensions before and after, but got before={before['ndim']} after={after['ndim']} with transform {self.__class__.__name__}"
+                
+                if batchsize:
+                    assert before["batchsize"] == after["batchsize"], f"batch must have the same batchsize before and after, but got before={before['batchsize']} after={after['batchsize']} with transform {self.__class__.__name__}"
+                    
+                if instance_shape:
+                    assert before["instance_shape"] == after["instance_shape"], f"batch must have the same instance shape before and after, but got before={before['instance_shape']} after={after['instance_shape']} with transform {self.__class__.__name__}"                
+                
+                if dtype:
+                    assert before["dtype"] == after["dtype"], f"batch must have the same dtype before and after, but got before={before['dtype']} after={after['dtype']} with transform {self.__class__.__name__}"
+                    
                 return batch
             
             return wrapper
         
         return decorator
     
+    
 class MultiBatchTransformMixin:
-    """Make sure to always have the same number of batches and that they all have the same batch size."""
+    """
+    Make sure to always have the same number of batches and (optionally) that each of them has 
+    the same characteristics (shape, dtype) before and after the transform (optional).
+    """
     
-    nbatches = None
-    
-    def _validate_batches(self, *batches: List[Tensor]):
-        nbatches = len(batches)
-        if self.nbatches is None:
-            self.nbatches = nbatches
-        assert self.nbatches == nbatches, f"number of batches must always be the same, got {self.nbatches} and {nbatches}"
-        for batch in batches:
-            assert isinstance(batch, Tensor), f"batch must be a Tensor, got {type(batch)}"
-            assert batch.ndimension() == 4, f"batch must be a batch of images (expected to have dimensions [B, C, H, W]), got {batch.ndimension()} dimensions"
-        batchsizes = np.array([batch.size(0) for batch in batches])
-        assert np.all(batchsizes == batchsizes[0]), f"all batches must have the same batch size, got {batchsizes}"
-
-    def _validate_before_and_after(__call__: Callable[[Tensor], Tensor]):
-        
+    def _validate_consistent_batchsize(__call__: Callable[[Tensor], Tensor]):
         @functools.wraps(__call__)
         def wrapper(self, *batches: List[Tensor], **kwargs) -> List[Tensor]:
-            self._validate_batches(*batches)
-            batch0 = batches[0]
-            batchsize_before = batch0.size(0)
-            batches = __call__(self, *batches, **kwargs)
-            self._validate_batches(*batches)
-            batchsize_after = batch0.size(0)
-            assert batchsize_before == batchsize_after, f"batchsize before and after transform must be the same, got {batchsize_before} and {batchsize_after}"
-            return batches
-        
-        return wrapper    
-
-
-def make_multibatch(transform: Callable):
-    """
-    Make a transform that will take a list of batches and return a list of transformed batches.
-    """
-    
-    assert hasattr(transform, "__call__"), f"transform must be a callable, got {type(transform)}"
-    
-    def decorate(__call__: Callable[[Tensor], Tensor]):
-        
-        @functools.wraps(__call__)
-        def wrapper(*batches: List[Tensor], **kwargs) -> List[Tensor]:
-            return [
-                __call__(batch, **kwargs)
-                for batch in batches
-            ]
+            batchsizes = [batch.shape[0] for batch in batches]
+            assert len(set(batchsizes)) == 1, f"all batches must have the same batchsize, but got {batchsizes}"            
+            return __call__(self, *batches, **kwargs)
         return wrapper
     
-    if isinstance(transform, torch.nn.Module):
-        transform.forward = decorate(transform.forward)
+    def _validate_ndims(ndims: Tuple[int, ...]):
+        def decorator(__call__: Callable[[Tensor], Tensor]):
+            @functools.wraps(__call__)
+            def wrapper(self, *batches: List[Tensor], **kwargs) -> List[Tensor]:
+                for idx, (batch, ndim) in enumerate(zip(batches, ndims)):
+                    assert batch.ndim == ndim, f"batch  at index {idx} must have {ndims} dimensions, got {batch.ndim}"
+                return __call__(self, *batches, **kwargs)
+            return wrapper
+        return decorator
 
-    else:
-        transform = decorate(transform)
+    def _validate_before_and_after_is_same(
+        ndim: bool = True,
+        batchsize: bool = True,
+        instance_shape: bool = True,        
+        dtype: bool = True,
+    ):
         
-    return transform
-
-
-def make_multibatch_use_same_random_state(transform: NumpyRandomTransformMixin):
-    """
-    Make sure that all batches are called with the same random state, so the same transform is applied to all batches.
-    """
-    
-    assert isinstance(transform, NumpyRandomTransformMixin), f"transform must be a NumpyRandomTransformMixin, got {type(transform)}"
-    
-    def decorate(__call__: Callable[[Tensor], Tensor]):
+        def decorator(__call__: Callable[[Tensor], Tensor]):
+            
+            @functools.wraps(__call__)
+            def wrapper(self, *batches: List[Tensor], **kwargs) -> List[Tensor]:
+                
+                befores = dict()
+                
+                for idx, batch in enumerate(batches):
+                    
+                    assert isinstance(batch, Tensor), f"batch must be a Tensor, got {type(batch)} at index {idx}"
+                    before = dict(
+                        ndim=batch.ndim,
+                        batchsize=batch.shape[0],
+                        instance_shape=batch.shape[1:],
+                        dtype=batch.dtype,
+                    )
+                    befores[idx] = before
+                    
+                batches = __call__(self, *batches, **kwargs)
+                
+                for idx, batch in enumerate(batches):
+                                    
+                    assert isinstance(batch, Tensor), f"batch must be a Tensor, got {type(batch)}  at index {idx} after the transform {self.__class__.__name__}"
+                    after = dict(
+                        ndim=batch.ndim,
+                        batchsize=batch.shape[0],
+                        instance_shape=batch.shape[1:],
+                        dtype=batch.dtype,
+                    )
+                    
+                    before = befores[idx]
+                    
+                    if ndim:
+                        assert before["ndim"] == after["ndim"], f"idx={idx} batch must have the same number of dimensions before and after, but got before={before['ndim']} after={after['ndim']} with transform {self.__class__.__name__}"
+                    
+                    if batchsize:
+                        assert before["batchsize"] == after["batchsize"], f"idx={idx} batch must have the same batchsize before and after, but got before={before['batchsize']} after={after['batchsize']} with transform {self.__class__.__name__}"
+                        
+                    if instance_shape:
+                        assert before["instance_shape"] == after["instance_shape"], f"idx={idx} batch must have the same instance shape before and after, but got before={before['instance_shape']} after={after['instance_shape']} with transform {self.__class__.__name__}"                
+                    
+                    if dtype:
+                        assert before["dtype"] == after["dtype"], f"idx={idx} batch must have the same dtype before and after, but got before={before['dtype']} after={after['dtype']} with transform {self.__class__.__name__}"
+                        
+                return batches
+            
+            return wrapper
         
-        generator = transform.generator
-        
-        @functools.wraps(__call__)
-        def wrapper(*batches: List[Tensor], **kwargs) -> List[Tensor]:
-            initial_state = copy.deepcopy(generator.bit_generator.state)
-            returns = []
-            for batch in batches:
-                generator.bit_generator.state = copy.deepcopy(initial_state)
-                ret = __call__(batch, **kwargs)
-                returns.append(ret)
-                # by setting the random state at the beginning, the state will still have
-                # advanced as this loop finishes the last iteration
-            return returns
-        
-        return wrapper
-    
-    if isinstance(transform, torch.nn.Module):
-        transform.forward = decorate(transform.forward)
-
-    else:
-        transform = decorate(transform)
-        
-    return transform    
+        return decorator
+   
 
 class TransformsMixin:
     """The transform should get a list of transforms at the init."""
@@ -271,9 +311,9 @@ class BatchRandomChoice(NumpyRandomTransformMixin, BatchTransformMixin, Transfor
             
         self.ntransforms = len(self.transforms)
         self._thresholds = np.linspace(0, 1, self.ntransforms, endpoint=False)
-        
-    # cannot validate same size because of crop and resize operations
-    @BatchTransformMixin._validate_before_and_after(validate_same_size=False) 
+
+    # instance_shape=False because the transforms can change the shape of the batch (resize, crop, etc)
+    @BatchTransformMixin._validate_before_and_after_is_same(instance_shape=False) 
     def __call__(self, batch: Tensor) -> Tensor:
         # keep all the randomness separate from the transform logic
         batchsize = batch.shape[0]
@@ -354,16 +394,22 @@ class MultiBatchdRandomChoice(NumpyRandomTransformMixin, MultiBatchTransformMixi
                 for batch_idx in range(len(batches))
             ), f"all transformed batches must have the same number of instances at the respective transform indices, but got {transformed_batches[batch_idx][transform_index]} and {transformed_batch0[transform_index]} at transform_index {transform_index}"
         
-        # i can assum it is 4D because of BatchTransformMixin._validate_before_after
-        (batchsize, nchannels, _, _) = batches[0].shape
-        (_, _, height, width) = transformed_batches[0][0]["transformed_piece"].shape
-        output_shape = (batchsize, nchannels, height, width)
+        
+        batchsize = batch0.shape[0]
         
         # put the pieces back together
         return_batches = []
         for bidx, transformed_pieces in enumerate(transformed_batches):
-            output_batch = torch.empty(size=output_shape, device=batches[0].device, dtype=batches[0].dtype)
+            output_batch = None
             for tidx, transformed_piece in enumerate(transformed_pieces):
+                # this is for the 1st iteration, while we don't know the output shape yet
+                if output_batch is None:
+                    output_shape  = (batchsize, ) + transformed_piece["transformed_piece"].shape[1:]
+                    output_batch = torch.empty(
+                        size=output_shape, 
+                        device=transformed_piece["transformed_piece"].device, 
+                        dtype=transformed_piece["transformed_piece"].dtype
+                    )
                 select = transformed_piece["select"]
                 output_batch[select] = transformed_piece["transformed_piece"]   
             return_batches.append(output_batch)
@@ -388,7 +434,8 @@ class MultiBatchdRandomChoice(NumpyRandomTransformMixin, MultiBatchTransformMixi
                 # is applied to each batch
                 print(f"{transform} (idx {idx}) is not a MultiBatchTransformMixin, be careful to use transforms that support multi batch operations")
 
-    @MultiBatchTransformMixin._validate_before_and_after
+    # instance_shape=False because the transforms can change the shape of the batch (resize, crop, etc)
+    @MultiBatchTransformMixin._validate_before_and_after_is_same(instance_shape=False)
     def __call__(self, *batches: List[Tensor]) -> List[Tensor]:
         # keep all the randomness separate from the transform logic
         batch0 = batches[0]
@@ -412,7 +459,8 @@ class BatchCompose(BatchTransformMixin, TransformsMixin):
     def __init__(self) -> None:
         super().__init__()    
 
-    @BatchTransformMixin._validate_before_and_after(validate_same_size=False)
+    # instance_shape=False because the transforms can change the shape of the batch (resize, crop, etc)
+    @BatchTransformMixin._validate_before_and_after_is_same(instance_shape=False)
     def __call__(self, batch: Tensor) -> Tensor:
         for t in self.transforms:
             batch = t(batch)
@@ -432,7 +480,8 @@ class MultiBatchCompose(MultiBatchTransformMixin, TransformsMixin):
                 # todo change for warning
                 print(f"{transform} (idx {idx}) is not a BatchTransformMixin, be careful to use transforms that support batch operations")
     
-    @MultiBatchTransformMixin._validate_before_and_after
+    # instance_shape=False because the transforms can change the shape of the batch (resize, crop, etc)
+    @MultiBatchTransformMixin._validate_before_and_after_is_same(instance_shape=False)
     def __call__(self, *batches: List[Tensor]) -> List[Tensor]:
         
         for t in self.transforms:
@@ -541,7 +590,7 @@ class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin):
         
         return batch
 
-    @BatchTransformMixin._validate_before_and_after()
+    @BatchTransformMixin._validate_before_and_after_is_same(instance_shape=False)
     def __call__(self, batch: Tensor) -> Tensor:
         i, j = self.get_params(batch, self.size, self.generator)
         return self.crop(batch, i, j, self.size)         
@@ -580,7 +629,7 @@ class BatchGaussianNoise(NumpyRandomTransformMixin, BatchTransformMixin):
             assert std_factor is not None and std_factor > 0., f"got {std_factor}"
         self.std_factor = std_factor
     
-    @BatchTransformMixin._validate_before_and_after()
+    @BatchTransformMixin._validate_before_and_after_is_same()
     def __call__(self, batch: Tensor) -> Tensor:
         gaussian = torch.tensor(
             self.generator.normal(size=batch.shape),
@@ -616,9 +665,71 @@ class BatchLocalContrastNormalization(BatchTransformMixin):
         batch = batch / x_scale
         return batch
      
-    @BatchTransformMixin._validate_before_and_after()
+    @BatchTransformMixin._validate_before_and_after_is_same()
     def __call__(self, batch: Tensor) -> Tensor:
         return self._lcn(batch)
+    
+    
+# =============================================== MAKE MULTIBATCH ===============================================
+
+def make_multibatch(transform: Callable):
+    """
+    Make a transform that will take a list of batches and return a list of transformed batches.
+    """
+    
+    assert hasattr(transform, "__call__"), f"transform must be a callable, got {type(transform)}"
+    
+    def decorate(__call__: Callable[[Tensor], Tensor]):
+        
+        @functools.wraps(__call__)
+        def wrapper(*batches: List[Tensor], **kwargs) -> List[Tensor]:
+            return [
+                __call__(batch, **kwargs)
+                for batch in batches
+            ]
+        return wrapper
+    
+    if isinstance(transform, torch.nn.Module):
+        transform.forward = decorate(transform.forward)
+
+    else:
+        transform = decorate(transform)
+        
+    return transform
+
+
+def make_multibatch_use_same_random_state(transform: NumpyRandomTransformMixin):
+    """
+    Make sure that all batches are called with the same random state, so the same transform is applied to all batches.
+    """
+    
+    assert isinstance(transform, NumpyRandomTransformMixin), f"transform must be a NumpyRandomTransformMixin, got {type(transform)}"
+    
+    def decorate(__call__: Callable[[Tensor], Tensor]):
+        
+        generator = transform.generator
+        
+        @functools.wraps(__call__)
+        def wrapper(*batches: List[Tensor], **kwargs) -> List[Tensor]:
+            initial_state = copy.deepcopy(generator.bit_generator.state)
+            returns = []
+            for batch in batches:
+                generator.bit_generator.state = copy.deepcopy(initial_state)
+                ret = __call__(batch, **kwargs)
+                returns.append(ret)
+                # by setting the random state at the beginning, the state will still have
+                # advanced as this loop finishes the last iteration
+            return returns
+        
+        return wrapper
+    
+    if isinstance(transform, torch.nn.Module):
+        transform.forward = decorate(transform.forward)
+
+    else:
+        transform = decorate(transform)
+        
+    return transform 
 
 # =============================================== DATALOADER PREVIEW ===============================================
 
