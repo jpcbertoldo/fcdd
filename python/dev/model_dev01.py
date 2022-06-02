@@ -2,39 +2,18 @@
 # coding: utf-8
 
 
-import functools
-import pytorch_lightning as pl
-
-
-import contextlib
-import os.path as pt
-import pathlib
-import random
-import time
-from argparse import ArgumentParser
-from collections import namedtuple
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Tuple
 
-import numpy as np
-import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
+import wandb
 from fcdd.models.bases import ReceptiveNet
 from pytorch_lightning import LightningModule
-from pytorch_lightning.loggers import WandbLogger
 from torch import Tensor
 from torch.hub import load_state_dict_from_url
-from torch.profiler import tensorboard_trace_handler
-
-import mvtec_dataset_dev01 as mvtec_dataset_dev01
-import wandb
-from common_dev01 import create_seed, seed_int2str, seed_str2int
-from data_dev01 import (ANOMALY_TARGET, NOMINAL_TARGET,
-                        generate_dataloader_images,)
 
 
 OPTIMIZER_SGD = 'sgd'

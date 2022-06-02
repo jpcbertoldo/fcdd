@@ -38,7 +38,6 @@ parser.set_defaults(
     seeds=None,
     classes=None,
     # files
-    # -
     # wandb
     wandb_project="mvtec-debug",
     wandb_tags=["dev01",],
