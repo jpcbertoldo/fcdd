@@ -37,6 +37,8 @@ from data_dev01 import (ANOMALY_TARGET, NOMINAL_TARGET, BatchCompose,
                         generate_dataloader_preview_single_fig,
                         make_multibatch, make_multibatch_use_same_random_state)
 
+DATASET_NAME = "mvtec"
+
 CLASSES_LABELS = (
     'bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather',
     'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor',
@@ -1149,16 +1151,16 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
     
     def __init__(
         self, 
-        root: str, 
+        root: Path, 
         normal_class: int, 
-        preproc: str, 
+        preprocessing: str, 
         supervise_mode: str, 
         batch_size: int,
         nworkers: int,
         pin_memory: bool,
         seed: int,
-        raw_shape: Tuple[int, int, int] = (240, 240), 
-        net_shape: Tuple[int, int, int] = (224, 224),
+        raw_shape: Tuple[int, int], 
+        net_shape: Tuple[int, int],
         real_anomaly_limit: int = None, 
     ):
         super().__init__()
@@ -1174,7 +1176,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         validate_shape(net_shape)
                 
         # validate preproc
-        assert preproc in PREPROCESSING_CHOICES, f'`preproc` must be one of {PREPROCESSING_CHOICES}'
+        assert preprocessing in PREPROCESSING_CHOICES, f'`preproc` must be one of {PREPROCESSING_CHOICES}'
         assert supervise_mode in SUPERVISE_MODES, f'`supervise_mode` must be one of {SUPERVISE_MODES}'
 
         if supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
@@ -1187,7 +1189,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         self.root = root
         
         # modes and their subparameters        
-        self.preproc = preproc
+        self.preprocessing = preprocessing
         self.supervise_mode = supervise_mode
         self.real_anomaly_limit = real_anomaly_limit
         
@@ -1239,7 +1241,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         
         # ========================================== PREPROCESSING ==========================================
         # different types of preprocessing pipelines, 'lcn' is for using LCN, 'aug{X}' for augmentations
-        if preproc == PREPROCESSING_LCNAUG1:
+        if preprocessing == PREPROCESSING_LCNAUG1:
             
             # img and gtmap - train
             # my own implmentation of RandomChoice
@@ -1270,7 +1272,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             ])
             
         else:
-            raise ValueError(f'Preprocessing pipeline `{preproc}` is not known.')
+            raise ValueError(f'Preprocessing pipeline `{preprocessing}` is not known.')
 
         self.online_instance_replacer = BatchOnlineInstanceReplacer(
             supervise_mode=supervise_mode,
@@ -1284,14 +1286,14 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         self.test_img_transform = self._validate_batch_after_transform(self.test_img_transform)
         
         self.train_mvtec = MvTec(
-            root=self.root, 
+            root=str(self.root), 
             split=SPLIT_TRAIN, 
             shape=self.raw_shape, 
             normal_class=self.normal_class,
         )
         
         self.test_mvtec = MvTec(
-            root=self.root, 
+            root=str(self.root), 
             split=SPLIT_TEST, 
             shape=self.raw_shape, 
             normal_class=self.normal_class,
@@ -1529,7 +1531,7 @@ if __name__ == "__main__":
     datamodule = MVTecAnomalyDetectionDataModule(
         root="../../data/datasets",
         normal_class=0,
-        preproc=PREPROCESSING_LCNAUG1,
+        preprocessing=PREPROCESSING_LCNAUG1,
         supervise_mode=SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
         # supervise_mode=SUPERVISE_MODE_REAL_ANOMALY,
         batch_size=128,

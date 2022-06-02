@@ -1010,14 +1010,14 @@ if __name__ == "__main__":
         transformed_img_batch = bcompose(img_batch)
 
     elif args.test == "make-multi-batch-resize":
-        mask_batch = ((img_batch.sum(dim=1) > img_batch.sum(dim=1).mean(dim=(1, 2), keepdim=True)) * 1.).unsqueeze(1)
+        mask_batch = img_batch.clone()
         
         from torchvision.transforms import InterpolationMode, Resize 
         multibatch_transform = make_multibatch(Resize(size=(48, 48), interpolation=InterpolationMode.NEAREST))
         transformed_img_batch, transformed_mask_batch = multibatch_transform(img_batch, mask_batch)
 
     elif args.test == "make-multi-batch-randomcrop":
-        mask_batch = ((img_batch.sum(dim=1) > img_batch.sum(dim=1).mean(dim=(1, 2), keepdim=True)) * 1.).unsqueeze(1)
+        mask_batch = img_batch.clone()
         
         multibatch_transform = make_multibatch_use_same_random_state(BatchRandomCrop(size=(24, 24), generator=create_numpy_random_generator(0)))
         transformed_img_batch, transformed_mask_batch = multibatch_transform(img_batch, mask_batch)
@@ -1070,6 +1070,7 @@ if __name__ == "__main__":
             ax.set_title("original")
             
             try:
+                mask_batch
                 fig, ax = plt.subplots(1, 1)
                 ax.imshow(mask_batch[idx].numpy().transpose(1, 2, 0))
                 ax.set_title("original (mask)")
@@ -1081,6 +1082,7 @@ if __name__ == "__main__":
             ax.set_title("transformed")
             
             try:
+                transformed_mask_batch
                 fig, ax = plt.subplots(1, 1)
                 ax.imshow(transformed_mask_batch[idx].numpy().transpose(1, 2, 0))
                 ax.set_title("transformed (mask)")
