@@ -72,7 +72,7 @@ BASE_FOLDER = 'mvtec'
 
 
 def confetti_noise(
-    size: torch.Size, 
+    shape: Tuple[int, int, int, int], 
     p: float = 0.01,
     blobshaperange: Tuple[Tuple[int, int], Tuple[int, int]] = ((3, 3), (5, 5)),
     fillval: int = 255, 
@@ -83,7 +83,7 @@ def confetti_noise(
     onlysquared: bool = True, 
     rotation: int = 0,
     colorrange: Tuple[int, int] = None, 
-    random_generator: numpy.random.Generator = None,  # it should never be none, but i put it like this to not change the signature
+    generator: numpy.random.Generator = None,  # it should never be none, but i put it like this to not change the signature
 ) -> Tensor:
     """
     Generates "confetti" noise, as seen in the paper.
@@ -110,25 +110,24 @@ def confetti_noise(
         First value can be negative.
     :return: torch tensor containing n noise images. Either (n x c x h x w) or (n x h x w), depending on size.
     """
-    assert random_generator is not None, f"random_generator must not be None"
-    assert len(size) == 4, f'size must be n x c x h x w, but is {size}'
+    assert generator is not None, f"generator must not be None"
+    assert len(shape) == 4, f'size must be n x c x h x w, but is {shape}'
+    batchsize, nchannels, height, width = shape
+
     if isinstance(blobshaperange[0], int) and isinstance(blobshaperange[1], int):
         blobshaperange = (blobshaperange, blobshaperange)
     assert len(blobshaperange) == 2
     assert len(blobshaperange[0]) == 2 and len(blobshaperange[1]) == 2
-    assert colorrange is None or len(size) == 4 and size[1] == 3
-    out_size = size
+    assert colorrange is None or shape[1] == 3
+    out_size = shape
     colors = []
-    if len(size) == 3:
-        size = (size[0], 1, size[1], size[2])  # add channel dimension
-    else:
-        size = tuple(size)  # Tensor(torch.size) -> tensor of shape size, Tensor((x, y)) -> Tensor with 2 elements x & y
-    mask = (torch.rand((size[0], size[2], size[3])) < p).unsqueeze(1)  # mask[i, j, k] == 1 for center of blob
+    shape = tuple(shape)  # Tensor(torch.size) -> tensor of shape size, Tensor((x, y)) -> Tensor with 2 elements x & y
+    mask = (torch.rand((shape[0], shape[2], shape[3])) < p).unsqueeze(1)  # mask[i, j, k] == 1 for center of blob
     while ensureblob and (mask.view(mask.size(0), -1).sum(1).min() == 0):
         idx = (mask.view(mask.size(0), -1).sum(1) == 0).nonzero().squeeze()
         s = idx.size(0) if len(idx.shape) > 0 else 1
-        mask[idx] = (torch.rand((s, 1, size[2], size[3])) < p)
-    res = torch.empty(size).fill_(backval).int()
+        mask[idx] = (torch.rand((s, 1, shape[2], shape[3])) < p)
+    res = torch.empty(shape).fill_(backval).int()
     idx = mask.nonzero()  # [(idn, idz, idy, idx), ...] = indices of blob centers
     if idx.reshape(-1).size(0) == 0:
         return torch.zeros(out_size).int()
@@ -157,7 +156,7 @@ def confetti_noise(
             )[:, None].repeat(1, nid.reshape(-1, nid.size(-1)).size(0)).int()
             colors.append(col)
         nid = nid.reshape(-1, extends.size(1))
-        nid = torch.max(torch.min(nid, torch.LongTensor(size) - 1), torch.LongTensor([0, 0, 0, 0]))
+        nid = torch.max(torch.min(nid, torch.LongTensor(shape) - 1), torch.LongTensor([0, 0, 0, 0]))
         nidx.append(nid)
     idx = torch.cat(nidx)  # all pixel indices that blobs cover, not only center indices
     shp = res[idx.transpose(0, 1).numpy()].shape
@@ -188,7 +187,7 @@ def confetti_noise(
         res = res.unsqueeze(1) if res.dim() != 4 else res
         res = res.transpose(1, 3).transpose(1, 2)
         for pick, blbctr in zip(picks, mask.nonzero()):
-            rot = random_generator.uniform(-rotation, rotation)
+            rot = generator.uniform(-rotation, rotation)
             p1, p2 = all_shps[pick]
             dims = (
                 blbctr[0],
@@ -318,7 +317,7 @@ class BatchOnlineInstanceReplacer(NumpyRandomTransformMixin, MultiBatchTransform
                 awgn=0, 
                 rotation=45, 
                 colorrange=(-256, 0),
-                random_generator=self.generator,
+                generator=self.generator,
             )
             generated_noise = confetti_noise(
                 imgs.shape, 
@@ -328,7 +327,7 @@ class BatchOnlineInstanceReplacer(NumpyRandomTransformMixin, MultiBatchTransform
                 clamp=False, 
                 awgn=0, 
                 rotation=45,
-                random_generator=self.generator,
+                generator=self.generator,
             )
             generated_noise = generated_noise_rgb + generated_noise
             # generated_noise = smooth_noise(generated_noise, 25, 5, 1.0)
@@ -1112,23 +1111,30 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         """this decorate the transforms to make sure they are not breaking basic stuff"""
     
         @functools.wraps(transform)
-        def wrapper(*batch) -> Tuple[Tensor, Tensor, Tensor]:
-            
-            ret = transform(*batch)
+        def wrapper(*batches) -> Tuple[Tensor, Tensor, Tensor]:
             
             img_: Tensor
             target_: Tensor
             gtmap_: Tensor
-
-            if len(ret) == 1:
-                img_ = ret
-            elif len(ret) == 2:
-                img_, gtmap_ = ret
-            elif len(ret) == 3:
-                img_, target_, gtmap_ = ret
-            else:
-                raise Exception(f"{len(ret)}")
             
+            # the number of batches can be 1, 2, 3
+            # 1: only img transform
+            # 2: img and gtmap transform
+            # 3: img, gtmap and target transform
+            if len(batches) == 1:
+                img_ = transform(*batches)
+                ret = (img_,)
+                
+            else:
+                ret = transform(*batches)
+                assert len(ret) == len(batches), f"transform: {transform}: Expected transform to return {len(batches)} elements, got {len(ret)}"
+
+                if len(ret) == 2:
+                    img_, gtmap_ = ret
+                    
+                elif len(ret) == 3:
+                    img_, target_, gtmap_ = ret
+                
             MVTecAnomalyDetectionDataModule._validate_batch_img(img_)
             
             if len(ret) >= 2:
@@ -1143,8 +1149,11 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                 assert torch.logical_or(
                     torch.logical_and(target_, gtmap_.sum(dim=(1, 2, 3)) > 0),
                     torch.logical_and(~target_, gtmap_.sum(dim=(1, 2, 3)) == 0),
-                )
-                                 
+                ).all()
+                      
+            if len(ret) == 1:
+                return img_
+            
             return ret
             
         return wrapper
@@ -1469,6 +1478,9 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             persistent_workers=False,
             generator=generator,
         )
+        
+    def val_dataloader(self, *args, **kwargs):
+        return self.test_dataloader(*args, **kwargs)
 
     def test_dataloader(self, batch_size_override: Optional[int] = None, embed_preprocessing: bool = False):
         """batch_size_override: override the batch size for special purposes like generating the preview faster"""
