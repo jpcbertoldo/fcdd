@@ -28,11 +28,11 @@ from torchvision.datasets.imagenet import check_integrity
 from tqdm import tqdm
 
 from common_dev01 import (create_numpy_random_generator,
-                          create_python_random_generator)
+                          create_python_random_generator, create_torch_random_generator)
 from data_dev01 import (ANOMALY_TARGET, NOMINAL_TARGET, BatchCompose,
                         BatchGaussianNoise, BatchLocalContrastNormalization,
                         BatchRandomChoice, BatchRandomCrop, LightningDataset, MultiBatchTransformMixin,
-                        MultiBatchdRandomChoice, NumpyRandomTransformMixin,
+                        MultiBatchdRandomChoice, RandomTransformMixin,
                         generate_dataloader_images,
                         generate_dataloader_preview_single_fig,
                         make_multibatch, make_multibatch_use_same_random_state)
@@ -73,7 +73,7 @@ BASE_FOLDER = 'mvtec'
 
 def confetti_noise(
     shape: Tuple[int, int, int, int], 
-    p: float = 0.01,
+    probability_threshold: float = 0.01,
     blobshaperange: Tuple[Tuple[int, int], Tuple[int, int]] = ((3, 3), (5, 5)),
     fillval: int = 255, 
     backval: int = 0, 
@@ -82,8 +82,10 @@ def confetti_noise(
     clamp: bool = False, 
     onlysquared: bool = True, 
     rotation: int = 0,
-    colorrange: Tuple[int, int] = None, 
-    generator: numpy.random.Generator = None,  # it should never be none, but i put it like this to not change the signature
+    colorrange: Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]] = None, 
+    numpy_generator: numpy.random.Generator = None,  # it should never be none, but i put it like this to not change the signature
+    torch_generator: torch.Generator = None,  # it should never be none, but i put it like this to not change the signature
+    dtype=torch.float32,
 ) -> Tensor:
     """
     Generates "confetti" noise, as seen in the paper.
@@ -110,71 +112,153 @@ def confetti_noise(
         First value can be negative.
     :return: torch tensor containing n noise images. Either (n x c x h x w) or (n x h x w), depending on size.
     """
-    assert generator is not None, f"generator must not be None"
+    assert numpy_generator is not None, f"generator must not be None"
+    assert torch_generator is not None, f"generator must not be None"
+    
+    assert isinstance(shape, tuple), f"shape must be a tuple, got {type(shape)}"
     assert len(shape) == 4, f'size must be n x c x h x w, but is {shape}'
     batchsize, nchannels, height, width = shape
 
-    if isinstance(blobshaperange[0], int) and isinstance(blobshaperange[1], int):
-        blobshaperange = (blobshaperange, blobshaperange)
-    assert len(blobshaperange) == 2
-    assert len(blobshaperange[0]) == 2 and len(blobshaperange[1]) == 2
-    assert colorrange is None or shape[1] == 3
-    out_size = shape
-    colors = []
-    shape = tuple(shape)  # Tensor(torch.size) -> tensor of shape size, Tensor((x, y)) -> Tensor with 2 elements x & y
-    mask = (torch.rand((shape[0], shape[2], shape[3])) < p).unsqueeze(1)  # mask[i, j, k] == 1 for center of blob
-    while ensureblob and (mask.view(mask.size(0), -1).sum(1).min() == 0):
-        idx = (mask.view(mask.size(0), -1).sum(1) == 0).nonzero().squeeze()
-        s = idx.size(0) if len(idx.shape) > 0 else 1
-        mask[idx] = (torch.rand((s, 1, shape[2], shape[3])) < p)
-    res = torch.empty(shape).fill_(backval).int()
-    idx = mask.nonzero()  # [(idn, idz, idy, idx), ...] = indices of blob centers
-    if idx.reshape(-1).size(0) == 0:
-        return torch.zeros(out_size).int()
+    assert len(blobshaperange) == 2, f"blobshaperange must be a tuple of two tuples of two ints, but is {blobshaperange}"
+    (heightrange, widthrange) = blobshaperange
+    
+    assert isinstance(heightrange, tuple) and isinstance(widthrange, tuple), f"blobshaperange must be a tuple of two tuples of two ints, but is {blobshaperange}"
+    assert len(heightrange) == 2, f"heightrange must be (h0, h1), but is {heightrange}"
+    assert len(widthrange) == 2, f"widthrange must be (w0, w1), but is {widthrange}"
+    (hmin, hmax) = heightrange
+    (wmin, wmax) = widthrange
+    
+    assert 0 < hmin <= hmax < height, f"heightrange must be (h0, h1) with 0 < h0 <= h1 < h, but is {heightrange}"
+    assert 0 < wmin <= wmax < width, f"widthrange must be (w0, w1) with 0 < w0 <= w1 < w, but is {widthrange}"
+    
+    if colorrange is not None:
+        assert nchannels == 3, f"colorrange can only be used with 3 channels, but is {colorrange} and {nchannels}"
+        assert len(colorrange) == 2, f"colorrange must be a tuple of two tuples of three ints, but is {colorrange}"
+    
+    mask_shape = (batchsize, 1, height, width)
+    
+    # mask[i, j, k] == 1 for center of blob
+    mask = (torch.rand(size=mask_shape, generator=torch_generator, dtype=dtype) < probability_threshold)
+    
+    nblobs_persample = mask.view(batchsize, -1).sum(1)
 
-    all_shps = [
-        (x, y) for x in range(blobshaperange[0][0], blobshaperange[1][0] + 1)
-        for y in range(blobshaperange[0][1], blobshaperange[1][1] + 1) if not onlysquared or x == y
+    while ensureblob and (nblobs_persample.min() == 0):
+        # nonzero returns a 2-D tensor where each row is the index for a nonzero value.
+        idx_zero_blob_centers = (nblobs_persample == 0).nonzero().squeeze()
+        n_left = idx_zero_blob_centers.size(0) if len(idx_zero_blob_centers.shape) > 0 else 1
+        rand_shape = (n_left, height, width)
+        mask[idx_zero_blob_centers] = (torch.rand(rand_shape, dtype=dtype) < probability_threshold).unsqueeze(1)
+        nblobs_persample = mask.view(batchsize, -1).sum(1)
+    
+    res = torch.full(size=shape, fill_value=backval, dtype=dtype)
+    
+    # [(idn, idz, idy, idx), ...] = indices of blob centers \in int^[batchsize, 4]
+    # idz should always be 0 since we only have one channel
+    blob_centers = mask.nonzero()  
+    
+    # if there are no blobs at all
+    if blob_centers.reshape(-1).size(0) == 0:
+        return torch.zeros(size=shape, dtype=dtype)
+
+    all_shapes = [
+        (x, y) 
+        for x in range(wmin, wmax + 1)
+        for y in range(hmin, hmax + 1) 
+        if not onlysquared or x == y
     ]
-    picks = torch.FloatTensor(idx.size(0)).uniform_(0, len(all_shps)).int()  # for each blob center pick a shape
+    
+    nshapes = len(all_shapes)
+    ncenters = blob_centers.size(0)
+    picked_shapes = torch.randint(size=(ncenters,), low=0, high=nshapes, dtype=torch.int64, generator=torch_generator)
     nidx = []
-    for n, blobshape in enumerate(all_shps):
-        if (picks == n).sum() < 1:
+    blob_colors = []
+    for shape_idx, blobshape in enumerate(all_shapes):
+        
+        npicked = (picked_shapes == shape_idx).sum()
+        if npicked < 1:
             continue
+        
         bhs = range(-(blobshape[0] // 2) if blobshape[0] % 2 != 0 else -(blobshape[0] // 2) + 1, blobshape[0] // 2 + 1)
         bws = range(-(blobshape[1] // 2) if blobshape[1] % 2 != 0 else -(blobshape[1] // 2) + 1, blobshape[1] // 2 + 1)
         extends = torch.stack([
             torch.zeros(len(bhs) * len(bws)).long(),
             torch.zeros(len(bhs) * len(bws)).long(),
             torch.arange(bhs.start, bhs.stop).repeat(len(bws)),
-            torch.arange(bws.start, bws.stop).unsqueeze(1).repeat(1, len(bhs)).reshape(-1)
+            torch.arange(bws.start, bws.stop).unsqueeze(1).repeat(1, len(bhs)).reshape(-1),
         ]).transpose(0, 1)
-        nid = idx[picks == n].unsqueeze(1) + extends.unsqueeze(0)
-        if colorrange is not None:
-            col = torch.randint(
-                colorrange[0], colorrange[1], (3, )
-            )[:, None].repeat(1, nid.reshape(-1, nid.size(-1)).size(0)).int()
-            colors.append(col)
-        nid = nid.reshape(-1, extends.size(1))
-        nid = torch.max(torch.min(nid, torch.LongTensor(shape) - 1), torch.LongTensor([0, 0, 0, 0]))
+        # nid \in int^[number_blobs_of_this_size, blob_height * blob_width, 4]
+        # and "4" to the indexes in the image being generated where there should be some value
+        # i.e. [instance index, channel index, height index, width index]
+        # blob_height * blob_width is the number of pixels in each blobs
+        # number_blobs_of_this_size  ...
+        nid = blob_centers[picked_shapes == shape_idx].unsqueeze(1) + extends.unsqueeze(0)
+        (_, npixels_perblob, _) = nid.shape
+    
+        # merge the axis `subbatchsize` and `npixels_perblob`
+        # "4" is the number of axis in shape
+        # result: list of all indices that the blobs cove in the current *subbatch*
+        nid = nid.reshape(-1, 4) 
+        
+        # make sure all the index values are valid
+        nid = torch.max(torch.min(nid, torch.tensor(shape) - 1), torch.tensor([0, 0, 0, 0]))
         nidx.append(nid)
-    idx = torch.cat(nidx)  # all pixel indices that blobs cover, not only center indices
-    shp = res[idx.transpose(0, 1).numpy()].shape
+        
+        # append the respective color of these blobs
+        if colorrange is not None:
+            colormin, colormax = colorrange
+            # old = torch.randint(low=colormin, high=colormax, size=(nchannels,))[:, None].repeat(1, npixels_filled.size(0)).int()
+            blobcolor = torch.randint(
+                low=colormin, 
+                high=colormax, 
+                size=(npicked, nchannels,),
+                dtype=dtype, 
+                generator=torch_generator,
+            ).repeat(npixels_perblob, 1)
+            blob_colors.append(blobcolor)
+        
+    # all pixel indices that blobs cover, not only center indices
+    nidx = torch.cat([nid.reshape(-1, 4) for nid in nidx]) 
+    nblob_pixels = nidx.shape[0]
+    
+    # this is really necessary because these have 
+    # to be in the format [4, n_pixels]
+    # and it doesnt work with tensors for indexing 
+    # so this numpy() is necessary, and it will be run 
+    # before the data is moved to the GPU so it doesnt matter
+    nidx = nidx.transpose(0, 1).numpy()
+    
+    def torchrandn(size_):
+        return torch.randn(size=size_, dtype=dtype, generator=torch_generator)
+    
     if colorrange is not None:
-        colors = torch.cat(colors, dim=1)
-        gnoise = (torch.randn(3, *shp) * awgn).int() if awgn != 0 else (0, 0, 0)
-        res[idx.transpose(0, 1).numpy()] = colors[0] + gnoise[0]
-        res[(idx + torch.LongTensor((0, 1, 0, 0))).transpose(0, 1).numpy()] = colors[1] + gnoise[1]
-        res[(idx + torch.LongTensor((0, 2, 0, 0))).transpose(0, 1).numpy()] = colors[2] + gnoise[2]
+        # this should be the same legth as nidx, containing each pixel's color 
+        blob_colors = torch.cat(blob_colors, dim=0).transpose(0, 1)
+        
+        # they are different type but the indexing will work (check the shape)
+        if awgn == 0:
+            gnoise = (0, 0, 0)
+
+        else:
+            gnoise = awgn * torchrandn(size_=(3, nblob_pixels,))
+        
+        for channel_idx in range(nchannels):
+            pixel_select = nidx + np.array((0, channel_idx, 0, 0))[:, None]
+            res[pixel_select] = blob_colors[channel_idx] + gnoise[channel_idx] 
+            
     else:
-        gnoise = (torch.randn(shp) * awgn).int() if awgn != 0 else 0
-        res[idx.transpose(0, 1).numpy()] = torch.ones(shp).int() * fillval + gnoise
-        res = res[:, 0, :, :]
-        if len(out_size) == 4:
-            res = res.unsqueeze(1).repeat(1, out_size[1], 1, 1)
+        if awgn == 0:
+            gnoise = 0
+        else:
+            gnoise = awgn * torchrandn(size_=(nblob_pixels,), )
+            
+        res[nidx] = torch.full(size=(nblob_pixels,), fill_value=fillval, dtype=dtype,) + gnoise
+        # res = res.repeat(1, nchannels, 1, 1)
+        
     if clamp:
         res = res.clamp(backval, fillval) if backval < fillval else res.clamp(fillval, backval)
+        
     mask = mask[:, 0, :, :]
+    
     if rotation > 0:
         
         def ceil(x: float):
@@ -183,26 +267,31 @@ def confetti_noise(
         def floor(x: float):
             return int(np.floor(x))
         
-        idx = mask.nonzero()
-        res = res.unsqueeze(1) if res.dim() != 4 else res
+        # [b, c, h, w] -> [b, w, h, c] -> [b, h, w, c]
         res = res.transpose(1, 3).transpose(1, 2)
-        for pick, blbctr in zip(picks, mask.nonzero()):
-            rot = generator.uniform(-rotation, rotation)
-            p1, p2 = all_shps[pick]
+        
+        for picked_shape_idx, blob_center in zip(picked_shapes, mask.nonzero()):
+            blobh, blobw = all_shapes[picked_shape_idx]
+            rot = numpy_generator.uniform(-rotation, rotation)
+            nblobs = blob_center[0]
             dims = (
-                blbctr[0],
-                slice(max(blbctr[1] - floor(0.75 * p1), 0), min(blbctr[1] + ceil(0.75 * p1), res.size(1) - 1)),
-                slice(max(blbctr[2] - floor(0.75 * p2), 0), min(blbctr[2] + ceil(0.75 * p2), res.size(2) - 1)),
+                nblobs,
+                slice(max(blob_center[1] - floor(0.75 * blobh), 0), min(blob_center[1] + ceil(0.75 * blobh), res.size(1) - 1)),
+                slice(max(blob_center[2] - floor(0.75 * blobw), 0), min(blob_center[2] + ceil(0.75 * blobw), res.size(2) - 1)),
                 ...
             )
             res[dims] = torch.from_numpy(
                 im_rotate(
-                    res[dims].float(), rot, order=0, cval=0, center=(blbctr[1]-dims[1].start, blbctr[2]-dims[2].start),
+                    res[dims].float(), 
+                    rot, 
+                    order=0, 
+                    cval=0, 
+                    center=(blob_center[1]-dims[1].start, blob_center[2]-dims[2].start),
                     clip=False
-                )
-            ).int()
+                ),
+            ).float()
+        # [b, c, h, w] <- [b, w, h, c] <- [b, h, w, c]
         res = res.transpose(1, 2).transpose(1, 3)
-        res = res.squeeze() if len(out_size) != 4 else res
     return res
 
 
@@ -235,11 +324,12 @@ def merge_image_and_synthetic_noise(
         return anom, gt
     
 
-class BatchOnlineInstanceReplacer(NumpyRandomTransformMixin, MultiBatchTransformMixin):
+class BatchOnlineInstanceReplacer(RandomTransformMixin, MultiBatchTransformMixin):
     
     invert_threshold = 0.025
 
-    @NumpyRandomTransformMixin._init_generator
+    @RandomTransformMixin._init_generator
+    @RandomTransformMixin._init_torch_generator
     def __init__(self, supervise_mode: str,p: float = 0.5, inplace=False):
         """
         This class is used as a Transform parameter for torchvision datasets.
@@ -311,23 +401,24 @@ class BatchOnlineInstanceReplacer(NumpyRandomTransformMixin, MultiBatchTransform
             generated_noise_rgb = confetti_noise(
                 imgs.shape, 
                 0.000018, 
-                ((8, 8), (54, 54)), 
+                ((8, 54), (8, 54)), 
                 fillval=255, 
                 clamp=False, 
-                awgn=0, 
                 rotation=45, 
                 colorrange=(-256, 0),
-                generator=self.generator,
+                numpy_generator=self.generator,
+                torch_generator=self.torch_generator,
             )
             generated_noise = confetti_noise(
                 imgs.shape, 
                 0.000012, 
-                ((8, 8), (54, 54)), 
+                ((8, 54), (8, 54)), 
                 fillval=-255, 
                 clamp=False, 
                 awgn=0, 
                 rotation=45,
-                generator=self.generator,
+                numpy_generator=self.generator,
+                torch_generator=self.torch_generator,
             )
             generated_noise = generated_noise_rgb + generated_noise
             # generated_noise = smooth_noise(generated_noise, 25, 5, 1.0)
@@ -349,7 +440,7 @@ class BatchOnlineInstanceReplacer(NumpyRandomTransformMixin, MultiBatchTransform
             imgs_new: Tensor = torch.tensor([], dtype=imgs.dtype, device=imgs.device)
             labels_new: Tensor = torch.tensor([], dtype=labels.dtype, device=labels.device)
             gtmaps_new: Tensor = torch.tensor([], dtype=gtmaps.dtype, device=gtmaps.device)
-            gtmaps_new.tolist()
+            # gtmaps_new.tolist()
             
             for imgs_, labels_, gtmaps_ in self.real_anomaly_dataloader:
                 
@@ -1286,6 +1377,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         self.online_instance_replacer = BatchOnlineInstanceReplacer(
             supervise_mode=supervise_mode,
             generator=create_numpy_random_generator(self.seed),
+            torch_generator=create_torch_random_generator(self.seed),
         )
         
         self.online_instance_replacer = self._validate_batch_after_transform(self.online_instance_replacer)
