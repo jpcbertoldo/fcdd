@@ -2,6 +2,7 @@
 # coding: utf-8
 
 
+import functools
 from pathlib import Path
 from typing import Tuple
 
@@ -44,7 +45,6 @@ class FCDD_CNN224_VGG(LightningModule):
         # model
         in_shape: Tuple[int, int, int], 
         gauss_std: float,
-        pixel_level_loss: bool,
         # optimizer
         optimizer_name: str,
         lr: float,
@@ -206,94 +206,102 @@ class FCDD_CNN224_VGG(LightningModule):
         
         inputs, labels, gtmaps = batch
         anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
+        self.log("test/loss", loss, on_step=False, on_epoch=True)
+        
+        # it hasnt been upsampled
+        if anomaly_scores_maps.shape[-2:] != gtmaps.shape[-2:]:
+            anomaly_scores_maps = self._receptive_field_net.receptive_upsample(anomaly_scores_maps, std=self.hparams["gauss_std"], reception=False, cpu=False) 
+        
+        scores_normal = anomaly_scores_maps[gtmaps == 0].mean()
+        scores_anomaly = anomaly_scores_maps[gtmaps == 1].mean()
+        self.log("test/score/normal", scores_normal, on_step=False, on_epoch=True)
+        self.log("test/score/anomaly", scores_anomaly, on_step=False, on_epoch=True)
         
         loss_normal = loss_maps[gtmaps == 0].mean()
         loss_anomaly = loss_maps[gtmaps == 1].mean()
         
         self.log("test/loss/normal", loss_normal, on_step=False, on_epoch=True)
         self.log("test/loss/anomaly", loss_anomaly, on_step=False, on_epoch=True)
-        self.log("test/loss", loss, on_step=False, on_epoch=True)
         
         return inputs, labels, gtmaps, anomaly_scores_maps, loss_maps, loss
     
     def test_epoch_end(self, test_step_outputs):  
-        # transpose the list of lists
+        # transpose the list of lists and concatenate the tensors on the first dimension (instances)
+        catdim0 = functools.partial(torch.cat, dim=0)
         inputs, labels, gtmaps, anomaly_scores_maps, loss_maps, loss = list(map(list, zip(*test_step_outputs)))
-        inputs = torch.cat(inputs, dim=0)
-        labels = torch.cat(labels, dim=0)
-        gtmaps = torch.cat(gtmaps, dim=0)
-        anomaly_scores_maps = torch.cat(anomaly_scores_maps, dim=0)
-        loss_maps = torch.cat(loss_maps, dim=0)
-        loss = torch.tensor(loss)
-        
+        inputs, labels, gtmaps, anomaly_scores_maps, loss_maps = list(map(catdim0, [
+            inputs, labels, gtmaps, anomaly_scores_maps, loss_maps
+        ]))
+        loss = torch.stack(loss)
+                
         # heatmap_generation()
         
         # maybe i have to use this again...
         #get_original_gtmaps_normal_class()
         
-        gtmap_roc = compute_gtmap_roc(
-            anomaly_scores=anomaly_scores_maps,
-            original_gtmaps=gtmaps,
-            net=self, 
-        )
-        single_save(self.logger.save_dir, 'test.gtmap_roc', gtmap_roc)
+        # gtmap_roc = compute_gtmap_roc(
+        #     anomaly_scores=anomaly_scores_maps,
+        #     original_gtmaps=gtmaps,
+        #     net=self, 
+        # )
+        # single_save(self.logger.save_dir, 'test.gtmap_roc', gtmap_roc)
         
-        gtmap_pr = compute_gtmap_pr(
-            anomaly_scores=anomaly_scores_maps,
-            original_gtmaps=gtmaps,
-            net=self, 
-        )
-        single_save(self.logger.save_dir, 'test.gtmap_pr', gtmap_pr)
+        # gtmap_pr = compute_gtmap_pr(
+        #     anomaly_scores=anomaly_scores_maps,
+        #     original_gtmaps=gtmaps,
+        #     net=self, 
+        # )
+        # single_save(self.logger.save_dir, 'test.gtmap_pr', gtmap_pr)
             
-        self.logger.experiment.log({
-            "test/rocauc": gtmap_roc["auc"],
-            "test/ap": gtmap_pr["ap"],
+        # self.logger.experiment.log({
+        #     "test/rocauc": gtmap_roc["auc"],
+        #     "test/ap": gtmap_pr["ap"],
             
-            # ========================== ROC CURVE ==========================
-            # copied from wandb.plot.roc_curve()
-            # debug=wandb.plot.roc_curve(),
-            "test/roc_curve": wandb.plot_table(
-                vega_spec_name="wandb/area-under-curve/v0",
-                data_table=wandb.Table(
-                    columns=["class", "fpr", "tpr"], 
-                    data=[
-                        ["anomalous", fpr_, tpr_] 
-                        for fpr_, tpr_ in zip(
-                            gtmap_roc["fpr"], 
-                            gtmap_roc["tpr"],
-                        )
-                    ],
-                ),
-                fields={"x": "fpr", "y": "tpr", "class": "class"},
-                string_fields={
-                    "title": "ROC curve",
-                    "x-axis-title": "False Positive Rate (FPR)",
-                    "y-axis-title": "True Positive Rate (TPR)",
-                },
-            ),
-            # ========================== PR CURVE ==========================
-            # copied from wandb.plot.pr_curve()
-            # debug=wandb.plot.pr_curve(),
-            "test/pr_curve": wandb.plot_table(
-                vega_spec_name="wandb/area-under-curve/v0",
-                data_table=wandb.Table(
-                    columns=["class", "recall", "precision"], 
-                    data=[
-                        ["anomalous", rec_, prec_] 
-                        for rec_, prec_ in zip(
-                            gtmap_pr["recall"], 
-                            gtmap_pr["precision"],
-                        )
-                    ],
-                ),
-                fields={"x": "recall", "y": "precision", "class": "class"},
-                string_fields={
-                    "title": "PR curve",
-                    "x-axis-title": "Recall",
-                    "y-axis-title": "Precision",
-                },
-            )
-        })
+        #     # ========================== ROC CURVE ==========================
+        #     # copied from wandb.plot.roc_curve()
+        #     # debug=wandb.plot.roc_curve(),
+        #     "test/roc_curve": wandb.plot_table(
+        #         vega_spec_name="wandb/area-under-curve/v0",
+        #         data_table=wandb.Table(
+        #             columns=["class", "fpr", "tpr"], 
+        #             data=[
+        #                 ["anomalous", fpr_, tpr_] 
+        #                 for fpr_, tpr_ in zip(
+        #                     gtmap_roc["fpr"], 
+        #                     gtmap_roc["tpr"],
+        #                 )
+        #             ],
+        #         ),
+        #         fields={"x": "fpr", "y": "tpr", "class": "class"},
+        #         string_fields={
+        #             "title": "ROC curve",
+        #             "x-axis-title": "False Positive Rate (FPR)",
+        #             "y-axis-title": "True Positive Rate (TPR)",
+        #         },
+        #     ),
+        #     # ========================== PR CURVE ==========================
+        #     # copied from wandb.plot.pr_curve()
+        #     # debug=wandb.plot.pr_curve(),
+        #     "test/pr_curve": wandb.plot_table(
+        #         vega_spec_name="wandb/area-under-curve/v0",
+        #         data_table=wandb.Table(
+        #             columns=["class", "recall", "precision"], 
+        #             data=[
+        #                 ["anomalous", rec_, prec_] 
+        #                 for rec_, prec_ in zip(
+        #                     gtmap_pr["recall"], 
+        #                     gtmap_pr["precision"],
+        #                 )
+        #             ],
+        #         ),
+        #         fields={"x": "recall", "y": "precision", "class": "class"},
+        #         string_fields={
+        #             "title": "PR curve",
+        #             "x-axis-title": "Recall",
+        #             "y-axis-title": "Precision",
+        #         },
+        #     )
+        # })
     
     # DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE
     
