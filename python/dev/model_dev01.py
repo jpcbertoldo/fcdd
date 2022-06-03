@@ -4,7 +4,7 @@
 
 import functools
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -38,7 +38,7 @@ class FCDD_CNN224_VGG(LightningModule):
     """
     """ Baseclass for FCDD networks, i.e. network without fully connected layers that have a spatial output """
     
-    MODEL_DIR = Path(__file__).parent.parent.parent / 'data' / 'models'  # todo make an arg?
+    MODEL_DIR = Path(__file__).parent.parent.parent / 'data' / 'models'
     
     def __init__(
         self, 
@@ -118,9 +118,12 @@ class FCDD_CNN224_VGG(LightningModule):
         self.conv_final = self._receptive_field_net._create_conv2d(512, 1, 1)
         
         self.save_hyperparameters()
+        
+        self._last_epoch_outputs = None
         pass
         
     def forward(self, x):
+        assert x.shape[-2:] == self.in_shape, f"{x.shape[1:]} != {self.in_shape}"
         x = self.features(x)
         x = self.conv_final(x)
         return x
@@ -130,10 +133,13 @@ class FCDD_CNN224_VGG(LightningModule):
         
         anomaly_score_maps = self(inputs) 
         
-        loss_maps = anomaly_score_maps ** 2
+        loss_maps = anomaly_score_maps = anomaly_score_maps ** 2
+        anomaly_score_maps = anomaly_score_maps.sqrt()
+        
         loss_maps = (loss_maps + 1).sqrt() - 1
         
         gauss_std = self.hparams["gauss_std"]
+        anomaly_score_maps = self._receptive_field_net.receptive_upsample(anomaly_score_maps, reception=True, std=gauss_std, cpu=False)
         loss_maps = self._receptive_field_net.receptive_upsample(loss_maps, reception=True, std=gauss_std, cpu=False)
         
         norm_loss_maps = (loss_maps * (1 - gtmaps))
@@ -188,6 +194,7 @@ class FCDD_CNN224_VGG(LightningModule):
         return [optimizer], [scheduler]     
         
     def training_step(self, batch, batch_idx):
+        
         inputs, labels, gtmaps = batch
         anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
         
@@ -196,89 +203,105 @@ class FCDD_CNN224_VGG(LightningModule):
             loss_normal = loss_maps[gtmaps == 0].mean()
             loss_anomaly = loss_maps[gtmaps == 1].mean()
             
-        self.log("train/loss/normal", loss_normal, on_step=False, on_epoch=True)
-        self.log("train/loss/anomaly", loss_anomaly, on_step=False, on_epoch=True)
+        self.log("train/loss-normal", loss_normal, on_step=False, on_epoch=True)
+        self.log("train/loss-anomaly", loss_anomaly, on_step=False, on_epoch=True)
         self.log("train/loss", loss, on_step=False, on_epoch=True)
         
         return loss
     
-    def test_step(self, batch, batch_idx):
+    def _val_test_step(self, batch, batch_idx, stage):
         
         inputs, labels, gtmaps = batch
         anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
-        self.log("test/loss", loss, on_step=False, on_epoch=True)
-        
-        # it hasnt been upsampled
-        if anomaly_scores_maps.shape[-2:] != gtmaps.shape[-2:]:
-            anomaly_scores_maps = self._receptive_field_net.receptive_upsample(anomaly_scores_maps, std=self.hparams["gauss_std"], reception=False, cpu=False) 
+        self.log(f"{stage}/loss", loss, on_step=False, on_epoch=True)
         
         scores_normal = anomaly_scores_maps[gtmaps == 0].mean()
         scores_anomaly = anomaly_scores_maps[gtmaps == 1].mean()
-        self.log("test/score/normal", scores_normal, on_step=False, on_epoch=True)
-        self.log("test/score/anomaly", scores_anomaly, on_step=False, on_epoch=True)
+        self.log(f"{stage}/score-normal", scores_normal, on_step=False, on_epoch=True)
+        self.log(f"{stage}/score-anomaly", scores_anomaly, on_step=False, on_epoch=True)
         
         loss_normal = loss_maps[gtmaps == 0].mean()
         loss_anomaly = loss_maps[gtmaps == 1].mean()
         
-        self.log("test/loss/normal", loss_normal, on_step=False, on_epoch=True)
-        self.log("test/loss/anomaly", loss_anomaly, on_step=False, on_epoch=True)
+        self.log(f"{stage}/loss-normal", loss_normal, on_step=False, on_epoch=True)
+        self.log(f"{stage}/loss-anomaly", loss_anomaly, on_step=False, on_epoch=True)
         
-        return inputs, labels, gtmaps, anomaly_scores_maps, loss_maps, loss
+        return dict(
+            inputs=inputs, 
+            labels=labels, 
+            gtmaps=gtmaps, 
+            anomaly_scores_maps=anomaly_scores_maps, 
+            loss_maps=loss_maps, 
+            loss=loss,
+        )
+        
+    def validation_step(self, batch, batch_idx):
+        return self._val_test_step(batch, batch_idx, stage="validate")
     
-    def test_epoch_end(self, test_step_outputs):  
-        # transpose the list of lists and concatenate the tensors on the first dimension (instances)
-        catdim0 = functools.partial(torch.cat, dim=0)
-        inputs, labels, gtmaps, anomaly_scores_maps, loss_maps, loss = list(map(list, zip(*test_step_outputs)))
-        inputs, labels, gtmaps, anomaly_scores_maps, loss_maps = list(map(catdim0, [
-            inputs, labels, gtmaps, anomaly_scores_maps, loss_maps
-        ]))
-        loss = torch.stack(loss)
-                
+    def validation_epoch_end(self, validation_step_outputs):
+        self.last_epoch_outputs = validation_step_outputs
+        
+    def test_step(self, batch, batch_idx):
+        return self._val_test_step(batch, batch_idx, stage="test")
+    
+    def test_epoch_end(self, test_step_outputs):
+        self.last_epoch_outputs = test_step_outputs
+        
+    # last_epoch_outputs --> make mixin
+    @property
+    def last_epoch_outputs(self) -> Dict[str, Tensor]:
+        """this is intended to be used by callbacks"""
+        if self._last_epoch_outputs is None:
+            return None
+        # it is clone to avoid any interference between callbacks
+        return {
+            k: v.clone()
+            for k, v in self._last_epoch_outputs.items()
+        }
+    
+    @last_epoch_outputs.setter
+    def last_epoch_outputs(self, steps_outputs: List[Dict[str, Tensor]]):
+        """gather all the pieces into a single dict"""
+        
+        if steps_outputs is None:
+            self._last_epoch_outputs = None
+            return
+        
+        assert isinstance(steps_outputs, list), f"last_epoch_outputs must be a list, got {type(steps_outputs)}"
+        assert len(steps_outputs) >= 1, f"last_epoch_outputs must have at least one element, got {len(steps_outputs)}"
+        assert all(isinstance(x, dict) for x in steps_outputs), f"last_epoch_outputs must be a list of dicts, got {steps_outputs}"
+        dict0 = steps_outputs[0]
+        keys = set(dict0.keys())
+        assert all(set(x.keys()) == keys for x in steps_outputs), f"last_epoch_outputs must have the same keys, got {steps_outputs}, keys={keys}"
+        
+        self._last_epoch_outputs = {
+            # step 3: transfer the tensor to the cpu to liberate the gpu memory
+            k: v.cpu() 
+            for k, v in {
+                # step 2: concatenate the tensors
+                k: (
+                    torch.stack(list_of_values, dim=0)
+                    if list_of_values[0].ndim == 0 else
+                    torch.cat(list_of_values, dim=0)
+                )
+                for k, list_of_values in {
+                    # step 1: gather the dicts values into lists (one list per key) ==> single dict
+                    k: [step_outputs[k] for step_outputs in steps_outputs]
+                    for k in keys
+                }.items()
+            }.items()
+        }
+        
+    def teardown(self, stage=None):
+        # make sure that the next stage doesnt get the old outputs
+        self.last_epoch_outputs = None
+    
         # heatmap_generation()
         
-        # maybe i have to use this again...
-        #get_original_gtmaps_normal_class()
-        
-        # gtmap_roc = compute_gtmap_roc(
-        #     anomaly_scores=anomaly_scores_maps,
-        #     original_gtmaps=gtmaps,
-        #     net=self, 
-        # )
-        # single_save(self.logger.save_dir, 'test.gtmap_roc', gtmap_roc)
-        
-        # gtmap_pr = compute_gtmap_pr(
-        #     anomaly_scores=anomaly_scores_maps,
-        #     original_gtmaps=gtmaps,
-        #     net=self, 
-        # )
-        # single_save(self.logger.save_dir, 'test.gtmap_pr', gtmap_pr)
-            
         # self.logger.experiment.log({
         #     "test/rocauc": gtmap_roc["auc"],
         #     "test/ap": gtmap_pr["ap"],
             
-        #     # ========================== ROC CURVE ==========================
-        #     # copied from wandb.plot.roc_curve()
-        #     # debug=wandb.plot.roc_curve(),
-        #     "test/roc_curve": wandb.plot_table(
-        #         vega_spec_name="wandb/area-under-curve/v0",
-        #         data_table=wandb.Table(
-        #             columns=["class", "fpr", "tpr"], 
-        #             data=[
-        #                 ["anomalous", fpr_, tpr_] 
-        #                 for fpr_, tpr_ in zip(
-        #                     gtmap_roc["fpr"], 
-        #                     gtmap_roc["tpr"],
-        #                 )
-        #             ],
-        #         ),
-        #         fields={"x": "fpr", "y": "tpr", "class": "class"},
-        #         string_fields={
-        #             "title": "ROC curve",
-        #             "x-axis-title": "False Positive Rate (FPR)",
-        #             "y-axis-title": "True Positive Rate (TPR)",
-        #         },
-        #     ),
         #     # ========================== PR CURVE ==========================
         #     # copied from wandb.plot.pr_curve()
         #     # debug=wandb.plot.pr_curve(),
@@ -304,16 +327,6 @@ class FCDD_CNN224_VGG(LightningModule):
         # })
     
     # DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE
-    
-    def anomaly_score(self, loss: Tensor) -> Tensor:
-        """ This assumes the loss is already the anomaly score. If this is not the case, reimplement the method! """
-        assert not self.training
-        return loss
-    
-    def reduce_ascore(self, ascore: Tensor) -> Tensor:
-        """ Reduces the anomaly score to be a score per image (detection). """
-        assert not self.training
-        return ascore.reshape(ascore.size(0), -1).mean(1)
     
     def set_reception(self, *args, **kwargs):
         return self._receptive_field_net.set_reception(*args, **kwargs)

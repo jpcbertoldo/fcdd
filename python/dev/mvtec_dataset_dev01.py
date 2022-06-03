@@ -1408,20 +1408,21 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         
-        if stage is None or stage == 'fit':       
-            
+        # case 'validate' is necessary it uses the test split to validate the model
+        if stage in (None, 'fit', 'validate'):
+        
             if self.train_mvtec.is_setup:
                 # avoid re-splitting the test set
                 return             
             
             self.train_mvtec.setup()
+
+            # 'validate' uses the test split to validate the model
+            self.test_mvtec.setup()
             
             if self.supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
                 
-                # this is needed for the real anomaly split
-                if not self.test_mvtec.is_setup:
-                    self.test_mvtec.setup()
-                
+                # this is needed for the real anomaly split                
                 print(f'using mode {self.supervise_mode} with real anomaly limit {self.real_anomaly_limit}, the anomalies used for training will be removed from the test set')
                 
                 n_anomaly_types = len(self.test_mvtec.anomaly_label_strings)
@@ -1521,14 +1522,15 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             img = self.train_img_transform(img)
             return img, target, gtmap
         
-        elif self.trainer.testing:
+        # elif self.trainer.testing or self.trainer.validating or self.trainer.sanity_checking:
+        elif self.trainer.testing or self.trainer.validating:
             img, gtmap = self.test_img_and_gtmap_transform(img, gtmap)
             img = self.test_img_transform(img)
             return img, target, gtmap
         
         else:
-            raise NotImplementedError(f'Unknown stage. self.training={self.training}, self.testing={self.testing}, self.validating={self.validating}, self.predicting={self.predicting}')
-            
+            raise NotImplementedError(f'Unknown stage. {self.trainer.state}')
+    
     def train_dataloader(self, batch_size_override: Optional[int] = None, embed_preprocessing: bool = False):
         """batch_size_override: override the batch size for special purposes like generating the preview faster"""
         
@@ -1556,7 +1558,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                 
                 return img[0], int(target[0]), gtmap[0]
             
-            dataset = EmbeddedPreprocessingDataset(dataset=dataset,transform=preprocessing,)
+            dataset = EmbeddedPreprocessingDataset(dataset=dataset, transform=preprocessing,)
         
         generator = torch.Generator()    
         generator.manual_seed(self.seed)
@@ -1620,18 +1622,6 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
 
 if __name__ == "__main__":
     
-    # mvtec = MvTec(
-    #     root="../../data/datasets", 
-    #     split=SPLIT_TEST, 
-    #     # split=SPLIT_TRAIN, 
-    #     normal_class=0,
-    #     # shape=(3, 100, 100),
-    #     shape=(3, 50, 50),
-    # )
-    # mvtec.prepare_data()
-    # mvtec.setup()
-    # pass
-
     datamodule = MVTecAnomalyDetectionDataModule(
         root="../../data/datasets",
         normal_class=0,

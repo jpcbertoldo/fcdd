@@ -20,7 +20,7 @@ parser.set_defaults(
     scheduler=model_dev01.SCHEDULER_LAMBDA,
     scheduler_paramaters=[0.985],
     # dataset
-    dataset=train_dev01.DATASET_MVTEC,
+    dataset=mvtec_dataset_dev01.DATASET_NAME,
     raw_shape=(260, 260),
     net_shape=(224, 224),
     batch_size=128,
@@ -48,8 +48,9 @@ parser.set_defaults(
     # pytorch lightning 
     lightning_accelerator=train_dev01.LIGHTNING_ACCELERATOR_GPU,
     lightning_ndevices=1,
-    lightning_strategy=train_dev01.LIGHTNING_STRATEGY_DDP,
+    lightning_strategy=train_dev01.LIGHTNING_STRATEGY_NONE,
     lightning_precision=train_dev01.LIGHTNING_PRECISION_32,
+    lightning_model_summary_max_depth=4,
 )
 args = parser.parse_args()
 train_dev01.args_validate_dataset_specific_choices(args)

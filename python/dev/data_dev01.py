@@ -82,7 +82,6 @@ class RandomTransformMixin:
         return wrapper
 
 
-
 class BatchTransformMixin:
     """
     Make sure that the argument given to the transform is a batch by checking the number of dimensions.
@@ -933,9 +932,6 @@ def generate_dataloader_preview_single_fig(
     
     return fig
 
-
-# about test: create option to use original gtmaps or not (resized gtmaps)
-# todo dont forget to manage channel dim (dont repeat indices 3 times)
 
 if __name__ == "__main__":
     import argparse
