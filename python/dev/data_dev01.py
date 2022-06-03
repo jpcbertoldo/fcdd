@@ -41,15 +41,23 @@ class LightningDataset(abc.ABC):
 # =============================================== TRANSFORM MIXINS ===============================================
 
 
-class NumpyRandomTransformMixin:
+class RandomTransformMixin:
     """
-    Mixin that will get a numpy.random.Generator from the init kwargs and make sure it is valid.
+    Mixin that will get random generators from the init kwargs and make sure it is valid.
+    "generator" implicitly refers to numpy.random.Generator
+    "torch_generator" refers to torch.Generator
     """
     
     def _grab_generator_from_kwargs(self, generator: np.random.Generator):
         assert generator is not None, "generator must be provided as a kwarg"
         assert isinstance(generator, np.random.Generator), f"generator must be a numpy.random.Generator, got {type(generator)}"
         self.generator = generator
+        
+    
+    def _grab_torch_generator_from_kwargs(self, torch_generator: torch.Generator):
+        assert torch_generator is not None, "torch_generator must be provided as a kwarg"
+        assert isinstance(torch_generator, torch.Generator), f"torch_generator must be a torch.Generator, got {type(generator)}"
+        self.torch_generator = torch_generator
         
     def _init_generator(__init__):
         """Make sure the generator is given as a kwarg at the init function."""
@@ -61,6 +69,18 @@ class NumpyRandomTransformMixin:
             __init__(self, *args, **kwargs)
         
         return wrapper
+        
+    def _init_torch_generator(__init__):
+        """Make sure the torch_generator is given as a kwarg at the init function."""
+        
+        @functools.wraps(__init__)
+        def wrapper(self, *args, **kwargs):
+            assert "torch_generator" in kwargs, "torch_generator must be provided"
+            self._grab_torch_generator_from_kwargs(kwargs.pop("torch_generator"))
+            __init__(self, *args, **kwargs)
+        
+        return wrapper
+
 
 
 class BatchTransformMixin:
@@ -235,7 +255,7 @@ class TransformsMixin:
 # =============================================== RANDOM CHOICE ===============================================
 
 
-class BatchRandomChoice(NumpyRandomTransformMixin, BatchTransformMixin, TransformsMixin):
+class BatchRandomChoice(RandomTransformMixin, BatchTransformMixin, TransformsMixin):
     """
     Pick a transformation randomly picked from a list for each instance in the batch. 
     This transform does not support torchscript.
@@ -300,7 +320,7 @@ class BatchRandomChoice(NumpyRandomTransformMixin, BatchTransformMixin, Transfor
         
         return output_batch
     
-    @NumpyRandomTransformMixin._init_generator
+    @RandomTransformMixin._init_generator
     @TransformsMixin._init_transforms
     def __init__(self):
         
@@ -325,7 +345,7 @@ class BatchRandomChoice(NumpyRandomTransformMixin, BatchTransformMixin, Transfor
         )
 
 
-class MultiBatchdRandomChoice(NumpyRandomTransformMixin, MultiBatchTransformMixin, TransformsMixin):
+class MultiBatchdRandomChoice(RandomTransformMixin, MultiBatchTransformMixin, TransformsMixin):
     """
     Pick a transformation randomly picked from a list for each instance in the batch. 
     This transform does not support torchscript.
@@ -416,7 +436,7 @@ class MultiBatchdRandomChoice(NumpyRandomTransformMixin, MultiBatchTransformMixi
         
         return return_batches
 
-    @NumpyRandomTransformMixin._init_generator
+    @RandomTransformMixin._init_generator
     @TransformsMixin._init_transforms
     def __init__(self, *args, **kwargs):
         self.ntransforms = len(self.transforms)
@@ -493,7 +513,7 @@ class MultiBatchCompose(MultiBatchTransformMixin, TransformsMixin):
 # =============================================== MISC BATCH TRANSFORMS ===============================================
 
 
-class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin):
+class BatchRandomCrop(BatchTransformMixin, RandomTransformMixin):
     """
     Cut crops of the same size in a batch; each has different positions.
 
@@ -513,7 +533,7 @@ class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin):
     Padding is not supported!
     """
     
-    @NumpyRandomTransformMixin._init_generator
+    @RandomTransformMixin._init_generator
     def __init__(self, size):
         super().__init__()
         self.size: Tuple[int, int] = tuple(T._setup_size(
@@ -596,7 +616,7 @@ class BatchRandomCrop(BatchTransformMixin, NumpyRandomTransformMixin):
         return self.crop(batch, i, j, self.size)         
     
             
-class BatchGaussianNoise(NumpyRandomTransformMixin, BatchTransformMixin):
+class BatchGaussianNoise(RandomTransformMixin, BatchTransformMixin):
     """
     Adds a gaussian noise based on the std of each image (multiplied by `std_factor`).
     Only ~50% of the pixels get noised (randomly selected).
@@ -622,7 +642,7 @@ class BatchGaussianNoise(NumpyRandomTransformMixin, BatchTransformMixin):
         # i can assume batch is 4d because of BatchTransformMixin._validate_before_and_after
         return batch + standard_gaussian_noise * mask * (std_factor * batch.std(dim=(1, 2, 3), keepdim=True))
     
-    @NumpyRandomTransformMixin._init_generator
+    @RandomTransformMixin._init_generator
     def __init__(self, mode: str = STD_MODE_AUTO_IMAGEWISE, std_factor: float = 1.):
         assert mode in self.STD_MODES, f"got {mode}, but expected one of {self.STD_MODES}"
         if mode == self.STD_MODE_AUTO_IMAGEWISE:
@@ -698,12 +718,12 @@ def make_multibatch(transform: Callable):
     return transform
 
 
-def make_multibatch_use_same_random_state(transform: NumpyRandomTransformMixin):
+def make_multibatch_use_same_random_state(transform: RandomTransformMixin):
     """
     Make sure that all batches are called with the same random state, so the same transform is applied to all batches.
     """
     
-    assert isinstance(transform, NumpyRandomTransformMixin), f"transform must be a NumpyRandomTransformMixin, got {type(transform)}"
+    assert isinstance(transform, RandomTransformMixin), f"transform must be a NumpyRandomTransformMixin, got {type(transform)}"
     
     def decorate(__call__: Callable[[Tensor], Tensor]):
         
