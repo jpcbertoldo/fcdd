@@ -151,15 +151,15 @@ class MultiStageEpochEndCallbackMixin(abc.ABC):
         return self_stage == hook_stage and trainer_stage == hook_stage
     
     def on_train_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"):
-        if self.should_log(RunningStage.TRAINING, self.stage, trainer.state.stage):
+        if self.should_log(RunningStage.TRAINING, self.stage, trainer.state.stage) and pl_module.last_epoch_outputs is not None:
             self._multi_stage_epoch_end_do(trainer, pl_module)
     
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
-        if self.should_log(RunningStage.VALIDATING, self.stage, trainer.state.stage): 
+        if self.should_log(RunningStage.VALIDATING, self.stage, trainer.state.stage) and pl_module.last_epoch_outputs is not None: 
             self._multi_stage_epoch_end_do(trainer, pl_module)
 
     def on_test_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
-        if self.should_log(RunningStage.TESTING, self.stage, trainer.state.stage): 
+        if self.should_log(RunningStage.TESTING, self.stage, trainer.state.stage) and pl_module.last_epoch_outputs is not None: 
             self._multi_stage_epoch_end_do(trainer, pl_module)
             
             
@@ -368,6 +368,7 @@ class DataloaderPreviewCallback(pl.Callback):
         )
 
     def on_fit_start(self, trainer, model):
+        import data_dev01
         (
             norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps
         ) = data_dev01.generate_dataloader_images(self.dataloader, nimages_perclass=self.n_samples)

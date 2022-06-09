@@ -19,18 +19,19 @@ next
 next
 next
 next
+
+- make check_val_every_n_epoch a script option
+- log validate losses
+- do something about pl_module.last_epoch_outputs is not None
+- make callbacks callable only every n epochs
     
-make a pr callback like roc
-make a callback to plot the segmentations ==> get rid of preview callback, just make the preview callback to plot the segmentations on the first batch...
+make a callback to plot the segmentations
 scores distribution call back
 
 config all these from script cli ==> control frequency !
 
-clean PYTORCH_LIGHTNING_STAGE conts to use the enum from the module
-
 later: separate the different modes in the online replacer ==> online replacer should be a callback!!! (can lightning data module have callbacks?)
 later: t-sne of embeddings callback
-
 later: for roc callback
     add option to reduce points in the roc curve not samples
     check if necessary!!!! seems like it already does that
@@ -732,6 +733,7 @@ def run_one(
             python_generator=create_python_random_generator(seed),
         ),
     ]
+    # callbacks = []
     
     # if preview_nimages > 0:
     #     datamodule.setup("fit")
@@ -776,7 +778,8 @@ def run_one(
         # todo add accumulate_grad_batches
         # todo add auto_scale_batch_size
         # chek deterministic in detail
-        # todo make specific callbacks on LightningModule.configure_callbacks()
+        # todo make specific callbacks on LightningModule.configure_callbacks(),
+        check_val_every_n_epoch=100000,
     )
     
     with profiler:
