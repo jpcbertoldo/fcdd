@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import abc
 import functools
 import random
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
@@ -113,6 +114,54 @@ class LastEpochOutputsDependentCallbackMixin:
         return wrapper
 
 
+class MultiStageEpochEndCallbackMixin(abc.ABC):
+    """
+    use this mixin to call a callback on multiple stages
+    you must decorate __init__ with init_stage_arg()
+    when using this mixin, you should define the function _multi_stage_epoch_end_do() in your module
+    """
+    
+    ACCEPTED_STAGES = [
+        RunningStage.TRAINING,
+        RunningStage.VALIDATING,
+        RunningStage.TESTING,
+    ]
+    
+    @abc.abstractmethod
+    def _multi_stage_epoch_end_do(self, *args, **kwargs):
+        pass
+    
+    def init_stage(__init__):
+        """Make sure that an arg `stage` is given as a kwarg at the init function and is valid"""
+        
+        @functools.wraps(__init__)
+        def wrapper(self, *args, **kwargs):            
+            assert "stage" in kwargs, "key argument `stage` must be provided"
+            stage: Union[str, RunningStage] = kwargs.pop("stage")
+            assert stage is not None, f"stage must not be None"
+            assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+            self.stage = stage
+            __init__(self, *args, **kwargs)
+        
+        return wrapper
+    
+    @staticmethod
+    def should_log(hook_stage, self_stage, trainer_stage, ):
+        return self_stage == hook_stage and trainer_stage == hook_stage
+    
+    def on_train_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"):
+        if self.should_log(RunningStage.TRAINING, self.stage, trainer.state.stage):
+            self._do(trainer, pl_module)
+    
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        if self.should_log(RunningStage.VALIDATING, self.stage, trainer.state.stage): 
+            self._do(trainer, pl_module)
+
+    def on_test_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        if self.should_log(RunningStage.TESTING, self.stage, trainer.state.stage): 
+            self._do(trainer, pl_module)
+            
+            
 def roc_curve(
     y_true=None, y_probas=None, labels=None, classes_to_plot=None, title=None
 ):
@@ -242,21 +291,16 @@ def roc_curve(
 
 
 class LogRocCallback(
+    MultiStageEpochEndCallbackMixin,
     LastEpochOutputsDependentCallbackMixin, 
     RandomCallbackMixin, 
     pl.Callback,
 ):
     
-    ACCEPTED_STAGES = [
-        RunningStage.TRAINING,
-        RunningStage.VALIDATING,
-        RunningStage.TESTING,
-    ]
-    
+    @MultiStageEpochEndCallbackMixin.init_stage  
     @RandomCallbackMixin.init_python_generator
     def __init__(
         self, 
-        stage: Union[str, RunningStage],
         scores_key: str,
         gt_key: str,
         log_curve: bool = False, 
@@ -269,9 +313,7 @@ class LogRocCallback(
             limit_points (int, optional): sample this number of points from all the available scores, if None, then no limitation is applied. Defaults to 3000.
         """
         super().__init__()
-        
-        assert stage in self.ACCEPTED_STAGES, f"stage must be one of {self.ACCEPTED_STAGES}, got {stage}"
-        
+                
         assert scores_key != "", f"scores_key must not be empty"
         assert gt_key != "", f"gt_key must not be empty"
         assert scores_key != gt_key, f"scores_key and gt_key must be different, got {scores_key} and {gt_key}"
@@ -279,7 +321,6 @@ class LogRocCallback(
         if limit_points is not None:
             assert limit_points > 0, f"limit_points must be > 0 or None, got {limit_points}"
             
-        self.stage = stage
         self.scores_key = scores_key
         self.gt_key = gt_key
         self.log_curve = log_curve
@@ -288,6 +329,9 @@ class LogRocCallback(
     @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
         pass  # just let the mixin do its job
+    
+    def _multi_stage_epoch_end_do(self, trainer, pl_module):
+        self._log_roc(trainer, pl_module)
     
     def _log_roc(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         
@@ -333,23 +377,7 @@ class LogRocCallback(
             wandb.log({curve_logkey: roc_curve(binary_gt, scores, labels=["anomalous"])})
            
         trainer.model.log(auc_logkey, roc_auc_score(binary_gt, scores))
-    
-    @staticmethod
-    def should_log(hood_stage, self_stage, trainer_stage, ):
-        return self_stage == hood_stage and trainer_stage == hood_stage
-    
-    def on_train_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"):
-        if self.should_log(RunningStage.TRAINING, self.stage, trainer.state.stage):
-            self._log_roc(trainer, pl_module)
-    
-    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
-        if self.should_log(RunningStage.VALIDATING, self.stage, trainer.state.stage): 
-            self._log_roc(trainer, pl_module)
-
-    def on_test_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
-        if self.should_log(RunningStage.TESTING, self.stage, trainer.state.stage): 
-            self._log_roc(trainer, pl_module)
-
+        
 
 class DataloaderPreviewCallback(pl.Callback):
     
@@ -391,6 +419,8 @@ class DataloaderPreviewCallback(pl.Callback):
                 for idx, (img, mask) in enumerate(zip(anom_imgs, anom_gtmaps))
             ],
         })
+
+
 
         
 class TorchTensorboardProfilerCallback(pl.Callback):
