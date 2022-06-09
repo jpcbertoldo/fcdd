@@ -2,7 +2,6 @@
 # coding: utf-8
 
 
-import functools
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -10,12 +9,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
-import wandb
 from fcdd.models.bases import ReceptiveNet
 from pytorch_lightning import LightningModule
 from torch import Tensor
 from torch.hub import load_state_dict_from_url
 
+from callbacks_dev01 import merge_steps_outputs
 
 OPTIMIZER_SGD = 'sgd'
 OPTIMIZER_ADAM = 'adam'
@@ -59,7 +58,10 @@ class FCDD_CNN224_VGG(LightningModule):
         assert scheduler_name in SCHEDULER_CHOICES
         assert loss_name in LOSS_CHOICES
         
+        # for some reason pyttorch lightning needs this specific call super().__init__()
         super().__init__()
+        
+        self.last_epoch_outputs = None
         
         self._receptive_field_net = ReceptiveNet((3,) + in_shape, bias=True)
         self.in_shape = in_shape
@@ -118,8 +120,6 @@ class FCDD_CNN224_VGG(LightningModule):
         self.conv_final = self._receptive_field_net._create_conv2d(512, 1, 1)
         
         self.save_hyperparameters()
-        
-        self._last_epoch_outputs = None
         pass
         
     def forward(self, x):
@@ -202,12 +202,23 @@ class FCDD_CNN224_VGG(LightningModule):
         with torch.no_grad():
             loss_normal = loss_maps[gtmaps == 0].mean()
             loss_anomaly = loss_maps[gtmaps == 1].mean()
-            
+            scores_normal = anomaly_scores_maps[gtmaps == 0].mean()
+            scores_anomaly = anomaly_scores_maps[gtmaps == 1].mean()
+
+        self.log(f"train/score-normal", scores_normal, on_step=False, on_epoch=True)
+        self.log(f"train/score-anomaly", scores_anomaly, on_step=False, on_epoch=True)
         self.log("train/loss-normal", loss_normal, on_step=False, on_epoch=True)
         self.log("train/loss-anomaly", loss_anomaly, on_step=False, on_epoch=True)
         self.log("train/loss", loss, on_step=False, on_epoch=True)
         
-        return loss
+        return dict(
+            inputs=inputs, 
+            labels=labels, 
+            gtmaps=gtmaps, 
+            anomaly_scores_maps=anomaly_scores_maps, 
+            loss_maps=loss_maps, 
+            loss=loss,
+        )
     
     def _val_test_step(self, batch, batch_idx, stage):
         
@@ -237,65 +248,22 @@ class FCDD_CNN224_VGG(LightningModule):
         
     def validation_step(self, batch, batch_idx):
         return self._val_test_step(batch, batch_idx, stage="validate")
+        pass
     
     def validation_epoch_end(self, validation_step_outputs):
-        self.last_epoch_outputs = validation_step_outputs
+        self.last_epoch_outputs = merge_steps_outputs(validation_step_outputs)
+        pass
         
     def test_step(self, batch, batch_idx):
         return self._val_test_step(batch, batch_idx, stage="test")
+        pass
     
     def test_epoch_end(self, test_step_outputs):
-        self.last_epoch_outputs = test_step_outputs
-        
-    # last_epoch_outputs --> make mixin
-    @property
-    def last_epoch_outputs(self) -> Dict[str, Tensor]:
-        """this is intended to be used by callbacks"""
-        if self._last_epoch_outputs is None:
-            return None
-        # it is clone to avoid any interference between callbacks
-        return {
-            k: v.clone()
-            for k, v in self._last_epoch_outputs.items()
-        }
+        self.last_epoch_outputs = merge_steps_outputs(test_step_outputs)
     
-    @last_epoch_outputs.setter
-    def last_epoch_outputs(self, steps_outputs: List[Dict[str, Tensor]]):
-        """gather all the pieces into a single dict"""
-        
-        if steps_outputs is None:
-            self._last_epoch_outputs = None
-            return
-        
-        assert isinstance(steps_outputs, list), f"last_epoch_outputs must be a list, got {type(steps_outputs)}"
-        assert len(steps_outputs) >= 1, f"last_epoch_outputs must have at least one element, got {len(steps_outputs)}"
-        assert all(isinstance(x, dict) for x in steps_outputs), f"last_epoch_outputs must be a list of dicts, got {steps_outputs}"
-        dict0 = steps_outputs[0]
-        keys = set(dict0.keys())
-        assert all(set(x.keys()) == keys for x in steps_outputs), f"last_epoch_outputs must have the same keys, got {steps_outputs}, keys={keys}"
-        
-        self._last_epoch_outputs = {
-            # step 3: transfer the tensor to the cpu to liberate the gpu memory
-            k: v.cpu() 
-            for k, v in {
-                # step 2: concatenate the tensors
-                k: (
-                    torch.stack(list_of_values, dim=0)
-                    if list_of_values[0].ndim == 0 else
-                    torch.cat(list_of_values, dim=0)
-                )
-                for k, list_of_values in {
-                    # step 1: gather the dicts values into lists (one list per key) ==> single dict
-                    k: [step_outputs[k] for step_outputs in steps_outputs]
-                    for k in keys
-                }.items()
-            }.items()
-        }
-        
     def teardown(self, stage=None):
-        # make sure that the next stage doesnt get the old outputs
         self.last_epoch_outputs = None
-    
+        
         # heatmap_generation()
         
         # self.logger.experiment.log({

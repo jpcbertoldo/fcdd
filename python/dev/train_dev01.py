@@ -19,15 +19,7 @@ next
 next
 next
 next
-
-for roc callback
-    add option to reduce points in the roc curve not samples
-    check if necessary!!!! seems like it already does that
     
-add a roc callback without sampling in test
-
-clean last_epoch_outputs to mixin
-move callbacks to a new python file
 make a pr callback like roc
 make a callback to plot the segmentations ==> get rid of preview callback, just make the preview callback to plot the segmentations on the first batch...
 scores distribution call back
@@ -39,41 +31,39 @@ clean PYTORCH_LIGHTNING_STAGE conts to use the enum from the module
 later: separate the different modes in the online replacer ==> online replacer should be a callback!!! (can lightning data module have callbacks?)
 later: t-sne of embeddings callback
 
+later: for roc callback
+    add option to reduce points in the roc curve not samples
+    check if necessary!!!! seems like it already does that
+
 """
 #!/usr/bin/env python
 # coding: utf-8
 
 import contextlib
 import functools
-import json
 import os
-import os.path as pt
-from re import A
-import sys
 import time
-from argparse import ArgumentError, ArgumentParser
+from argparse import ArgumentParser
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple, Type
+from re import A
+from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
-from pytorch_lightning.loggers import WandbLogger
-
 import torch
-import wandb
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.trainer.states import RunningStage
 from scipy.interpolate import interp1d
-from sklearn.metrics import (auc, average_precision_score,
-                             precision_recall_curve, roc_auc_score, roc_curve)
-from torch import Tensor
+from sklearn.metrics import average_precision_score, precision_recall_curve
 from torch.profiler import tensorboard_trace_handler
 
-import data_dev01
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
-from common_dev01 import create_python_random_generator, create_seed, seed_int2str, seed_str2int
+import wandb
+from callbacks_dev01 import LogRocCallback, TorchTensorboardProfilerCallback
+from common_dev01 import (create_python_random_generator, create_seed,
+                          seed_int2str, seed_str2int)
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
-import random
-
 
 # ======================================== exceptions ========================================
 
@@ -345,364 +335,6 @@ def compute_gtmap_pr(
     gtmap_pr_res = dict(recall=recall, precision=precision, ths=ths, ap=ap_score)
     return gtmap_pr_res
 
-
-
-class RandomCallbackMixin:
-    """
-    Mixin that will get random generators from the init kwargs and make sure it is valid.
-    """
-    
-    def init_python_generator(__init__):
-        """Make sure that an arge `python_generator` is given as a kwarg at the init function."""
-        
-        @functools.wraps(__init__)
-        def wrapper(self, *args, **kwargs):
-            assert "python_generator" in kwargs, "key argument `python_generator` must be provided"
-            gen: random.Random = kwargs.pop("python_generator")
-            assert gen is not None, f"python_generator must not be None"
-            assert isinstance(gen, random.Random), f"gen must be a random.Random, got {type(gen)}"
-            self.python_generator = gen
-            __init__(self, *args, **kwargs)
-        
-        return wrapper
-    
-    def init_torch_generator(__init__):
-        """Make sure that an arge `torch_generator` is given as a kwarg at the init function."""
-        
-        @functools.wraps(__init__)
-        def wrapper(self, *args, **kwargs):
-            assert "torch_generator" in kwargs, "key argument `torch_generator` must be provided"
-            gen: torch.Generator = kwargs.pop("torch_generator")
-            assert gen is not None, f"torch_generator must not be None"
-            assert isinstance(gen, torch.Generator), f"gen must be a torch.Generator, got {type(gen)}"
-            self.torch_generator = gen
-            __init__(self, *args, **kwargs)
-        
-        return wrapper
-
-class LastEpochOutputsCallbackMixin:
-    
-    def setup_verify_last_epoch_outputs_is_none(pl_module_setup):
-        """
-        make sure that the attribute `last_epoch_outputs` is None at the beginning of a new stage
-        otherwise it's because it hasn't been cleaned up properly
-        """
-        
-        @functools.wraps(pl_module_setup)
-        def wrapper(self, trainer, pl_module, stage=None):
-            """self is the callback"""
-
-            assert hasattr(pl_module, "last_epoch_outputs"), f"pl_module {type(pl_module)} must have a `last_epoch_outputs` attribute, got {type(pl_module)}"
-
-            assert pl_module.last_epoch_outputs is None, f"pl_module.last_epoch_outputs must be None at the beginning of stage (={stage}), did you forget to clean up in the teardown()?  got {pl_module.last_epoch_outputs}"
-        
-            return pl_module_setup(self, trainer, pl_module, stage=stage)
-        
-        return wrapper
-
-PYTORCH_LIGHTNING_STAGE_VALIDATE = "validate"
-# PYTORCH_LIGHTNING_STAGE_SANITY_CHECK = "sanity_check"
-PYTORCH_LIGHTNING_STAGE_TEST = "test"
-PYTORCH_LIGHTNING_STAGE_TRAIN = "train"
-PYTORCH_LIGHTNING_STAGE_PREDICT = "predict"
-PYTORCH_LIGHTNING_STAGES = (
-    PYTORCH_LIGHTNING_STAGE_VALIDATE,
-    PYTORCH_LIGHTNING_STAGE_TEST,
-    PYTORCH_LIGHTNING_STAGE_TRAIN,
-    PYTORCH_LIGHTNING_STAGE_PREDICT,
-)
-
-
-
-def roc_curve(
-    y_true=None, y_probas=None, labels=None, classes_to_plot=None, title=None
-):
-    """
-    Calculates receiver operating characteristic scores and visualizes them as the
-    ROC curve.
-    
-    i copied and adapted wandb.plot.roc_curve()
-    i marked "modif" where i added something
-
-    Arguments:
-        y_true (arr): Test set labels.
-        y_probas (arr): Test set predicted probabilities.
-        labels (list): Named labels for target varible (y). Makes plots easier to
-                        read by replacing target values with corresponding index.
-                        For example labels= ['dog', 'cat', 'owl'] all 0s are
-                        replaced by 'dog', 1s by 'cat'.
-
-    Returns:
-        Nothing. To see plots, go to your W&B run page then expand the 'media' tab
-            under 'auto visualizations'.
-
-    Example:
-        ```
-        wandb.log({'roc-curve': wandb.plot.roc_curve(y_true, y_probas, labels)})
-        ```
-    """
-    import wandb
-    from wandb import util
-    from wandb.plots.utils import test_missing, test_types
-
-    chart_limit = wandb.Table.MAX_ROWS
-    
-    np = util.get_module(
-        "numpy",
-        required="roc requires the numpy library, install with `pip install numpy`",
-    )
-    util.get_module(
-        "sklearn",
-        required="roc requires the scikit library, install with `pip install scikit-learn`",
-    )
-    from sklearn.metrics import roc_curve
-
-    if test_missing(y_true=y_true, y_probas=y_probas) and test_types(
-        y_true=y_true, y_probas=y_probas
-    ):
-        y_true = np.array(y_true)
-        y_probas = np.array(y_probas)
-        classes = np.unique(y_true)
-        probas = y_probas
-        
-        # modif
-        (nsamples, nscores) = y_probas.shape
-        is_single_score = nscores == 1
-        if is_single_score:
-            assert tuple(classes) == (0, 1), "roc requires binary classification if there is a single score"
-            assert classes_to_plot is None, f"classes_to_plot must be None if there is a single score"
-            assert labels is None or len(labels) == 1, f"labels must be None or have length 1 if there is a single score"
-        # modif
-            
-        if classes_to_plot is None:
-            classes_to_plot = classes 
-
-        fpr_dict = dict()
-        tpr_dict = dict()
-
-        indices_to_plot = np.in1d(classes, classes_to_plot)
-
-        data = []
-        count = 0
-        
-        # modif
-        # very hacky but who cares
-        if is_single_score:  # use only the positive score
-            classes_to_plot = [classes_to_plot[1]]
-            indices_to_plot = [indices_to_plot[1]] 
-            classes = [classes[1]]
-            probas = probas.reshape(-1, 1)
-        # modif
-
-        for i, to_plot in enumerate(indices_to_plot):
-            
-            # modif
-            if is_single_score and i > 0:
-                break
-            # modif
-            
-            fpr_dict[i], tpr_dict[i], _ = roc_curve(
-                y_true, probas[:, i], pos_label=classes[i]
-            )
-                
-            if to_plot:
-                for j in range(len(fpr_dict[i])):
-                    if labels is not None and (
-                        isinstance(classes[i], int)
-                        or isinstance(classes[0], np.integer)
-                    ):
-                        class_dict = labels[classes[i]]
-                    else:
-                        class_dict = classes[i]
-                    fpr = [
-                        class_dict,
-                        round(fpr_dict[i][j], 3),
-                        round(tpr_dict[i][j], 3),
-                    ]
-                    data.append(fpr)
-                    count += 1
-                    if count >= chart_limit:
-                        wandb.termwarn(
-                            "wandb uses only the first %d datapoints to create the plots."
-                            % wandb.Table.MAX_ROWS
-                        )
-                        break
-        table = wandb.Table(columns=["class", "fpr", "tpr"], data=data)
-        title = title or "ROC"
-        return wandb.plot_table(
-            "wandb/area-under-curve/v0",
-            table,
-            {"x": "fpr", "y": "tpr", "class": "class"},
-            {
-                "title": title,
-                "x-axis-title": "False positive rate",
-                "y-axis-title": "True positive rate",
-            },
-        )
-
-
-class LogRocCurveCallback(
-    LastEpochOutputsCallbackMixin, 
-    RandomCallbackMixin, 
-    pl.Callback,
-):
-    
-    @RandomCallbackMixin.init_python_generator
-    def __init__(
-        self, 
-        stage: str,
-        scores_key: str,
-        gt_key: str,
-        log_curve: bool = True, 
-        log_auc: bool = True, 
-        limit_points: int = 3000,
-    ):
-        """
-        Log the ROC curve (and it AUC) on val/test batches.
-        
-        Args:
-            limit_points (int, optional): sample this number of points from all the available scores, if None, then no limitation is applied. Defaults to 3000.
-        """
-        super().__init__()
-        
-        assert stage in PYTORCH_LIGHTNING_STAGES, f"stage must be one of {PYTORCH_LIGHTNING_STAGES}, got {stage}"
-        if stage not in (PYTORCH_LIGHTNING_STAGE_VALIDATE, PYTORCH_LIGHTNING_STAGE_TEST):
-            raise NotImplementedError(f"ROC curve can only be logged on val/test, got {stage}")
-        
-        assert scores_key != "", f"scores_key must not be empty"
-        assert gt_key != "", f"gt_key must not be empty"
-        assert scores_key != gt_key, f"scores_key and gt_key must be different, got {scores_key} and {gt_key}"
-        
-        if limit_points is not None:
-            assert limit_points > 0, f"limit_points must be > 0 or None, got {limit_points}"
-        
-        assert log_curve or log_auc, f"log_curve and log_auc must be True at least one of them"    
-
-        self.stage = stage
-        self.scores_key = scores_key
-        self.gt_key = gt_key
-        self.log_curve = log_curve
-        self.log_auc = log_auc
-        self.limit_points = limit_points
-    
-    @LastEpochOutputsCallbackMixin.setup_verify_last_epoch_outputs_is_none
-    def setup(self, trainer, pl_module, stage=None):
-        pass  # just let the mixin do its job
-    
-    def _log_roc_curve(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
-        
-        try:
-            scores = pl_module.last_epoch_outputs[self.scores_key]
-            binary_gt = pl_module.last_epoch_outputs[self.gt_key]
-        
-        except KeyError as ex:
-            msg = ex.args[0]
-            if self.scores_key not in msg and self.gt_key not in msg:
-                raise ex
-            raise ArgumentError(f"pl_module.last_epoch_outputs should have the keys self.score_key={self.scores_key} and self.gt_key={self.gt_key}, did you configure the model correctly? or passed me the wrong keys?") from ex
-        
-        assert isinstance(scores, torch.Tensor), f"scores must be a torch.Tensor, got {type(scores)}"
-        assert isinstance(binary_gt, torch.Tensor), f"binary_gt must be a torch.Tensor, got {type(binary_gt)}"
-        
-        assert scores.shape == binary_gt.shape, f"scores and binary_gt must have the same shape, got {scores.shape} and {binary_gt.shape}"
-        
-        unique_gt_values = tuple(sorted(torch.unique(binary_gt)))
-        assert unique_gt_values in ((0,), (1,), (0, 1)), f"binary_gt must have only 0 and 1 values, got {unique_gt_values}"
-        
-        assert (scores >= 0).all(), f"scores must be >= 0, got {scores}"
-        
-        # make sure they are 1D (it doesn't matter if they were not before)
-        scores = scores.reshape(-1, 1)  # wandb.plot.roc_curve() wants it like this
-        binary_gt = binary_gt.reshape(-1)
-        
-        npoints = binary_gt.shape[0]
-        
-        if self.limit_points is not None and npoints > self.limit_points:
-            indices = torch.tensor(self.python_generator.sample(range(npoints), self.limit_points))
-            scores = scores[indices]
-            binary_gt = binary_gt[indices]
-        
-        logkey_prefix = f"{trainer.state.stage}/" if trainer.state.stage is not None else ""
-        curve_logkey = f"{logkey_prefix}roc-curve"
-        auc_logkey = f"{logkey_prefix}roc-auc"
-        # logdict = dict()
-        
-        if self.log_curve:
-            # i copied and adapted wandb.plot.roc_curve()
-            import wandb
-            wandb.log({curve_logkey: roc_curve(binary_gt, scores, labels=["anomalous"])})
-           
-        if self.log_auc:
-            trainer.model.log(auc_logkey, roc_auc_score(binary_gt, scores))
-         
-    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
-        
-        if self.stage == PYTORCH_LIGHTNING_STAGE_VALIDATE and trainer.state.stage == PYTORCH_LIGHTNING_STAGE_VALIDATE: 
-            self._log_roc_curve(trainer, pl_module)
-
-    def on_test_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
-        
-        if self.stage == PYTORCH_LIGHTNING_STAGE_TEST and trainer.state.stage == PYTORCH_LIGHTNING_STAGE_TEST: 
-            self._log_roc_curve(trainer, pl_module)
-
-        
-class TorchTensorboardProfilerCallback(pl.Callback):
-  """
-  Quick-and-dirty Callback for invoking TensorboardProfiler during training.
-  
-  For greater robustness, extend the pl.profiler.profilers.BaseProfiler. See
-  https://pytorch-lightning.readthedocs.io/en/stable/advanced/profiler.html
-  """
-
-  def __init__(self, profiler):
-    super().__init__()
-    self.profiler = profiler 
-
-  def on_train_batch_end(self, trainer, pl_module, outputs, *args, **kwargs):
-    self.profiler.step()
-    # pl_module.log_dict(outputs)  # also logging the loss, while we're here
-
-
-class DataloaderPreviewCallback(pl.Callback):
-    
-    def __init__(self, dataloader, n_samples=5,  logkey_prefix="train/preview"):
-        """the keys loggeda are `{logkey_prefix}/anomalous` and `{logkey_prefix}/normal`"""
-        super().__init__()
-        assert isinstance(dataloader, torch.utils.data.DataLoader), f"dataloader must be a torch.utils.data.DataLoader, got {type(dataloader)}"
-        assert n_samples > 0, f"n_samples must be > 0, got {n_samples}"
-        self.dataloader = dataloader
-        self.n_samples = n_samples
-        self.logkey_prefix = logkey_prefix
-        
-    @staticmethod
-    def _get_mask_dict(mask):
-        """mask_tensor \in int32^[1, H, W]"""
-        return dict(
-            ground_truth=dict(
-                mask_data=mask.squeeze().numpy(), 
-                class_labels={
-                    NOMINAL_TARGET: "normal", 
-                    ANOMALY_TARGET: "anomalous",
-                }
-            )
-        )
-
-    def on_fit_start(self, trainer, model):
-        (
-            norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps
-        ) = data_dev01.generate_dataloader_images(self.dataloader, nimages_perclass=self.n_samples)
-
-        import wandb
-        wandb.log({
-            f"{self.logkey_prefix}/normal": [
-                wandb.Image(img, caption=[f"normal {idx:03d}"], masks=self._get_mask_dict(mask))
-                for idx, (img, mask) in enumerate(zip(norm_imgs, norm_gtmaps))
-            ],
-            f"{self.logkey_prefix}/anomalous": [
-                wandb.Image(img, caption=[f"anomalous {idx:03d}"], masks=self._get_mask_dict(mask))
-                for idx, (img, mask) in enumerate(zip(anom_imgs, anom_gtmaps))
-            ],
-        })
 
 # ==========================================================================================
 # ==========================================================================================
@@ -1051,26 +683,40 @@ def run_one(
     callbacks = [
         # pl.callbacks.ModelSummary(max_depth=lightning_model_summary_max_depth),
         pl.callbacks.RichModelSummary(max_depth=lightning_model_summary_max_depth),
-        LogRocCurveCallback(
-            stage=PYTORCH_LIGHTNING_STAGE_VALIDATE,
+        LogRocCallback(
+            stage=RunningStage.TRAINING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=False,
+            limit_points=3000,  # todo make it script param
+            python_generator=create_python_random_generator(seed),
+        ),
+        LogRocCallback(
+            stage=RunningStage.VALIDATING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=False,
+            limit_points=3000,  # todo make it script param
+            python_generator=create_python_random_generator(seed),
+        ),
+        LogRocCallback(
+            stage=RunningStage.TESTING,
             scores_key="anomaly_scores_maps",
             gt_key="gtmaps",
             log_curve=True,
-            log_auc=True,
-            # test_steps_outputs_parser=model.test_step_outputs_get_scores_and_gt_maps,
-            limit_points=3000,  # todo make it script param
+            limit_points=None,
             python_generator=create_python_random_generator(seed),
-        )
+        ),
     ]
     
-    if preview_nimages > 0:
-        datamodule.setup("fit")
-        callbacks.append(
-            DataloaderPreviewCallback(
-                dataloader=datamodule.train_dataloader(embed_preprocessing=True), 
-                n_samples=preview_nimages, logkey_prefix="train-preview"
-            ),
-        )
+    # if preview_nimages > 0:
+    #     datamodule.setup("fit")
+    #     callbacks.append(
+    #         DataloaderPreviewCallback(
+    #             dataloader=datamodule.train_dataloader(embed_preprocessing=True), 
+    #             n_samples=preview_nimages, logkey_prefix="train-preview"
+    #         ),
+    #     )
     
     # ================================ PROFILING ================================
     
