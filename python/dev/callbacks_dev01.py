@@ -4,13 +4,14 @@
 import abc
 import functools
 import random
+from tkinter import W
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.trainer.states import RunningStage
-from sklearn.metrics import (roc_auc_score, roc_curve)
+from sklearn.metrics import (roc_auc_score, average_precision_score)
 from torch import Tensor
 
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
@@ -151,145 +152,17 @@ class MultiStageEpochEndCallbackMixin(abc.ABC):
     
     def on_train_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"):
         if self.should_log(RunningStage.TRAINING, self.stage, trainer.state.stage):
-            self._do(trainer, pl_module)
+            self._multi_stage_epoch_end_do(trainer, pl_module)
     
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         if self.should_log(RunningStage.VALIDATING, self.stage, trainer.state.stage): 
-            self._do(trainer, pl_module)
+            self._multi_stage_epoch_end_do(trainer, pl_module)
 
     def on_test_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         if self.should_log(RunningStage.TESTING, self.stage, trainer.state.stage): 
-            self._do(trainer, pl_module)
+            self._multi_stage_epoch_end_do(trainer, pl_module)
             
             
-def roc_curve(
-    y_true=None, y_probas=None, labels=None, classes_to_plot=None, title=None
-):
-    """
-    Calculates receiver operating characteristic scores and visualizes them as the
-    ROC curve.
-    
-    i copied and adapted wandb.plot.roc_curve()
-    i marked "modif" where i added something
-
-    Arguments:
-        y_true (arr): Test set labels.
-        y_probas (arr): Test set predicted probabilities.
-        labels (list): Named labels for target varible (y). Makes plots easier to
-                        read by replacing target values with corresponding index.
-                        For example labels= ['dog', 'cat', 'owl'] all 0s are
-                        replaced by 'dog', 1s by 'cat'.
-
-    Returns:
-        Nothing. To see plots, go to your W&B run page then expand the 'media' tab
-            under 'auto visualizations'.
-
-    Example:
-        ```
-        wandb.log({'roc-curve': wandb.plot.roc_curve(y_true, y_probas, labels)})
-        ```
-    """
-    from wandb.plots.utils import test_missing, test_types
-
-    import wandb
-    from wandb import util
-
-    chart_limit = wandb.Table.MAX_ROWS
-    
-    np = util.get_module(
-        "numpy",
-        required="roc requires the numpy library, install with `pip install numpy`",
-    )
-    util.get_module(
-        "sklearn",
-        required="roc requires the scikit library, install with `pip install scikit-learn`",
-    )
-    from sklearn.metrics import roc_curve
-
-    if test_missing(y_true=y_true, y_probas=y_probas) and test_types(
-        y_true=y_true, y_probas=y_probas
-    ):
-        y_true = np.array(y_true)
-        y_probas = np.array(y_probas)
-        classes = np.unique(y_true)
-        probas = y_probas
-        
-        # modif
-        (nsamples, nscores) = y_probas.shape
-        is_single_score = nscores == 1
-        if is_single_score:
-            assert tuple(classes) == (0, 1), "roc requires binary classification if there is a single score"
-            assert classes_to_plot is None, f"classes_to_plot must be None if there is a single score"
-            assert labels is None or len(labels) == 1, f"labels must be None or have length 1 if there is a single score"
-        # modif
-            
-        if classes_to_plot is None:
-            classes_to_plot = classes 
-
-        fpr_dict = dict()
-        tpr_dict = dict()
-
-        indices_to_plot = np.in1d(classes, classes_to_plot)
-
-        data = []
-        count = 0
-        
-        # modif
-        # very hacky but who cares
-        if is_single_score:  # use only the positive score
-            classes_to_plot = [classes_to_plot[1]]
-            indices_to_plot = [indices_to_plot[1]] 
-            classes = [classes[1]]
-            probas = probas.reshape(-1, 1)
-        # modif
-
-        for i, to_plot in enumerate(indices_to_plot):
-            
-            # modif
-            if is_single_score and i > 0:
-                break
-            # modif
-            
-            fpr_dict[i], tpr_dict[i], _ = roc_curve(
-                y_true, probas[:, i], pos_label=classes[i]
-            )
-                
-            if to_plot:
-                for j in range(len(fpr_dict[i])):
-                    if labels is not None and (
-                        isinstance(classes[i], int)
-                        or isinstance(classes[0], np.integer)
-                    ):
-                        class_dict = labels[classes[i]]
-                    else:
-                        class_dict = classes[i]
-                    fpr = [
-                        class_dict,
-                        round(fpr_dict[i][j], 3),
-                        round(tpr_dict[i][j], 3),
-                    ]
-                    data.append(fpr)
-                    count += 1
-                    if count >= chart_limit:
-                        wandb.termwarn(
-                            "wandb uses only the first %d datapoints to create the plots."
-                            % wandb.Table.MAX_ROWS
-                        )
-                        break
-        table = wandb.Table(columns=["class", "fpr", "tpr"], data=data)
-        title = title or "ROC"
-        return wandb.plot_table(
-            "wandb/area-under-curve/v0",
-            table,
-            {"x": "fpr", "y": "tpr", "class": "class"},
-            {
-                "title": title,
-                "x-axis-title": "False positive rate",
-                "y-axis-title": "True positive rate",
-            },
-        )
-
-
 class LogRocCallback(
     MultiStageEpochEndCallbackMixin,
     LastEpochOutputsDependentCallbackMixin, 
@@ -307,7 +180,7 @@ class LogRocCallback(
         limit_points: int = 3000,
     ):
         """
-        Log the ROC curve (and it AUC) on val/test batches.
+        Log the area under the roc curve and (optionally) the curve itself at the end of an epoch.
         
         Args:
             limit_points (int, optional): sample this number of points from all the available scores, if None, then no limitation is applied. Defaults to 3000.
@@ -372,11 +245,102 @@ class LogRocCallback(
         
         if self.log_curve:
             import wandb
-
-            # i copied and adapted wandb.plot.roc_curve()
-            wandb.log({curve_logkey: roc_curve(binary_gt, scores, labels=["anomalous"])})
+            # i copied and adapted wandb.plot.roc_curve.roc_curve()
+            import hacked_dev01
+            wandb.log({curve_logkey: hacked_dev01.roc_curve(binary_gt, scores, labels=["anomalous"])})
            
         trainer.model.log(auc_logkey, roc_auc_score(binary_gt, scores))
+
+
+class LogAveragePrecisionCallback(
+    MultiStageEpochEndCallbackMixin,
+    LastEpochOutputsDependentCallbackMixin, 
+    RandomCallbackMixin, 
+    pl.Callback,
+):
+    
+    @MultiStageEpochEndCallbackMixin.init_stage  
+    @RandomCallbackMixin.init_python_generator
+    def __init__(
+        self, 
+        scores_key: str,
+        gt_key: str,
+        log_curve: bool = False, 
+        limit_points: int = 3000,
+    ):
+        """
+        Log the average precision and (optionally) its curve (precision-recall curve) at the end of an epoch.
+        
+        Args:
+            limit_points (int, optional): sample this number of points from all the available scores, if None, then no limitation is applied. Defaults to 3000.
+        """
+        super().__init__()
+                
+        assert scores_key != "", f"scores_key must not be empty"
+        assert gt_key != "", f"gt_key must not be empty"
+        assert scores_key != gt_key, f"scores_key and gt_key must be different, got {scores_key} and {gt_key}"
+        
+        if limit_points is not None:
+            assert limit_points > 0, f"limit_points must be > 0 or None, got {limit_points}"
+            
+        self.scores_key = scores_key
+        self.gt_key = gt_key
+        self.log_curve = log_curve
+        self.limit_points = limit_points
+    
+    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
+    def setup(self, trainer, pl_module, stage=None):
+        pass  # just let the mixin do its job
+    
+    def _multi_stage_epoch_end_do(self, trainer, pl_module):
+        self._log_avg_precision(trainer, pl_module)
+    
+    def _log_avg_precision(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        
+        try:
+            scores = pl_module.last_epoch_outputs[self.scores_key]
+            binary_gt = pl_module.last_epoch_outputs[self.gt_key]
+        
+        except KeyError as ex:
+            msg = ex.args[0]
+            if self.scores_key not in msg and self.gt_key not in msg:
+                raise ex
+            raise ValueError(f"pl_module.last_epoch_outputs should have the keys self.score_key={self.scores_key} and self.gt_key={self.gt_key}, did you configure the model correctly? or passed me the wrong keys?") from ex
+        
+        assert isinstance(scores, torch.Tensor), f"scores must be a torch.Tensor, got {type(scores)}"
+        assert isinstance(binary_gt, torch.Tensor), f"binary_gt must be a torch.Tensor, got {type(binary_gt)}"
+        
+        assert scores.shape == binary_gt.shape, f"scores and binary_gt must have the same shape, got {scores.shape} and {binary_gt.shape}"
+        
+        unique_gt_values = tuple(sorted(torch.unique(binary_gt)))
+        assert unique_gt_values in ((0,), (1,), (0, 1)), f"binary_gt must have only 0 and 1 values, got {unique_gt_values}"
+        
+        assert (scores >= 0).all(), f"scores must be >= 0, got {scores}"
+        
+        # make sure they are 1D (it doesn't matter if they were not before)
+        scores = scores.reshape(-1, 1)  # wandb.plot.roc_curve() wants it like this
+        binary_gt = binary_gt.reshape(-1)
+        
+        npoints = binary_gt.shape[0]
+        
+        if self.limit_points is not None and npoints > self.limit_points:
+            indices = torch.tensor(self.python_generator.sample(range(npoints), self.limit_points))
+            scores = scores[indices]
+            binary_gt = binary_gt[indices]
+        
+        current_stage = trainer.state.stage
+        logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
+        curve_logkey = f"{logkey_prefix}precision-recall-curve"
+        avg_precision_logkey = f"{logkey_prefix}avg-precision"
+        
+        if self.log_curve:
+            import wandb
+            # i copied and adapted wandb.plot.pr_curve.pr_curve()
+            import hacked_dev01
+            wandb.log({curve_logkey: hacked_dev01.pr_curve(binary_gt, scores, labels=["anomalous"])})
+           
+        trainer.model.log(avg_precision_logkey, average_precision_score(binary_gt, scores))
+        
         
 
 class DataloaderPreviewCallback(pl.Callback):

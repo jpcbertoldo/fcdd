@@ -60,7 +60,7 @@ from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
-from callbacks_dev01 import LogRocCallback, TorchTensorboardProfilerCallback
+from callbacks_dev01 import LogAveragePrecisionCallback, LogRocCallback, TorchTensorboardProfilerCallback
 from common_dev01 import (create_python_random_generator, create_seed,
                           seed_int2str, seed_str2int)
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
@@ -707,6 +707,30 @@ def run_one(
             limit_points=None,
             python_generator=create_python_random_generator(seed),
         ),
+        LogAveragePrecisionCallback(
+            stage=RunningStage.TRAINING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=False,
+            limit_points=3000,  # todo make it script param
+            python_generator=create_python_random_generator(seed),
+        ),
+        LogAveragePrecisionCallback(
+            stage=RunningStage.VALIDATING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=False,
+            limit_points=3000,  # todo make it script param
+            python_generator=create_python_random_generator(seed),
+        ),
+        LogAveragePrecisionCallback(
+            stage=RunningStage.TESTING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=True,
+            limit_points=None,
+            python_generator=create_python_random_generator(seed),
+        ),
     ]
     
     # if preview_nimages > 0:
@@ -884,7 +908,7 @@ def run(**kwargs) -> dict:
             
             except TypeError as ex:
                 msg = ex.args[0]
-                if "got an unexpected keyword argument" in msg:
+                if "run_one() got an unexpected keyword argument" in msg:
                     raise ScriptError(f"run_one() got an unexpected keyword argument: {msg}, did you forget to kwargs.pop() something?") from ex
                 raise ex
             except Exception as ex:
