@@ -900,7 +900,7 @@ class MvTec(VisionDataset, Dataset, LightningDataset):
         self.labels = labels
         self.anomaly_labels = anomaly_labels
         self.anomaly_label_strings = anomaly_label_strings
-        
+                
         print('Dataset setup.')
 
     def __getitem__(self, index: int) -> Tuple[Tensor, int, Tensor]:
@@ -1506,13 +1506,20 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         
         if self.trainer.training:
             img, target, gtmap = self.online_instance_replacer(img, target, gtmap)
-            return img, target, gtmap
+        
+        # img = (img * 255).byte()
+        # target = (target * 255).byte()
+        # gtmap = (gtmap * 255).byte()
         
         return img, target, gtmap
 
     def on_after_batch_transfer(self, batch, dataloader_idx: int):
 
         img, target, gtmap = batch
+        
+        # img = img.type(torch.float32) / 255.
+        # target = target.type(torch.float32) / 255.
+        # gtmap = gtmap.type(torch.float32) / 255.
         
         if self.trainer.training:
             img, gtmap = self.train_img_and_gtmap_transform(img, gtmap)

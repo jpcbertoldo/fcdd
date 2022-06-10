@@ -24,18 +24,32 @@ next
 - log validate losses
 - do something about pl_module.last_epoch_outputs is not None
 - make callbacks callable only every n epochs
-    
+- save model is already there?
+- make callback to look at the gradient of loss ==> importance of each pixel !!!
+
+- make umap callback
+- make umap for last conv weights viz
+- make special viz for umap with center from the last conv weights
+- log training based contrast parameters ==> from training scores (min of anomalous and max of normal should be the contrast's, respectively, min and max)
+- make jaccard score callback (without binarization) ==> normalize the scores to [0, 1] (use the contrast from above)
+
 make a callback to plot the segmentations
 scores distribution call back
 
 config all these from script cli ==> control frequency !
+
+make the preprocessing things an object on its on, so it can be portable
+ ==> script to generate images that takes globs as input
+
+
 
 later: separate the different modes in the online replacer ==> online replacer should be a callback!!! (can lightning data module have callbacks?)
 later: t-sne of embeddings callback
 later: for roc callback
     add option to reduce points in the roc curve not samples
     check if necessary!!!! seems like it already does that
-
+later: make a threshold-independent jaccard by trying all thresholds for binarization
+later: smartly find good/bad images
 """
 #!/usr/bin/env python
 # coding: utf-8
