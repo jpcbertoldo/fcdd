@@ -1,5 +1,7 @@
 import random
+
 import numpy
+import torch
 
 
 def seed_str2int(seed: str):
@@ -27,12 +29,21 @@ def create_seed() -> int:
 def create_numpy_random_generator(seed: int) -> numpy.random.Generator:
     assert isinstance(seed, int), f"seed must be an integer, got {type(seed)}"
     assert seed >= 0, f"seed must be >= 0, got {seed_int2str(seed)}"
-    print(f"random generator instantiaed from the provided seed: {seed_int2str(seed)}")
-    return numpy.random.Generator(numpy.random.PCG64(numpy.random.SeedSequence(seed)))
-    
+    gen = numpy.random.Generator(numpy.random.PCG64(numpy.random.SeedSequence(seed)))
+    print(f"random generator {gen} ({type(gen)}) instantiaed from the provided seed: {seed_int2str(seed)}")
+    return gen    
     
 def create_python_random_generator(seed: int) -> random.Random:
     assert isinstance(seed, int), f"seed must be an integer, got {type(seed)}"
     assert seed >= 0, f"seed must be >= 0, got {seed_int2str(seed)}"
-    print(f"random generator instantiaed from the provided seed: {seed_int2str(seed)}")
-    return random.Random(seed)
+    gen = random.Random(seed)
+    print(f"random generator generator {gen} ({type(gen)}) instantiaed from the provided seed: {seed_int2str(seed)}")
+    return gen
+
+def create_torch_random_generator(seed: int) -> torch.Generator:
+    assert isinstance(seed, int), f"seed must be an integer, got {type(seed)}"
+    assert seed >= 0, f"seed must be >= 0, got {seed_int2str(seed)}"
+    gen = torch.Generator()
+    gen.manual_seed(seed)
+    print(f"random generator {gen} ({type(gen)}) instantiaed from the provided seed: {seed_int2str(seed)}")
+    return gen

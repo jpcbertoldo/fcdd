@@ -1,33 +1,97 @@
+"""
 
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+next
+
+- make check_val_every_n_epoch a script option
+- log validate losses
+- do something about pl_module.last_epoch_outputs is not None
+- make callbacks callable only every n epochs
+- save model is already there?
+- make callback to look at the gradient of loss ==> importance of each pixel !!!
+
+- make umap callback
+- make umap for last conv weights viz
+- make special viz for umap with center from the last conv weights
+- log training based contrast parameters ==> from training scores (min of anomalous and max of normal should be the contrast's, respectively, min and max)
+- make jaccard score callback (without binarization) ==> normalize the scores to [0, 1] (use the contrast from above)
+
+make a callback to plot the segmentations
+scores distribution call back
+
+config all these from script cli ==> control frequency !
+
+make the preprocessing things an object on its on, so it can be portable
+ ==> script to generate images that takes globs as input
+
+
+
+later: separate the different modes in the online replacer ==> online replacer should be a callback!!! (can lightning data module have callbacks?)
+later: t-sne of embeddings callback
+later: for roc callback
+    add option to reduce points in the roc curve not samples
+    check if necessary!!!! seems like it already does that
+later: make a threshold-independent jaccard by trying all thresholds for binarization
+later: smartly find good/bad images
+"""
 #!/usr/bin/env python
 # coding: utf-8
 
 import contextlib
 import functools
-import json
 import os
-import os.path as pt
-import sys
 import time
 from argparse import ArgumentParser
 from datetime import datetime
 from pathlib import Path
+from re import A
 from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
 import torch
-import wandb
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.trainer.states import RunningStage
 from scipy.interpolate import interp1d
-from sklearn.metrics import (auc, average_precision_score,
-                             precision_recall_curve, roc_curve)
-from torch import Tensor
+from sklearn.metrics import average_precision_score, precision_recall_curve
 from torch.profiler import tensorboard_trace_handler
 
-import data_dev01
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
-from common_dev01 import create_seed, seed_int2str, seed_str2int
+import wandb
+from callbacks_dev01 import LogAveragePrecisionCallback, LogRocCallback, TorchTensorboardProfilerCallback
+from common_dev01 import (create_python_random_generator, create_seed,
+                          seed_int2str, seed_str2int)
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
+
+# ======================================== exceptions ========================================
+
+class ScriptError(Exception):
+    pass
+
+
+class DatasetError(Exception):
+    pass
+
+
+class ModelError(Exception):
+    pass
 
 
 # ======================================== dataset ========================================
@@ -37,7 +101,7 @@ print(f"DATASET_CHOICES={DATASET_CHOICES}")
 
 
 def unknown_dataset(wrapped: Callable[[str, ], Any]):
-    @functools.wraps
+    @functools.wraps(wrapped)
     def wrapper(dataset: str, *args, **kwargs) -> Any:
         assert dataset in DATASET_CHOICES
         return wrapped(dataset, *args, **kwargs)
@@ -105,7 +169,7 @@ MODEL_CHOICES = tuple(sorted(MODEL_CLASSES.keys()))
 print(f"MODEL_CHOICES={MODEL_CHOICES}")
 
 def unknown_model(wrapped: Callable[[str, ], Any]):
-    @functools.wraps
+    @functools.wraps(wrapped)
     def wrapper(model: str, *args, **kwargs) -> Any:
         assert model in MODEL_CHOICES
         return wrapped(model, *args, **kwargs)
@@ -168,15 +232,17 @@ LIGHTNING_ACCELERATOR_CHOICES = (
 print(f"LIGHTNING_ACCELERATOR_CHOICES={LIGHTNING_ACCELERATOR_CHOICES}")
 
 # src: https://pytorch-lightning.readthedocs.io/en/latest/extensions/strategy.html
+LIGHTNING_STRATEGY_NONE = "none"
 LIGHTNING_STRATEGY_DDP = "ddp"
 LIGHTNING_STRATEGY_CHOICES = (
+    LIGHTNING_STRATEGY_NONE,
     LIGHTNING_STRATEGY_DDP,
 )
 print(f"LIGHTNING_STRATEGY_CHOICES={LIGHTNING_STRATEGY_CHOICES}")
 
 
-LIGHTNING_PRECISION_32 = "32"
-LIGHTNING_PRECISION_16 = "32"
+LIGHTNING_PRECISION_32 = 32
+LIGHTNING_PRECISION_16 = 16
 LIGHTNING_PRECISION_CHOICES = (
     LIGHTNING_PRECISION_32,
     LIGHTNING_PRECISION_16,
@@ -186,7 +252,7 @@ print(f"LIGHTNING_PRECISION_CHOICES={LIGHTNING_PRECISION_CHOICES}")
 
 # ======================================== wandb ========================================
 
-WANDB_WATCH_NONE = None
+WANDB_WATCH_NONE = "none"
 WANDB_WATCH_GRADIENTS = "gradients"
 WANDB_WATCH_ALL = "all"
 WANDB_WATCH_PARAMETERS = "parameters"
@@ -201,8 +267,8 @@ print(f"WANDB_WATCH_CHOICES={WANDB_WATCH_CHOICES}")
 
 WANDB_CHECKPOINT_MODE_NONE = "none"
 WANDB_CHECKPOINT_MODE_LAST = "last"
-WANDB_CHECKPOINT_MODE_BEST = "best"
-WANDB_CHECKPOINT_MODE_ALL = "all"
+# WANDB_CHECKPOINT_MODE_BEST = "best"
+# WANDB_CHECKPOINT_MODE_ALL = "all"
 WANDB_CHECKPOINT_MODES = (
     WANDB_CHECKPOINT_MODE_NONE,
     WANDB_CHECKPOINT_MODE_LAST,
@@ -213,43 +279,7 @@ print(f"WANDB_CHECKPOINT_MODES={WANDB_CHECKPOINT_MODES}")
 
 
 # ======================================== utills ========================================
-
-
-class NumpyEncoder(json.JSONEncoder):
-    """ Encoder to correctly use json on numpy arrays """
-    def default(self, obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return json.JSONEncoder.default(self, obj)
-
-
-def single_save(dir: str, name: str, dic: Any, subdir='.'):
-    """
-    Writes a given dictionary to a json file in the log directory.
-    Returns without impact if the size of the dictionary exceeds 10MB.
-    :param name: name of the json file
-    :param dic: serializable dictionary
-    :param subdir: if given, creates a subdirectory in the log directory. The data is written to a file
-        in this subdirectory instead.
-    """
-    outfile = pt.join(dir, subdir, '{}.json'.format(name))
-    if not pt.exists(os.path.dirname(outfile)):
-        os.makedirs(os.path.dirname(outfile))
-    if isinstance(dic, dict):
-        sz = np.sum([sys.getsizeof(v) for k, v in dic.items()])
-        if sz > 10000000:
-            print(
-                'WARNING: Could not save {}, because size of dict is {}, which exceeded 10MB!'
-                .format(pt.join(dir, subdir, '{}.json'.format(name)), sz),
-                print=True
-            )
-            return
-        with open(outfile, 'w') as writer:
-            json.dump(dic, writer, cls=NumpyEncoder)
-    else:
-        torch.save(dic, outfile.replace('.json', '.pth'))    
-    
-    
+       
 def _reduce_curve_number_of_points(x, y, npoints) -> Tuple[np.ndarray, np.ndarray]:
     """
     Reduces the number of points in the curve by interpolating linearly.
@@ -260,57 +290,7 @@ def _reduce_curve_number_of_points(x, y, npoints) -> Tuple[np.ndarray, np.ndarra
     xs = np.linspace(xmin, xmax, npoints, endpoint=True)
     return xs, func(xs)
   
-    
-@torch.no_grad()
-def compute_gtmap_roc(
-    anomaly_scores,
-    original_gtmaps,
-    net, 
-    limit_npoints: int = 3000,
-):
-    """the scores are upsampled to the images' original size and then the ROC is computed."""
-    
-    # GTMAPS pixel-wise anomaly detection = explanation performance
-    print('Computing ROC score')
-    
-    # Reduces the anomaly score to be a score per pixel (explanation)
-    anomaly_scores = anomaly_scores.mean(1).unsqueeze(1)
-    anomaly_scores = net.receptive_upsample(anomaly_scores, std=net.gauss_std)
-        
-    # Further upsampling for original dataset size
-    anomaly_scores = torch.nn.functional.interpolate(anomaly_scores, (original_gtmaps.shape[-2:]))
-    flat_gtmaps, flat_ascores = original_gtmaps.reshape(-1).int().tolist(), anomaly_scores.reshape(-1).tolist()
-    
-    fpr, tpr, ths = roc_curve(
-        y_true=flat_gtmaps, 
-        y_score=flat_ascores,
-        drop_intermediate=True,
-    )
-    
-    # reduce the number of points of the curve
-    npoints = ths.shape[0]
-    
-    if npoints > limit_npoints:
-        
-        _, fpr = _reduce_curve_number_of_points(
-            x=ths, 
-            y=fpr, 
-            npoints=limit_npoints,
-        )
-        ths, tpr = _reduce_curve_number_of_points(
-            x=ths, 
-            y=tpr, 
-            npoints=limit_npoints,
-        )
-    
-    auc_score = auc(fpr, tpr)
-    
-    print(f'##### GTMAP ROC TEST SCORE {auc_score} #####')
-    gtmap_roc_res = {'tpr': tpr, 'fpr': fpr, 'ths': ths, 'auc': auc_score}
-    
-    return gtmap_roc_res
-
-
+  
 @torch.no_grad()
 def compute_gtmap_pr(
     anomaly_scores,
@@ -369,23 +349,6 @@ def compute_gtmap_pr(
     print(f'##### GTMAP AP TEST SCORE {ap_score} #####')
     gtmap_pr_res = dict(recall=recall, precision=precision, ths=ths, ap=ap_score)
     return gtmap_pr_res
-
-
-class TorchTensorboardProfilerCallback(pl.Callback):
-  """
-  Quick-and-dirty Callback for invoking TensorboardProfiler during training.
-  
-  For greater robustness, extend the pl.profiler.profilers.BaseProfiler. See
-  https://pytorch-lightning.readthedocs.io/en/stable/advanced/profiler.html
-  """
-
-  def __init__(self, profiler):
-    super().__init__()
-    self.profiler = profiler 
-
-  def on_train_batch_end(self, trainer, pl_module, outputs, *args, **kwargs):
-    self.profiler.step()
-    # pl_module.log_dict(outputs)  # also logging the loss, while we're here
 
 
 # ==========================================================================================
@@ -466,6 +429,9 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         '--classes', type=int, nargs='+', default=None,
         help='Run only training sessions for some of the classes being nominal. If not give (default) then all classes are trained.'
     )
+    parser.add_argument(
+        "--cuda-visible-devices", type=int, nargs='*', default=None,
+    )
     # ====================================== files =======================================
     parser.add_argument(
         '--logdir', type=Path, default=Path("../../data/results"),
@@ -487,7 +453,7 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument("--wandb-offline", action="store_true", help="If set, will not sync with the webserver.",)
     parser.add_argument(
         # choices taken from wandb/sdk/wandb_watch.py => watch()
-        "--wandb-watch", type=str, choices=WANDB_WATCH_CHOICES, 
+        "--wandb-watch", type=str, default=None, choices=WANDB_WATCH_CHOICES, 
         help="Argument for wandb_logger.watch(..., log=WANDB_WATCH).",
     )
     parser.add_argument(
@@ -508,13 +474,17 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument("--lightning-ndevices", type=int, default=1, help="Number of devices (gpus) to use for training.")
     parser.add_argument(
         "--lightning-strategy", type=str, 
-        default=LIGHTNING_STRATEGY_DDP, 
+        default=None, 
         choices=LIGHTNING_STRATEGY_CHOICES,
         help="See https://pytorch-lightning.readthedocs.io/en/latest/extensions/strategy.html"
     )
     parser.add_argument(
-        "--lightning-precision", type=str, choices=LIGHTNING_PRECISION_CHOICES,
+        "--lightning-precision", type=int, choices=LIGHTNING_PRECISION_CHOICES,
         help="https://pytorch-lightning.readthedocs.io/en/latest/guides/speed.html#mixed-precision-16-bit-training"
+    )
+    parser.add_argument(
+        "--lightning-model-summary-max-depth", type=int, 
+        help="https://pytorch-lightning.readthedocs.io/en/latest/api/pytorch_lightning.callbacks.ModelSummary.html#pytorch_lightning.callbacks.ModelSummary",
     )
     return parser
 
@@ -536,17 +506,35 @@ def args_post_parse(args_):
     def time_format(i: float) -> str:
         """ takes a timestamp (seconds since epoch) and transforms that into a datetime string representation """
         return datetime.fromtimestamp(i).strftime('%Y%m%d%H%M%S')
-    args_.log_start_time = int(time.time())
+    args_.script_start_time = int(time.time())
+    
+    # ================================== none ==================================
+    if args_.lightning_strategy is not None:
+        args_.lightning_strategy = None if args_.lightning_strategy == LIGHTNING_STRATEGY_NONE else args_.lightning_strategy
 
-    # ================================== shapes ==================================
+    if args_.wandb_watch is not None:
+        args_.wandb_watch = None if args_.wandb_watch == WANDB_WATCH_NONE else args_.wandb_watch
+
+    if args_.wandb_checkpoint_mode is not None:
+        args_.wandb_checkpoint_mode = None if args_.wandb_checkpoint_mode == WANDB_CHECKPOINT_MODE_NONE else args_.wandb_checkpoint_mode
+      
+    # ================================== list 2 tuple (imutable) ==================================
     args_.raw_shape = tuple(args_.raw_shape)
     args_.net_shape = tuple(args_.net_shape)
     
-    # ================================== logdir ==================================
-    logdir_name = f"{args_.logdir_prefix}{'_' if args_.logdir_prefix else ''}{args_.logdir.name}_{time_format(args_.log_start_time)}{'_' if args_.logdir_suffix else ''}{args_.logdir_suffix}"
+    # ================================== cuda ==================================
+    
+    if args_.cuda_visible_devices is not None:
+        args_.cuda_visible_devices = tuple(args_.cuda_visible_devices)
+        
+    # ================================== paths ==================================
+    args_.datadir = args_.datadir.resolve().absolute()
+    
+    logdir = args_.logdir.resolve().absolute()
+    logdir_name = f"{args_.logdir_prefix}{'_' if args_.logdir_prefix else ''}{logdir.name}_{time_format(args_.script_start_time)}{'_' if args_.logdir_suffix else ''}{args_.logdir_suffix}"
     del vars(args_)['logdir_suffix']
     del vars(args_)['logdir_prefix']
-    parent_dir = args_.logdir.parent 
+    parent_dir = logdir.parent 
     if args_.wandb_project is not None:
         parent_dir = parent_dir / args_.wandb_project    
     parent_dir = parent_dir / args_.dataset
@@ -554,21 +542,26 @@ def args_post_parse(args_):
     
     # ================================== seeds ==================================
     seeds = args_.seeds
+    it = args_.it
+    
     if seeds is None:
-        number_it = args_.it
-        assert number_it is not None, "seeds or number_it must be specified"
+        assert it is not None, "seeds or `it` (number of iterations) must be specified"
         print('no seeds specified, using default: auto generated seeds from the system entropy')
         seeds = []
-        for _ in range(number_it):
+        for _ in range(it):
             seeds.append(create_seed())
             time.sleep(1/3)  # let the system state change
-        args_.seeds = seeds
+        args_.seeds = tuple(seeds)
     else:
-        assert args_.it is None, f"seeds and number_it cannot be specified at the same time"
+        if args_.it is not None:
+            # todo change by alert
+            print(f"seeds specified, `it` (={it}) (number of iterations) will be ignored!")
+        seeds = tuple(seeds)
         for s in seeds:
             assert type(s) == int, f"seed must be an int, got {type(s)}"
             assert s >= 0, f"seed must be >= 0, got {s}"
         assert len(set(seeds)) == len(seeds), f"seeds must be unique, got {s}"
+
     del vars(args_)['it']
         
     return args_
@@ -624,6 +617,7 @@ def run_one(
     lightning_ndevices: int,
     lightning_strategy: str,
     lightning_precision: str,
+    lightning_model_summary_max_depth: int,
 ):
     # minimal validation for early mistakes
     assert dataset in DATASET_CHOICES, f"Invalid dataset: {dataset}, chose from {DATASET_CHOICES}"
@@ -632,6 +626,10 @@ def run_one(
     assert loss in model_loss_choices(model), f"Invalid loss: {loss} for model {model}, chose from {model_loss_choices(model)}"
     assert optimizer in model_optimizer_choices(model), f"Invalid optimizer: {optimizer} for model {model}, chose from {model_optimizer_choices(model)}"
     assert scheduler in model_scheduler_choices(model), f"Invalid scheduler: {scheduler} for model {model}, chose from {model_scheduler_choices(model)}"
+    assert lightning_accelerator in LIGHTNING_ACCELERATOR_CHOICES, f"Invalid lightning_accelerator: {lightning_accelerator}, chose from {LIGHTNING_ACCELERATOR_CHOICES}"
+    if lightning_strategy is not None:
+        assert lightning_strategy in LIGHTNING_STRATEGY_CHOICES, f"Invalid lightning_strategy: {lightning_strategy}, chose from {LIGHTNING_STRATEGY_CHOICES}"
+    assert lightning_precision in LIGHTNING_PRECISION_CHOICES, f"Invalid lightning_precision: {lightning_precision}, chose from {LIGHTNING_PRECISION_CHOICES}"
     
     logdir.mkdir(parents=True, exist_ok=True)
     
@@ -657,40 +655,6 @@ def run_one(
     )
     datamodule.prepare_data()
 
-    # ================================ PREVIEW ================================
-    datamodule.setup("fit")
-
-    def make_preview():
-        # train
-        norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps = data_dev01.generate_dataloader_images(
-            datamodule.train_dataloader(
-                batch_size_override=2 * preview_nimages, 
-                embed_preprocessing=True, 
-            ), 
-            nimages_perclass=preview_nimages,
-        )
-
-        def get_mask_dict(mask_tensor: torch.Tensor):
-            """mask_tensor \in int32^[1, H, W]"""
-            return dict(ground_truth=dict(
-                mask_data=mask_tensor.squeeze().numpy(), 
-                class_labels={NOMINAL_TARGET: "normal", ANOMALY_TARGET: "anomalous"}
-            ))
-
-        wandb.log({
-            "train/preview/normal": [
-                wandb.Image(img, caption=[f"train normal {idx:03d}"], masks=get_mask_dict(mask))
-                for idx, (img, mask) in enumerate(zip(norm_imgs, norm_gtmaps))
-            ],
-            "train/preview/anomalous": [
-                wandb.Image(img, caption=[f"train anomalous {idx:03d}"], masks=get_mask_dict(mask))
-                for idx, (img, mask) in enumerate(zip(anom_imgs, anom_gtmaps))
-            ],
-        })
-        
-    if preview_nimages > 0:
-        make_preview()
-
     # ================================ MODEL ================================
     try:
         model_class = MODEL_CLASSES[model]
@@ -698,18 +662,23 @@ def run_one(
     except KeyError as err:
         raise NotImplementedError(f'Model {model} is not implemented!') from err
 
-    model = model_class(
-        in_shape=datamodule.net_shape, 
-        gauss_std=gauss_std,
-        loss_name=loss,
-        # optimizer
-        optimizer_name=optimizer,
-        lr=learning_rate,
-        weight_decay=weight_decay,
-        # scheduler
-        scheduler_name=scheduler,
-        scheduler_paramaters=scheduler_paramaters,
-    )
+    try:
+        model = model_class(
+            in_shape=datamodule.net_shape, 
+            gauss_std=gauss_std,
+            loss_name=loss,
+            # optimizer
+            optimizer_name=optimizer,
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            # scheduler
+            scheduler_name=scheduler,
+            scheduler_paramaters=scheduler_paramaters,
+        )
+    except ModelError as ex:
+        msg = ex.args[0]
+        if "required positional arguments" in msg:
+            raise ModelError(f"Model model_class={model_class.__name__} requires positional argument missing ") from ex
     
     def log_model_architecture(model_: torch.nn.Module):
         model_str = str(model_)
@@ -719,13 +688,76 @@ def run_one(
          # now = dont keep syncing if it changes
         wandb.save(str(model_str_fpath), policy="now") 
     
-    log_model_architecture()
+    log_model_architecture(model)
     
     if wandb_watch is not None:
         wandb_logger.watch(model, log=wandb_watch, log_freq=wandb_watch_log_freq)
 
-    callbacks = []
+    # ================================ CALLBACKS ================================
 
+    callbacks = [
+        # pl.callbacks.ModelSummary(max_depth=lightning_model_summary_max_depth),
+        pl.callbacks.RichModelSummary(max_depth=lightning_model_summary_max_depth),
+        LogRocCallback(
+            stage=RunningStage.TRAINING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=False,
+            limit_points=3000,  # todo make it script param
+            python_generator=create_python_random_generator(seed),
+        ),
+        LogRocCallback(
+            stage=RunningStage.VALIDATING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=False,
+            limit_points=3000,  # todo make it script param
+            python_generator=create_python_random_generator(seed),
+        ),
+        LogRocCallback(
+            stage=RunningStage.TESTING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=True,
+            limit_points=None,
+            python_generator=create_python_random_generator(seed),
+        ),
+        LogAveragePrecisionCallback(
+            stage=RunningStage.TRAINING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=False,
+            limit_points=3000,  # todo make it script param
+            python_generator=create_python_random_generator(seed),
+        ),
+        LogAveragePrecisionCallback(
+            stage=RunningStage.VALIDATING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=False,
+            limit_points=3000,  # todo make it script param
+            python_generator=create_python_random_generator(seed),
+        ),
+        LogAveragePrecisionCallback(
+            stage=RunningStage.TESTING,
+            scores_key="anomaly_scores_maps",
+            gt_key="gtmaps",
+            log_curve=True,
+            limit_points=None,
+            python_generator=create_python_random_generator(seed),
+        ),
+    ]
+    # callbacks = []
+    
+    # if preview_nimages > 0:
+    #     datamodule.setup("fit")
+    #     callbacks.append(
+    #         DataloaderPreviewCallback(
+    #             dataloader=datamodule.train_dataloader(embed_preprocessing=True), 
+    #             n_samples=preview_nimages, logkey_prefix="train-preview"
+    #         ),
+    #     )
+    
     # ================================ PROFILING ================================
     
     if not wandb_profile:
@@ -753,10 +785,19 @@ def run_one(
         log_every_n_steps=1,  
         max_epochs=epochs,    
         deterministic=True,
-        callbacks=callbacks,   
+        callbacks=callbacks, 
+        # i should learn how to properly deal with
+        # the sanity check but for now it's causing too much trouble
+        num_sanity_val_steps=0,
+        # todo add accumulate_grad_batches
+        # todo add auto_scale_batch_size
+        # chek deterministic in detail
+        # todo make specific callbacks on LightningModule.configure_callbacks(),
+        check_val_every_n_epoch=100000,
     )
     
     with profiler:
+        datamodule.setup("fit")
         trainer.fit(model=model, datamodule=datamodule)
     
     if wandb_watch is not None:
@@ -777,7 +818,14 @@ def run_one(
 def run(**kwargs) -> dict:
     """see the arguments in run_one()"""
     
-    base_logdir = kwargs['logdir'].resolve().absolute()
+    cuda_visible_devices = kwargs.pop("cuda_visible_devices", None)
+    if cuda_visible_devices is not None:
+        print(f"Using cuda devices: {cuda_visible_devices} ==> setting environment variable CUDA_VISIBLE_DEVICES")
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, cuda_visible_devices))
+    
+    script_start_time = kwargs.pop("script_start_time")
+    
+    base_logdir = kwargs['logdir']
     dataset = kwargs['dataset']
     
     base_logdir = base_logdir / dataset
@@ -785,14 +833,26 @@ def run(**kwargs) -> dict:
     wandb_offline = kwargs.pop("wandb_offline", False)
     wandb_project = kwargs.pop("wandb_project", None)
     wandb_tags = kwargs.pop("wandb_tags", None) or []
-    wandb_checkpoint_mode = kwargs.pop("wandb_checkpoint_mode", WANDB_CHECKPOINT_MODE_LAST)
-    assert wandb_checkpoint_mode in WANDB_CHECKPOINT_MODES, f"wandb_checkpoint_mode={wandb_checkpoint_mode} is not valid! chose from {WANDB_CHECKPOINT_MODES}"
+    
+    wandb_checkpoint_mode = kwargs.pop("wandb_checkpoint_mode")
+    
+    if wandb_checkpoint_mode is None:
+        log_model = False 
+    else:
+        log_model = wandb_checkpoint_mode != WANDB_CHECKPOINT_MODE_NONE
+        
+    if log_model:
+        assert not wandb_offline, f"wandb_offline={wandb_offline} is incompatible with log_model={log_model} (from wandb_checkpoint_mode={wandb_checkpoint_mode})"
+
+    if wandb_offline:
+        print(f"wandb_offline={wandb_offline} --> setting enviroment variable WANDB_MODE=offline")
+        os.environ["WANDB_MODE"] = "offline"
     
     # if none then do all the classes
-    classes = kwargs.pop("classes", None) or range(dataset_nclasses(dataset))
+    classes = kwargs.pop("classes", None) or tuple(range(dataset_nclasses(dataset)))
 
     seeds = kwargs.pop('seeds')   
-    its = list(range(len(seeds)))
+    its = tuple(range(len(seeds)))
     
     for c in classes:
         
@@ -800,17 +860,17 @@ def run(**kwargs) -> dict:
         cls_logdir = base_logdir / f'normal_{c}'
         kwargs.update(dict(normal_class=c,))
         
-        for i, seed in zip(its, seeds):
+        for it, seed in zip(its, seeds):
             
-            print(f"it {i:02d} seed {seed_int2str(seed)}")    
-            kwargs.update(dict(it=i, seed=seed,))
+            print(f"it {it:02d} seed {seed_int2str(seed)}")    
+            kwargs.update(dict(seed=seed,))
             
-            logdir = (cls_logdir / 'it_{:02}'.format(i)).absolute()
+            logdir = (cls_logdir / f'it_{it:02}').absolute()
             # it's super important that the dir must already exist for wandb logging           
             logdir.mkdir(parents=True, exist_ok=True)
             print(f"logdir: {logdir}")
             
-            wandb_name = f"{dataset}.{base_logdir.name}.cls{c:02}.it{i:02}"
+            wandb_name = f"{dataset}.{base_logdir.name}.cls{c:02}.it{it:02}"
             print(f"wandb_name={wandb_name}")
             
             run_one_kwargs = {
@@ -825,6 +885,9 @@ def run(**kwargs) -> dict:
                 **dict(
                     seeds_str=seed_int2str(seed),
                     normal_class_label=dataset_class_labels(dataset)[c],
+                    script_start_time=script_start_time,
+                    it=it,
+                    cuda_visible_devices=cuda_visible_devices,
                 ),
             }
             
@@ -842,7 +905,7 @@ def run(**kwargs) -> dict:
                 offline=wandb_offline,
                 # for now only the last checkpoint is available, but later the others can be integrated
                 # (more stuff have to be done in the run_one())
-                log_model=True if wandb_checkpoint_mode == WANDB_CHECKPOINT_MODE_LAST else False,
+                log_model=log_model,
                 **wandb_init_kwargs,
             )   
              
@@ -858,8 +921,13 @@ def run(**kwargs) -> dict:
             )
             
             try:
-                run_one(wandb_logger=wandb_logger, **kwargs,)
-                
+                run_one(wandb_logger=wandb_logger, **run_one_kwargs,)
+            
+            except TypeError as ex:
+                msg = ex.args[0]
+                if "run_one() got an unexpected keyword argument" in msg:
+                    raise ScriptError(f"run_one() got an unexpected keyword argument: {msg}, did you forget to kwargs.pop() something?") from ex
+                raise ex
             except Exception as ex:
                 wandb_logger.finalize("failed")
                 wandb.finish(1)
