@@ -123,7 +123,7 @@ class FCDD_CNN224_VGG(LightningModule):
         
         self.save_hyperparameters()
         pass
-        
+    
     def forward(self, x):
         assert x.shape[-2:] == self.in_shape, f"{x.shape[1:]} != {self.in_shape}"
         x = self.features(x)
@@ -152,7 +152,7 @@ class FCDD_CNN224_VGG(LightningModule):
         loss_maps = norm_loss_maps + anom_loss_maps
         
         return anomaly_score_maps, loss_maps, loss_maps.mean()
-            
+
     def configure_optimizers(self):
         
         # =================================== optimizer =================================== 
@@ -198,37 +198,57 @@ class FCDD_CNN224_VGG(LightningModule):
     def _common_step(self, batch, batch_idx, stage):
         
         inputs, labels, gtmaps = batch
-        anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
+        score_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
         
         # separate normal/anomaly
         with torch.no_grad():
             
-            loss_normal = loss_maps[gtmaps == 0].mean()
-            loss_anomaly = loss_maps[gtmaps == 1].mean()
+            loss_normals = loss_maps[gtmaps == 0]
+            loss_normals_mean = loss_normals.mean()
             
-            score = anomaly_scores_maps.mean()
-            scores_normal = anomaly_scores_maps[gtmaps == 0].mean()
-            scores_anomaly = anomaly_scores_maps[gtmaps == 1].mean()
+            loss_anomalous = loss_maps[gtmaps == 1]
+            loss_anomalous_mean = loss_anomalous.mean()
+            
+            score_mean = score_maps.mean()
+            
+            score_normals = score_maps[gtmaps == 0]
+            score_normals_mean = score_normals.mean()
+            
+            score_anomalous = score_maps[gtmaps == 1]
+            score_anomalous_mean = score_anomalous.mean()
 
-        self.log(f"{stage}/score", score, on_step=False, on_epoch=True)
-        self.log(f"{stage}/score-normal", scores_normal, on_step=False, on_epoch=True)
-        self.log(f"{stage}/score-anomaly", scores_anomaly, on_step=False, on_epoch=True)
-                
+        self.log(f"{stage}/score-mean", score_mean, on_step=False, on_epoch=True)
+        self.log(f"{stage}/score-normals-mean", score_normals_mean, on_step=False, on_epoch=True)
+        self.log(f"{stage}/score-anomalous-mean", score_anomalous_mean, on_step=False, on_epoch=True)
+        
+        # the loss name doesnt follow the logic of the other metrics
+        # because the name 'loss' is required by pytorch lightning
         self.log(f"{stage}/loss", loss, on_step=False, on_epoch=True)
-        self.log(f"{stage}/loss-normal", loss_normal, on_step=False, on_epoch=True)
-        self.log(f"{stage}/loss-anomaly", loss_anomaly, on_step=False, on_epoch=True)
+        self.log(f"{stage}/loss-normals-mean", loss_normals_mean, on_step=False, on_epoch=True)
+        self.log(f"{stage}/loss-anomalous-mean", loss_anomalous_mean, on_step=False, on_epoch=True)
         
         return dict(
+            # inputs
             inputs=inputs, 
             labels=labels, 
-            gtmaps=gtmaps, 
-            anomaly_scores_maps=anomaly_scores_maps, 
+            gtmaps=gtmaps,
+            # score 
+            score_maps=score_maps, 
+            score_normals=score_normals,
+            score_anomalous=score_anomalous,
+            # loss
             loss_maps=loss_maps, 
+            loss_normals=loss_normals,
+            loss_anomalous=loss_anomalous,
             loss=loss,
         )
         
     def training_step(self, batch, batch_idx):    
         return self._common_step(batch, batch_idx, stage=RunningStage.TRAINING)
+    
+    def training_epoch_end(self, outputs) -> None:
+        self.last_epoch_outputs = merge_steps_outputs(outputs)
+        pass
     
     def validation_step(self, batch, batch_idx):
         return self._common_step(batch, batch_idx, stage=RunningStage.VALIDATING)

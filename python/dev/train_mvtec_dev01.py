@@ -54,7 +54,8 @@ parser.set_defaults(
     lightning_strategy=train_dev01.LIGHTNING_STRATEGY_NONE,
     lightning_precision=train_dev01.LIGHTNING_PRECISION_32,
     lightning_model_summary_max_depth=4,
-    lightning_check_val_every_n_epoch=10,
+    lightning_check_val_every_n_epoch=1,
+    lightning_accumulate_grad_batches=1,
 )
 args = parser.parse_args()
 train_dev01.args_validate_dataset_specific_choices(args)

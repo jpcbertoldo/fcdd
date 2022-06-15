@@ -23,15 +23,28 @@ next
 - make accumulate batch and decrease default batch size to fit 3 models in memory
 
 - make callback to look at the gradient of loss ==> importance of each pixel !!!
+        i did not find how to access that gradient
+        i tried using the hooks on_before_optimizer_step() and on_after_backward()
+        but it did not work because the grad was alwyas none
+        i did trie using x.retain_grad() but it did not work
+        using watch is not anymore useful than this
+        alternative 1: by looking at the loss, i can compute its gradient manually
+        alternative 2: by encapsulating the loss in a function, i can get a function that computes the gradient with torch?
+        
+        !!! probably the best way !!!
+        alternative 3: torch.Tensor.register_hook()? 
+            https://pytorch.org/docs/stable/generated/torch.Tensor.register_hook.html
 
 - make umap callback
-- make umap for last conv weights viz
-- make special viz for umap with center from the last conv weights
+    for last conv weights viz
+    make special viz for umap with center from the last conv weights
+    
 - log training based contrast parameters ==> from training scores (min of anomalous and max of normal should be the contrast's, respectively, min and max)
 - make jaccard score callback (without binarization) ==> normalize the scores to [0, 1] (use the contrast from above)
 
 make a callback to plot the segmentations
-scores distribution call back
+
+- LATER: histogram: normal vs. anomalous ==> the one one on test (update summary is not working)
 
 config all these from script cli ==> control frequency !
 
@@ -72,7 +85,7 @@ from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
-from callbacks_dev01 import LogAveragePrecisionCallback, LogRocCallback, TorchTensorboardProfilerCallback
+from callbacks_dev01 import LogAveragePrecisionCallback, LogHistogramCallback, LogHistogramsSuperposedPerClassCallback, LogRocCallback, TorchTensorboardProfilerCallback
 from common_dev01 import (create_python_random_generator, create_seed,
                           seed_int2str, seed_str2int)
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
@@ -495,6 +508,10 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         "--lightning-check-val-every-n-epoch", type=int,
         help="... find link to lightning doc ..."
     )
+    parser.add_argument(
+        "--lightning-accumulate-grad-batches", type=int,
+        help="Accumulate gradients for THIS batches. https://pytorch-lightning.readthedocs.io/en/latest/advanced/training_tricks.html#accumulate-gradients"
+    )
     return parser
 
 
@@ -621,6 +638,8 @@ def run_one(
     wandb_profile: bool,
     wandb_watch: Optional[str],
     wandb_watch_log_freq: int,
+    wandb_log_roc: Tuple[int, int, int],
+    wandb_log_pr: Tuple[int, int, int],
     # pytorch lightning
     lightning_accelerator: str,
     lightning_ndevices: int,
@@ -628,6 +647,7 @@ def run_one(
     lightning_precision: str,
     lightning_model_summary_max_depth: int,
     lightning_check_val_every_n_epoch: int,
+    lightning_accumulate_grad_batches: int,
 ):
     # minimal validation for early mistakes
     assert dataset in DATASET_CHOICES, f"Invalid dataset: {dataset}, chose from {DATASET_CHOICES}"
@@ -717,7 +737,7 @@ def run_one(
         callbacks.append(
             LogRocCallback(
                 stage=RunningStage.TRAINING,
-                scores_key="anomaly_scores_maps",
+                scores_key="score_maps",
                 gt_key="gtmaps",
                 log_curve=False,
                 limit_points=3000,  # todo make it script param
@@ -729,7 +749,7 @@ def run_one(
         callbacks.append(
             LogRocCallback(
                 stage=RunningStage.VALIDATING,
-                scores_key="anomaly_scores_maps",
+                scores_key="score_maps",
                 gt_key="gtmaps",
                 log_curve=False,
                 limit_points=3000,  # todo make it script param
@@ -741,7 +761,7 @@ def run_one(
         callbacks.append(
             LogRocCallback(
                 stage=RunningStage.TESTING,
-                scores_key="anomaly_scores_maps",
+                scores_key="score_maps",
                 gt_key="gtmaps",
                 log_curve=True,
                 limit_points=None,
@@ -755,7 +775,7 @@ def run_one(
         callbacks.append(
             LogAveragePrecisionCallback(
                 stage=RunningStage.TRAINING,
-                scores_key="anomaly_scores_maps",
+                scores_key="score_maps",
                 gt_key="gtmaps",
                 log_curve=False,
                 limit_points=3000,  # todo make it script param
@@ -766,7 +786,7 @@ def run_one(
         callbacks.append(
             LogAveragePrecisionCallback(
                 stage=RunningStage.VALIDATING,
-                scores_key="anomaly_scores_maps",
+                scores_key="score_maps",
                 gt_key="gtmaps",
                 log_curve=False,
                 limit_points=3000,  # todo make it script param
@@ -777,16 +797,109 @@ def run_one(
         callbacks.append(
             LogAveragePrecisionCallback(
                 stage=RunningStage.TESTING,
-                scores_key="anomaly_scores_maps",
+                scores_key="score_maps",
                 gt_key="gtmaps",
                 log_curve=True,
                 limit_points=None,
                 python_generator=create_python_random_generator(seed),
             )
         )
-        # ========================================================================= heatmaps
-        # ========================================================================= histograms
+    # ========================================================================= heatmaps
     
+    
+    # ========================================================================= histograms
+        
+    import callbacks_dev01
+    
+    # TODO make me a script arg
+    wandb_log_score_histogram = callbacks_dev01.LOG_HISTOGRAM_MODE_LOG, callbacks_dev01.LOG_HISTOGRAM_MODE_LOG, callbacks_dev01.LOG_HISTOGRAM_MODE_SUMMARY
+    
+    log_score_histogram_train, log_score_histogram_validation, log_score_histogram_test = wandb_log_score_histogram
+    
+    if log_score_histogram_train is not None:
+        callbacks.extend([
+            LogHistogramCallback(stage=RunningStage.TRAINING, key="score_maps", mode=log_score_histogram_train,), 
+            LogHistogramsSuperposedPerClassCallback(
+                stage=RunningStage.TRAINING, 
+                values_key="score_maps", 
+                gt_key="gtmaps", 
+                mode=log_score_histogram_train,
+                python_generator=create_python_random_generator(seed),
+                limit_points=3000,
+            ),
+        ])
+
+    if log_score_histogram_validation is not None:
+        
+        callbacks.extend([
+            LogHistogramCallback(stage=RunningStage.VALIDATING, key="score_maps", mode=log_score_histogram_validation,), 
+            LogHistogramsSuperposedPerClassCallback(
+                stage=RunningStage.VALIDATING, 
+                values_key="score_maps", 
+                gt_key="gtmaps", 
+                mode=log_score_histogram_validation,
+                python_generator=create_python_random_generator(seed),
+                limit_points=3000,
+            ),
+        ])
+    
+    if log_score_histogram_test is not None:
+        callbacks.extend([
+            LogHistogramCallback(stage=RunningStage.TESTING, key="score_maps", mode=log_score_histogram_test,), 
+            LogHistogramsSuperposedPerClassCallback(
+                stage=RunningStage.TESTING, 
+                values_key="score_maps", 
+                gt_key="gtmaps", 
+                mode=log_score_histogram_test,
+                python_generator=create_python_random_generator(seed),
+                limit_points=3000,
+            ),
+        ])
+    
+    # TODO make me a script arg
+    wandb_log_loss_histogram = callbacks_dev01.LOG_HISTOGRAM_MODE_LOG, callbacks_dev01.LOG_HISTOGRAM_MODE_LOG, callbacks_dev01.LOG_HISTOGRAM_MODE_SUMMARY
+    
+    log_loss_histogram_train, log_loss_histogram_validation, log_loss_histogram_test = wandb_log_loss_histogram
+    
+    if log_loss_histogram_train is not None:
+        callbacks.extend([
+            LogHistogramCallback(stage=RunningStage.TRAINING, key="loss_maps", mode=log_loss_histogram_train,), 
+            LogHistogramsSuperposedPerClassCallback(
+                stage=RunningStage.TRAINING, 
+                values_key="loss_maps", 
+                gt_key="gtmaps", 
+                mode=log_loss_histogram_train,
+                python_generator=create_python_random_generator(seed),
+                limit_points=3000,
+            ),
+        ])
+    
+    if log_loss_histogram_validation is not None:
+        callbacks.extend([
+            LogHistogramCallback(stage=RunningStage.VALIDATING, key="loss_maps", mode=log_loss_histogram_validation,), 
+            LogHistogramsSuperposedPerClassCallback(
+                stage=RunningStage.VALIDATING, 
+                values_key="loss_maps", 
+                gt_key="gtmaps", 
+                mode=log_loss_histogram_validation,
+                python_generator=create_python_random_generator(seed),
+                limit_points=3000,
+            ),
+        ])
+    
+    if log_loss_histogram_test is not None:
+        callbacks.extend([
+            LogHistogramCallback(stage=RunningStage.TESTING, key="loss_maps", mode=log_loss_histogram_test,), 
+            LogHistogramsSuperposedPerClassCallback(
+                stage=RunningStage.TESTING, 
+                values_key="loss_maps", 
+                gt_key="gtmaps", 
+                mode=log_loss_histogram_test,
+                python_generator=create_python_random_generator(seed),
+                limit_points=3000,
+            ),
+        ])
+
     # if preview_nimages > 0:
     #     datamodule.setup("fit")
     #     callbacks.append(
@@ -832,6 +945,7 @@ def run_one(
         # chek deterministic in detail
         # todo make specific callbacks on LightningModule.configure_callbacks(),
         check_val_every_n_epoch=lightning_check_val_every_n_epoch,
+        accumulate_grad_batches=lightning_accumulate_grad_batches,
     )
     
     with profiler:

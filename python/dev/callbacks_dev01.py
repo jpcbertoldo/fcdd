@@ -147,8 +147,8 @@ class MultiStageEpochEndCallbackMixin(abc.ABC):
         return wrapper
     
     @staticmethod
-    def should_log(hook_stage, self_stage, trainer_stage, ):
-        return self_stage == hook_stage and trainer_stage == hook_stage
+    def should_log(hook_stage, callback_stage, trainer_stage, ):
+        return callback_stage == hook_stage and trainer_stage == hook_stage
     
     def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         if self.should_log(RunningStage.TRAINING, self.stage, trainer.state.stage) and pl_module.last_epoch_outputs is not None:
@@ -274,6 +274,7 @@ class LogAveragePrecisionCallback(
         Log the average precision and (optionally) its curve (precision-recall curve) at the end of an epoch.
         
         Args:
+            scores_key & gt_key: inside the last_epoch_outputs, how are the scores and gt maps called?
             limit_points (int, optional): sample this number of points from all the available scores, if None, then no limitation is applied. Defaults to 3000.
         """
         super().__init__()
@@ -342,9 +343,185 @@ class LogAveragePrecisionCallback(
             wandb.log({curve_logkey: hacked_dev01.pr_curve(binary_gt, scores, labels=["anomalous"])})
            
         trainer.model.log(avg_precision_logkey, average_precision_score(binary_gt, scores))
-        
-        
+  
+  
+LOG_HISTOGRAM_MODE_LOG = "log"
+LOG_HISTOGRAM_MODE_SUMMARY = "summary"
+LOG_HISTOGRAM_MODES = (LOG_HISTOGRAM_MODE_LOG, LOG_HISTOGRAM_MODE_SUMMARY)
+       
+class LogHistogramCallback(
+    MultiStageEpochEndCallbackMixin,
+    LastEpochOutputsDependentCallbackMixin, 
+    pl.Callback,
+):
+    
+    @MultiStageEpochEndCallbackMixin.init_stage  
+    def __init__(self, key: str, mode: str):
+        """
+        Args:
+            key: inside the last_epoch_outputs, what do you want to log?
+        """
+        super().__init__()
+        assert key != "", f"key must not be empty"
+        assert mode in LOG_HISTOGRAM_MODES, f"log_mode must be one of {LOG_HISTOGRAM_MODES}, got '{mode}'"
+        self.key = key
+        self.mode = mode
 
+    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
+    def setup(self, trainer, pl_module, stage=None):
+        pass  # just let the mixin do its job
+        
+    def _multi_stage_epoch_end_do(self, trainer, pl_module):
+        self._log_histogram(trainer, pl_module)
+    
+    def _log_histogram(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        
+        try:
+            values = pl_module.last_epoch_outputs[self.key]
+        
+        except KeyError as ex:
+            msg = ex.args[0]
+            if self.key not in msg:
+                raise ex
+            raise ValueError(f"pl_module.last_epoch_outputs should have the key self.key={self.key}, did you configure the model correctly? or passed me the wrong key?") from ex
+        
+        assert isinstance(values, torch.Tensor), f"scores must be a torch.Tensor, got {type(values)}"
+        
+        current_stage = trainer.state.stage
+        logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
+        logkey = f"{logkey_prefix}histogram-of-{self.key}"
+        
+        # requirement from wandb.Histogram()
+        values = values.detach().numpy() if values.requires_grad else values
+        
+        import wandb
+        
+        if self.mode == LOG_HISTOGRAM_MODE_LOG:
+            wandb.log({logkey: wandb.Histogram(values)})
+            
+        elif self.mode == LOG_HISTOGRAM_MODE_SUMMARY:
+            wandb.run.summary.update({logkey: wandb.Histogram(values)})
+            
+        else:
+            raise ValueError(f"log_mode must be one of {LOG_HISTOGRAM_MODES}, got '{self.mode}'")
+        
+        
+class LogHistogramsSuperposedPerClassCallback(
+    MultiStageEpochEndCallbackMixin,
+    LastEpochOutputsDependentCallbackMixin, 
+    RandomCallbackMixin, 
+    pl.Callback,
+):
+    
+    @MultiStageEpochEndCallbackMixin.init_stage
+    @RandomCallbackMixin.init_python_generator
+    def __init__(self, values_key: str, gt_key: str, mode: str, limit_points: int = 3000,):
+        """
+        Args:
+            values_key & gt_key: inside the last_epoch_outputs, how are the values and their respective labels called?
+        """
+        super().__init__()
+                
+        assert values_key != "", f"scores_key must not be empty"
+        assert gt_key != "", f"gt_key must not be empty"
+        assert values_key != gt_key, f"scores_key and gt_key must be different, got {values_key} and {gt_key}"
+        
+        assert mode in LOG_HISTOGRAM_MODES, f"log_mode must be one of {LOG_HISTOGRAM_MODES}, got '{mode}'"
+                
+        if limit_points is not None:
+            assert limit_points > 0, f"limit_points must be > 0 or None, got {limit_points}"
+            
+        self.values_key = values_key
+        self.gt_key = gt_key
+        self.mode = mode
+        self.limit_points = limit_points
+
+    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
+    def setup(self, trainer, pl_module, stage=None):
+        pass  # just let the mixin do its job
+        
+    def _multi_stage_epoch_end_do(self, trainer, pl_module):
+        self._log_histograms_supperposed_per_class(trainer, pl_module)
+    
+    def _log_histograms_supperposed_per_class(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        
+        try:
+            values = pl_module.last_epoch_outputs[self.values_key]
+            gt = pl_module.last_epoch_outputs[self.gt_key]
+            
+        except KeyError as ex:
+            msg = ex.args[0]
+            if self.values_key not in msg and self.gt_key not in msg:
+                raise ex
+            raise ValueError(f"pl_module.last_epoch_outputs should have the keys self.values_key={self.values_key} and self.gt_key={self.gt_key}, did you configure the model correctly? or passed me the wrong keys?") from ex
+        
+        assert isinstance(values, torch.Tensor), f"values must be a torch.Tensor, got {type(values)}"
+        assert isinstance(gt, torch.Tensor), f"gt must be a torch.Tensor, got {type(gt)}"
+
+        assert values.shape == gt.shape, f"values and gtg must have the same shape, got {values.shape} and {gt.shape}"
+                        
+        # make sure they are 1D (it doesn't matter if they were not before)
+        values = values.reshape(-1, 1)  # wandb.plot.roc_curve() wants it like this
+        gt = gt.reshape(-1, 1)
+                
+        if self.limit_points is None:
+            values_selected = values
+            gt_selected = gt
+            
+        else:
+            unique_gt_values = gt.unique()
+            n_unique_gt_values = len(unique_gt_values)
+            
+            values_selected = torch.empty(self.limit_points * n_unique_gt_values, 1, dtype=values.dtype)
+            gt_selected = torch.empty(self.limit_points * n_unique_gt_values, 1, dtype=gt.dtype)
+            
+            for idx, gt_value in enumerate(unique_gt_values): 
+                
+                from_idx = idx * self.limit_points
+                to_idx = (idx + 1) * self.limit_points
+                
+                values_ = values[gt == gt_value].unsqueeze(-1)
+                npoints_ = values_.shape[0]
+
+                if npoints_ > self.limit_points:
+                    indices = torch.tensor(self.python_generator.sample(range(npoints_), self.limit_points))
+                    
+                    values_selected[from_idx:to_idx] = values_[indices]
+                    gt_selected[from_idx:to_idx] = torch.full((self.limit_points, 1), gt_value, dtype=gt.dtype)
+                    
+                else:
+                    # if npoints < self.limit_points, there will be empty things there
+                    # so i'll put nans and later remove them
+                    tmp = torch.empty(self.limit_points, 1, dtype=values.dtype)
+                    tmp[:npoints_] = values_
+                    tmp[npoints_:] = np.nan
+                    values_selected[from_idx:to_idx] = tmp
+                    gt_selected[from_idx:to_idx] = torch.full((self.limit_points, 1), gt_value, dtype=gt.dtype)
+            
+            values_to_keep = ~ torch.isnan(values_selected)
+            values_selected = values_selected[values_to_keep].unsqueeze(-1)
+            gt_selected = gt_selected[values_to_keep].unsqueeze(-1)
+        
+        table = torch.cat((values_selected, gt_selected), dim=1).tolist()
+        
+        current_stage = trainer.state.stage
+        logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
+        logkey = f"{logkey_prefix}histogram-superposed-per-class-of-{self.values_key}"
+             
+        import wandb
+        
+        table = wandb.Table(data=table, columns=[self.values_key, "gt"])
+        
+        if self.mode == LOG_HISTOGRAM_MODE_LOG:
+            wandb.log({logkey: table})
+            
+        elif self.mode == LOG_HISTOGRAM_MODE_SUMMARY:
+            wandb.run.summary.update({logkey: table})
+            
+        else:
+            raise ValueError(f"mode must be one of {LOG_HISTOGRAM_MODES}, got '{self.mode}'")      
+        
+        
 class DataloaderPreviewCallback(pl.Callback):
     
     def __init__(self, dataloader, n_samples=5,  logkey_prefix="train/preview"):
@@ -386,8 +563,6 @@ class DataloaderPreviewCallback(pl.Callback):
                 for idx, (img, mask) in enumerate(zip(anom_imgs, anom_gtmaps))
             ],
         })
-
-
 
         
 class TorchTensorboardProfilerCallback(pl.Callback):
