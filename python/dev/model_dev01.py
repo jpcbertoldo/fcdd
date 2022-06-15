@@ -12,6 +12,7 @@ import torch.optim as optim
 import torchvision
 from fcdd.models.bases import ReceptiveNet
 from pytorch_lightning import LightningModule
+from pytorch_lightning.trainer.states import RunningStage
 from torch import Tensor
 from torch.hub import load_state_dict_from_url
 
@@ -193,48 +194,27 @@ class FCDD_CNN224_VGG(LightningModule):
             raise NotImplementedError(f'LR scheduler type {scheduler_name} not known.')
         
         return [optimizer], [scheduler]     
-        
-    def training_step(self, batch, batch_idx):
+    
+    def _common_step(self, batch, batch_idx, stage):
         
         inputs, labels, gtmaps = batch
         anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
         
-        # separate the loss in normal/anomaly
+        # separate normal/anomaly
         with torch.no_grad():
+            
             loss_normal = loss_maps[gtmaps == 0].mean()
             loss_anomaly = loss_maps[gtmaps == 1].mean()
+            
+            score = anomaly_scores_maps.mean()
             scores_normal = anomaly_scores_maps[gtmaps == 0].mean()
             scores_anomaly = anomaly_scores_maps[gtmaps == 1].mean()
 
-        self.log(f"train/score-normal", scores_normal, on_step=False, on_epoch=True)
-        self.log(f"train/score-anomaly", scores_anomaly, on_step=False, on_epoch=True)
-        self.log("train/loss-normal", loss_normal, on_step=False, on_epoch=True)
-        self.log("train/loss-anomaly", loss_anomaly, on_step=False, on_epoch=True)
-        self.log("train/loss", loss, on_step=False, on_epoch=True)
-        
-        return dict(
-            inputs=inputs, 
-            labels=labels, 
-            gtmaps=gtmaps, 
-            anomaly_scores_maps=anomaly_scores_maps, 
-            loss_maps=loss_maps, 
-            loss=loss,
-        )
-    
-    def _val_test_step(self, batch, batch_idx, stage):
-        
-        inputs, labels, gtmaps = batch
-        anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
-        self.log(f"{stage}/loss", loss, on_step=False, on_epoch=True)
-        
-        scores_normal = anomaly_scores_maps[gtmaps == 0].mean()
-        scores_anomaly = anomaly_scores_maps[gtmaps == 1].mean()
+        self.log(f"{stage}/score", score, on_step=False, on_epoch=True)
         self.log(f"{stage}/score-normal", scores_normal, on_step=False, on_epoch=True)
         self.log(f"{stage}/score-anomaly", scores_anomaly, on_step=False, on_epoch=True)
-        
-        loss_normal = loss_maps[gtmaps == 0].mean()
-        loss_anomaly = loss_maps[gtmaps == 1].mean()
-        
+                
+        self.log(f"{stage}/loss", loss, on_step=False, on_epoch=True)
         self.log(f"{stage}/loss-normal", loss_normal, on_step=False, on_epoch=True)
         self.log(f"{stage}/loss-anomaly", loss_anomaly, on_step=False, on_epoch=True)
         
@@ -247,8 +227,11 @@ class FCDD_CNN224_VGG(LightningModule):
             loss=loss,
         )
         
+    def training_step(self, batch, batch_idx):    
+        return self._common_step(batch, batch_idx, stage=RunningStage.TRAINING)
+    
     def validation_step(self, batch, batch_idx):
-        return self._val_test_step(batch, batch_idx, stage="validate")
+        return self._common_step(batch, batch_idx, stage=RunningStage.VALIDATING)
         pass
     
     def validation_epoch_end(self, validation_step_outputs):
@@ -256,7 +239,7 @@ class FCDD_CNN224_VGG(LightningModule):
         pass
         
     def test_step(self, batch, batch_idx):
-        return self._val_test_step(batch, batch_idx, stage="test")
+        return self._common_step(batch, batch_idx, stage=RunningStage.TESTING)
         pass
     
     def test_epoch_end(self, test_step_outputs):

@@ -150,7 +150,7 @@ class MultiStageEpochEndCallbackMixin(abc.ABC):
     def should_log(hook_stage, self_stage, trainer_stage, ):
         return self_stage == hook_stage and trainer_stage == hook_stage
     
-    def on_train_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"):
+    def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         if self.should_log(RunningStage.TRAINING, self.stage, trainer.state.stage) and pl_module.last_epoch_outputs is not None:
             self._multi_stage_epoch_end_do(trainer, pl_module)
     
@@ -204,6 +204,8 @@ class LogRocCallback(
         pass  # just let the mixin do its job
     
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
+        if pl_module.last_epoch_outputs is None:
+            return
         self._log_roc(trainer, pl_module)
     
     def _log_roc(self, trainer: pl.Trainer, pl_module: pl.LightningModule):

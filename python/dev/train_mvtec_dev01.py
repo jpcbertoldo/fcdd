@@ -45,12 +45,16 @@ parser.set_defaults(
     wandb_offline=False,
     wandb_watch=train_dev01.WANDB_WATCH_NONE,
     wandb_watch_log_freq=100,  # wandb's default
+    wandb_checkpoint_mode=train_dev01.WANDB_CHECKPOINT_MODE_LAST,
+    wandb_log_roc=(False, True, True),
+    wandb_log_pr=(False, True, True),
     # pytorch lightning 
     lightning_accelerator=train_dev01.LIGHTNING_ACCELERATOR_GPU,
     lightning_ndevices=1,
     lightning_strategy=train_dev01.LIGHTNING_STRATEGY_NONE,
     lightning_precision=train_dev01.LIGHTNING_PRECISION_32,
     lightning_model_summary_max_depth=4,
+    lightning_check_val_every_n_epoch=10,
 )
 args = parser.parse_args()
 train_dev01.args_validate_dataset_specific_choices(args)

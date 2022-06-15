@@ -20,11 +20,8 @@ next
 next
 next
 
-- make check_val_every_n_epoch a script option
-- log validate losses
-- do something about pl_module.last_epoch_outputs is not None
-- make callbacks callable only every n epochs
-- save model is already there?
+- make accumulate batch and decrease default batch size to fit 3 models in memory
+
 - make callback to look at the gradient of loss ==> importance of each pixel !!!
 
 - make umap callback
@@ -458,11 +455,19 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     )
     parser.add_argument(
         "--wandb-watch-log-freq", type=int, default=100,
-        help="Argument for wandb_logger.watch(..., log_freq=WANDB_WATCH_LOG_FREQ).",
+        help="Log frequency of gradients and parameters. Argument for wandb_logger.watch(..., log_freq=WANDB_WATCH_LOG_FREQ). ",
     )
     parser.add_argument(        
         "--wandb-checkpoint-mode", type=str, choices=WANDB_CHECKPOINT_MODES, default=WANDB_CHECKPOINT_MODE_LAST,
         help="How to save checkpoints."
+    )
+    parser.add_argument(
+        "--wandb-log-roc", type=bool, nargs=3,
+        help="If set, the ROC AUC curve will be logged, respectively, for train/validation/test. On test the curve is also logged."
+    )
+    parser.add_argument(
+        "--wandb-log-pr", type=bool, nargs=3,
+        help="If set, the average precision curve will be logged, respectively, for train/validation/test. On test the PR curve is also logged."
     )
     # ================================ pytorch lightning =================================
     parser.add_argument(
@@ -485,6 +490,10 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument(
         "--lightning-model-summary-max-depth", type=int, 
         help="https://pytorch-lightning.readthedocs.io/en/latest/api/pytorch_lightning.callbacks.ModelSummary.html#pytorch_lightning.callbacks.ModelSummary",
+    )
+    parser.add_argument(
+        "--lightning-check-val-every-n-epoch", type=int,
+        help="... find link to lightning doc ..."
     )
     return parser
 
@@ -569,7 +578,7 @@ def args_post_parse(args_):
 
 # ==========================================================================================
 # ==========================================================================================
-# ========================================== run ===========================================
+# ========================================== run one =======================================
 # ==========================================================================================
 # ==========================================================================================
 
@@ -618,6 +627,7 @@ def run_one(
     lightning_strategy: str,
     lightning_precision: str,
     lightning_model_summary_max_depth: int,
+    lightning_check_val_every_n_epoch: int,
 ):
     # minimal validation for early mistakes
     assert dataset in DATASET_CHOICES, f"Invalid dataset: {dataset}, chose from {DATASET_CHOICES}"
@@ -698,56 +708,84 @@ def run_one(
     callbacks = [
         # pl.callbacks.ModelSummary(max_depth=lightning_model_summary_max_depth),
         pl.callbacks.RichModelSummary(max_depth=lightning_model_summary_max_depth),
-        LogRocCallback(
-            stage=RunningStage.TRAINING,
-            scores_key="anomaly_scores_maps",
-            gt_key="gtmaps",
-            log_curve=False,
-            limit_points=3000,  # todo make it script param
-            python_generator=create_python_random_generator(seed),
-        ),
-        LogRocCallback(
-            stage=RunningStage.VALIDATING,
-            scores_key="anomaly_scores_maps",
-            gt_key="gtmaps",
-            log_curve=False,
-            limit_points=3000,  # todo make it script param
-            python_generator=create_python_random_generator(seed),
-        ),
-        LogRocCallback(
-            stage=RunningStage.TESTING,
-            scores_key="anomaly_scores_maps",
-            gt_key="gtmaps",
-            log_curve=True,
-            limit_points=None,
-            python_generator=create_python_random_generator(seed),
-        ),
-        LogAveragePrecisionCallback(
-            stage=RunningStage.TRAINING,
-            scores_key="anomaly_scores_maps",
-            gt_key="gtmaps",
-            log_curve=False,
-            limit_points=3000,  # todo make it script param
-            python_generator=create_python_random_generator(seed),
-        ),
-        LogAveragePrecisionCallback(
-            stage=RunningStage.VALIDATING,
-            scores_key="anomaly_scores_maps",
-            gt_key="gtmaps",
-            log_curve=False,
-            limit_points=3000,  # todo make it script param
-            python_generator=create_python_random_generator(seed),
-        ),
-        LogAveragePrecisionCallback(
-            stage=RunningStage.TESTING,
-            scores_key="anomaly_scores_maps",
-            gt_key="gtmaps",
-            log_curve=True,
-            limit_points=None,
-            python_generator=create_python_random_generator(seed),
-        ),
     ]
-    # callbacks = []
+    
+    log_roc_train, log_roc_validation, log_roc_test = wandb_log_roc
+    # ========================================================================= ROC
+    
+    if log_roc_train:
+        callbacks.append(
+            LogRocCallback(
+                stage=RunningStage.TRAINING,
+                scores_key="anomaly_scores_maps",
+                gt_key="gtmaps",
+                log_curve=False,
+                limit_points=3000,  # todo make it script param
+                python_generator=create_python_random_generator(seed),
+            )
+        )
+        
+    if log_roc_validation:
+        callbacks.append(
+            LogRocCallback(
+                stage=RunningStage.VALIDATING,
+                scores_key="anomaly_scores_maps",
+                gt_key="gtmaps",
+                log_curve=False,
+                limit_points=3000,  # todo make it script param
+                python_generator=create_python_random_generator(seed),
+            )
+        )
+        
+    if log_roc_test:
+        callbacks.append(
+            LogRocCallback(
+                stage=RunningStage.TESTING,
+                scores_key="anomaly_scores_maps",
+                gt_key="gtmaps",
+                log_curve=True,
+                limit_points=None,
+                python_generator=create_python_random_generator(seed),
+            )
+        )
+    # ========================================================================= PR
+    log_pr_train, log_pr_validation, log_pr_test = wandb_log_pr
+    
+    if log_pr_train:
+        callbacks.append(
+            LogAveragePrecisionCallback(
+                stage=RunningStage.TRAINING,
+                scores_key="anomaly_scores_maps",
+                gt_key="gtmaps",
+                log_curve=False,
+                limit_points=3000,  # todo make it script param
+                python_generator=create_python_random_generator(seed),
+            )
+        )
+    if log_pr_validation:
+        callbacks.append(
+            LogAveragePrecisionCallback(
+                stage=RunningStage.VALIDATING,
+                scores_key="anomaly_scores_maps",
+                gt_key="gtmaps",
+                log_curve=False,
+                limit_points=3000,  # todo make it script param
+                python_generator=create_python_random_generator(seed),
+            )
+        )
+    if log_pr_test:
+        callbacks.append(
+            LogAveragePrecisionCallback(
+                stage=RunningStage.TESTING,
+                scores_key="anomaly_scores_maps",
+                gt_key="gtmaps",
+                log_curve=True,
+                limit_points=None,
+                python_generator=create_python_random_generator(seed),
+            )
+        )
+        # ========================================================================= heatmaps
+        # ========================================================================= histograms
     
     # if preview_nimages > 0:
     #     datamodule.setup("fit")
@@ -793,7 +831,7 @@ def run_one(
         # todo add auto_scale_batch_size
         # chek deterministic in detail
         # todo make specific callbacks on LightningModule.configure_callbacks(),
-        check_val_every_n_epoch=100000,
+        check_val_every_n_epoch=lightning_check_val_every_n_epoch,
     )
     
     with profiler:
@@ -814,6 +852,12 @@ def run_one(
     # ================================ TEST ================================
     trainer.test(model=model, datamodule=datamodule)    
         
+# ==========================================================================================
+# ==========================================================================================
+# ========================================== run ===========================================
+# ==========================================================================================
+# ==========================================================================================
+
     
 def run(**kwargs) -> dict:
     """see the arguments in run_one()"""
