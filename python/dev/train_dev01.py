@@ -66,6 +66,7 @@ later: smartly find good/bad images
 
 import contextlib
 import functools
+from gc import callbacks
 import os
 import time
 from argparse import ArgumentParser
@@ -85,7 +86,7 @@ from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
-from callbacks_dev01 import LogAveragePrecisionCallback, LogHistogramCallback, LogHistogramsSuperposedPerClassCallback, LogRocCallback, TorchTensorboardProfilerCallback
+from callbacks_dev01 import LogAveragePrecisionCallback, LogHistogramCallback, LogHistogramsSuperposedPerClassCallback, LogRocCallback, TorchTensorboardProfilerCallback, LOG_HISTOGRAM_MODES, LOG_HISTOGRAM_MODE_NONE
 from common_dev01 import (create_python_random_generator, create_seed,
                           seed_int2str, seed_str2int)
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
@@ -482,6 +483,14 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         "--wandb-log-pr", type=bool, nargs=3,
         help="If set, the average precision curve will be logged, respectively, for train/validation/test. On test the PR curve is also logged."
     )
+    parser.add_argument(
+        "--wandb-log-score-histogram", type=str, nargs=3, choices=LOG_HISTOGRAM_MODES,
+        help="if and how to log  score values; you should give 3 values, respectively for the train/validation/test hooks"
+    ),
+    parser.add_argument(
+        "--wandb-log-loss-histogram", type=str, nargs=3, choices=LOG_HISTOGRAM_MODES,
+        help="if and how to log loss values; you should give 3 values, respectively for the train/validation/test hooks"
+    ),
     # ================================ pytorch lightning =================================
     parser.add_argument(
         "--lightning-accelerator", type=str, 
@@ -638,8 +647,10 @@ def run_one(
     wandb_profile: bool,
     wandb_watch: Optional[str],
     wandb_watch_log_freq: int,
-    wandb_log_roc: Tuple[int, int, int],
-    wandb_log_pr: Tuple[int, int, int],
+    wandb_log_roc: Tuple[bool, bool, bool],
+    wandb_log_pr: Tuple[bool, bool, bool],
+    wandb_log_score_histogram: Tuple[str, str, str],
+    wandb_log_loss_histogram: Tuple[str, str, str],
     # pytorch lightning
     lightning_accelerator: str,
     lightning_ndevices: int,
@@ -649,6 +660,7 @@ def run_one(
     lightning_check_val_every_n_epoch: int,
     lightning_accumulate_grad_batches: int,
 ):
+    
     # minimal validation for early mistakes
     assert dataset in DATASET_CHOICES, f"Invalid dataset: {dataset}, chose from {DATASET_CHOICES}"
     assert supervise_mode in dataset_supervise_mode_choices(dataset), f"Invalid supervise_mode: {supervise_mode} for dataset {dataset}, chose from {dataset_supervise_mode_choices(dataset)}"
@@ -661,6 +673,15 @@ def run_one(
         assert lightning_strategy in LIGHTNING_STRATEGY_CHOICES, f"Invalid lightning_strategy: {lightning_strategy}, chose from {LIGHTNING_STRATEGY_CHOICES}"
     assert lightning_precision in LIGHTNING_PRECISION_CHOICES, f"Invalid lightning_precision: {lightning_precision}, chose from {LIGHTNING_PRECISION_CHOICES}"
     
+    assert len(wandb_log_roc) == 3, f"wandb_log_roc should have 3 bools, for train/validation/test, but got {wandb_log_roc}" 
+    assert all(isinstance(obj, bool) for obj in wandb_log_roc), f"wandb_log_roc should only have bool, got {wandb_log_roc}"
+    assert len(wandb_log_pr) == 3, f"wandb_log_pr should have 3 bools, for train/validation/test, but got {wandb_log_pr}" 
+    assert all(isinstance(obj, bool) for obj in wandb_log_pr), f"wandb_log_pr should only have bool, got {wandb_log_pr}"
+    assert len(wandb_log_score_histogram) == 3, f"wandb_log_score_histogram should have 3 bools, for train/validation/test, but got {len(wandb_log_score_histogram)} things"
+    assert all(val in LOG_HISTOGRAM_MODES for val in wandb_log_score_histogram), f"wandb_log_score_histogram values should be in {LOG_HISTOGRAM_MODES}, got {wandb_log_score_histogram}"
+    assert len(wandb_log_loss_histogram) == 3, f"wandb_log_loss_histogram should have 3 bools, for train/validation/test, but got {len(wandb_log_loss_histogram)} things"
+    assert all(val in LOG_HISTOGRAM_MODES for val in wandb_log_loss_histogram), f"wandb_log_loss_histogram values should be in {LOG_HISTOGRAM_MODES}, got {wandb_log_loss_histogram}"
+
     logdir.mkdir(parents=True, exist_ok=True)
     
     # seed
@@ -808,15 +829,10 @@ def run_one(
     
     
     # ========================================================================= histograms
-        
-    import callbacks_dev01
-    
-    # TODO make me a script arg
-    wandb_log_score_histogram = callbacks_dev01.LOG_HISTOGRAM_MODE_LOG, callbacks_dev01.LOG_HISTOGRAM_MODE_LOG, callbacks_dev01.LOG_HISTOGRAM_MODE_SUMMARY
     
     log_score_histogram_train, log_score_histogram_validation, log_score_histogram_test = wandb_log_score_histogram
     
-    if log_score_histogram_train is not None:
+    if log_score_histogram_train != LOG_HISTOGRAM_MODE_NONE:
         callbacks.extend([
             LogHistogramCallback(stage=RunningStage.TRAINING, key="score_maps", mode=log_score_histogram_train,), 
             LogHistogramsSuperposedPerClassCallback(
@@ -825,11 +841,11 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_score_histogram_train,
                 python_generator=create_python_random_generator(seed),
-                limit_points=3000,
+                limit_points=3000,  # 3k
             ),
         ])
 
-    if log_score_histogram_validation is not None:
+    if log_score_histogram_validation != LOG_HISTOGRAM_MODE_NONE:
         
         callbacks.extend([
             LogHistogramCallback(stage=RunningStage.VALIDATING, key="score_maps", mode=log_score_histogram_validation,), 
@@ -839,11 +855,11 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_score_histogram_validation,
                 python_generator=create_python_random_generator(seed),
-                limit_points=3000,
+                limit_points=3000,  # 3k
             ),
         ])
     
-    if log_score_histogram_test is not None:
+    if log_score_histogram_test != LOG_HISTOGRAM_MODE_NONE:
         callbacks.extend([
             LogHistogramCallback(stage=RunningStage.TESTING, key="score_maps", mode=log_score_histogram_test,), 
             LogHistogramsSuperposedPerClassCallback(
@@ -852,16 +868,13 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_score_histogram_test,
                 python_generator=create_python_random_generator(seed),
-                limit_points=3000,
+                limit_points=30000,  # 30k
             ),
         ])
     
-    # TODO make me a script arg
-    wandb_log_loss_histogram = callbacks_dev01.LOG_HISTOGRAM_MODE_LOG, callbacks_dev01.LOG_HISTOGRAM_MODE_LOG, callbacks_dev01.LOG_HISTOGRAM_MODE_SUMMARY
-    
     log_loss_histogram_train, log_loss_histogram_validation, log_loss_histogram_test = wandb_log_loss_histogram
     
-    if log_loss_histogram_train is not None:
+    if log_loss_histogram_train != LOG_HISTOGRAM_MODE_NONE:
         callbacks.extend([
             LogHistogramCallback(stage=RunningStage.TRAINING, key="loss_maps", mode=log_loss_histogram_train,), 
             LogHistogramsSuperposedPerClassCallback(
@@ -870,11 +883,11 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_loss_histogram_train,
                 python_generator=create_python_random_generator(seed),
-                limit_points=3000,
+                limit_points=3000,  # 3k
             ),
         ])
     
-    if log_loss_histogram_validation is not None:
+    if log_loss_histogram_validation != LOG_HISTOGRAM_MODE_NONE:
         callbacks.extend([
             LogHistogramCallback(stage=RunningStage.VALIDATING, key="loss_maps", mode=log_loss_histogram_validation,), 
             LogHistogramsSuperposedPerClassCallback(
@@ -883,11 +896,11 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_loss_histogram_validation,
                 python_generator=create_python_random_generator(seed),
-                limit_points=3000,
+                limit_points=3000,  # 3k
             ),
         ])
     
-    if log_loss_histogram_test is not None:
+    if log_loss_histogram_test != LOG_HISTOGRAM_MODE_NONE:
         callbacks.extend([
             LogHistogramCallback(stage=RunningStage.TESTING, key="loss_maps", mode=log_loss_histogram_test,), 
             LogHistogramsSuperposedPerClassCallback(
@@ -896,7 +909,7 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_loss_histogram_test,
                 python_generator=create_python_random_generator(seed),
-                limit_points=3000,
+                limit_points=30000,  # 30k
             ),
         ])
 

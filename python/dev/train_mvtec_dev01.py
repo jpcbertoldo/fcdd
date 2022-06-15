@@ -6,6 +6,7 @@ from argparse import ArgumentParser
 import model_dev01
 import mvtec_dataset_dev01
 import train_dev01
+from callbacks_dev01 import LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG
 
 parser = train_dev01.parser_add_arguments(ArgumentParser())
 parser.set_defaults(
@@ -46,8 +47,11 @@ parser.set_defaults(
     wandb_watch=train_dev01.WANDB_WATCH_NONE,
     wandb_watch_log_freq=100,  # wandb's default
     wandb_checkpoint_mode=train_dev01.WANDB_CHECKPOINT_MODE_LAST,
+    # train/validation/test
     wandb_log_roc=(False, True, True),
     wandb_log_pr=(False, True, True),
+    wandb_log_score_histogram=(LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG),
+    wandb_log_loss_histogram=(LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG),
     # pytorch lightning 
     lightning_accelerator=train_dev01.LIGHTNING_ACCELERATOR_GPU,
     lightning_ndevices=1,
