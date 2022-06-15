@@ -423,10 +423,6 @@ class MvTec(VisionDataset, Dataset, LightningDataset):
             All transform is the second transform that is applied.
         :param shape: the shape (c x h x w) the data should be resized to (images and ground-truth maps).
         :param normal_classes: all the classes that are considered nominal (usually just one).
-        :param enlarge: whether to enlarge the dataset, i.e. repeat all data samples ten times.
-            Consequently, one iteration (epoch) of the data loader returns ten times as many samples.
-            This speeds up loading because the MVTec-AD dataset has a poor number of samples and
-            PyTorch requires additional work in between epochs.
         """
         
         super(MvTec, self).__init__(

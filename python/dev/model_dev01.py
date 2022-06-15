@@ -2,6 +2,7 @@
 # coding: utf-8
 
 
+import functools
 from pathlib import Path
 from typing import Tuple
 
@@ -206,30 +207,54 @@ class FCDD_CNN224_VGG(LightningModule):
         
         inputs, labels, gtmaps = batch
         anomaly_scores_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
+        self.log("test/loss", loss, on_step=False, on_epoch=True)
+        
+        scores_normal = anomaly_scores_maps[gtmaps == 0].mean()
+        scores_anomaly = anomaly_scores_maps[gtmaps == 1].mean()
+        self.log("test/score/normal", scores_normal, on_step=False, on_epoch=True)
+        self.log("test/score/anomaly", scores_anomaly, on_step=False, on_epoch=True)
         
         loss_normal = loss_maps[gtmaps == 0].mean()
         loss_anomaly = loss_maps[gtmaps == 1].mean()
         
         self.log("test/loss/normal", loss_normal, on_step=False, on_epoch=True)
         self.log("test/loss/anomaly", loss_anomaly, on_step=False, on_epoch=True)
-        self.log("test/loss", loss, on_step=False, on_epoch=True)
         
         return inputs, labels, gtmaps, anomaly_scores_maps, loss_maps, loss
     
     def test_epoch_end(self, test_step_outputs):  
         # transpose the list of lists
-        inputs, labels, gtmaps, anomaly_scores_maps, loss_maps, loss = list(map(list, zip(*test_step_outputs)))
-        inputs = torch.cat(inputs, dim=0)
-        labels = torch.cat(labels, dim=0)
-        gtmaps = torch.cat(gtmaps, dim=0)
-        anomaly_scores_maps = torch.cat(anomaly_scores_maps, dim=0)
-        loss_maps = torch.cat(loss_maps, dim=0)
-        loss = torch.tensor(loss)
+        catdim0 = functools.partial(torch.cat, dim=0)
+        inputs, labels, gtmaps, anomaly_scores_maps, loss_maps, loss = list(map(catdim0(list(map(list, zip(*test_step_outputs))))))
+        # inputs = torch.cat(inputs, dim=0)
+        # labels = torch.cat(labels, dim=0)
+        # gtmaps = torch.cat(gtmaps, dim=0)
+        # anomaly_scores_maps = torch.cat(anomaly_scores_maps, dim=0)
+        # loss_maps = torch.cat(loss_maps, dim=0)
+        # loss = torch.tensor(loss)
         
         # heatmap_generation()
         
         # maybe i have to use this again...
         #get_original_gtmaps_normal_class()
+        
+        def get_mask_dict(mask_tensor: torch.Tensor):
+            """mask_tensor \in int32^[1, H, W]"""
+            return dict(ground_truth=dict(
+                mask_data=mask_tensor.squeeze().numpy(), 
+                class_labels={NOMINAL_TARGET: "normal", ANOMALY_TARGET: "anomalous"}
+            ))
+
+        wandb.log({
+            "train/preview/normal": [
+                wandb.Image(img, caption=[f"train normal {idx:03d}"], masks=get_mask_dict(mask))
+                for idx, (img, mask) in enumerate(zip(norm_imgs, norm_gtmaps))
+            ],
+            "train/preview/anomalous": [
+                wandb.Image(img, caption=[f"train anomalous {idx:03d}"], masks=get_mask_dict(mask))
+                for idx, (img, mask) in enumerate(zip(anom_imgs, anom_gtmaps))
+            ],
+        })
         
         gtmap_roc = compute_gtmap_roc(
             anomaly_scores=anomaly_scores_maps,
