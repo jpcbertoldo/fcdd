@@ -5,6 +5,7 @@ from collections import Counter
 from collections.abc import Sequence
 from turtle import width
 from typing import Callable, List, Tuple
+import warnings
 
 import matplotlib
 import numpy as np
@@ -325,8 +326,10 @@ class BatchRandomChoice(RandomTransformMixin, BatchTransformMixin, TransformsMix
         
         for idx, transform in enumerate(self.transforms):
             if not isinstance(transform, BatchTransformMixin):
-                # todo change for warning
-                print(f"{transform} (idx {idx}) is not a BatchTransformMixin, be careful to use transforms that support batch operations")
+                warnings.warn(
+                    f"{transform} (idx {idx}) is not a {BatchTransformMixin.__name__}, be careful to use transforms that support batch operations.",
+                    stacklevel=2,
+                )
             
         self.ntransforms = len(self.transforms)
         self._thresholds = np.linspace(0, 1, self.ntransforms, endpoint=False)
@@ -442,16 +445,14 @@ class MultiBatchdRandomChoice(RandomTransformMixin, MultiBatchTransformMixin, Tr
         self._thresholds = np.linspace(0, 1, self.ntransforms, endpoint=False)
         
         for idx, transform in enumerate(self.transforms):
-            if not isinstance(transform, BatchTransformMixin):
-                # todo change for warning
-                print(f"{transform} (idx {idx}) is not a BatchTransformMixin, be careful to use transforms that support batch operations")
-    
             if not isinstance(transform, MultiBatchTransformMixin):
-                # todo change for warning
                 # it is importante tha a MultiBatchTransformMixin gets a list of tensors and not one by one
                 # because if it is a random transformation, it should make sure that the same transformation
                 # is applied to each batch
-                print(f"{transform} (idx {idx}) is not a MultiBatchTransformMixin, be careful to use transforms that support multi batch operations")
+                warnings.warn(
+                    f"{transform} (idx {idx}) is not a {MultiBatchTransformMixin.__name__}, be careful to use transforms that support batch operations.",
+                    stacklevel=2,
+                )
 
     # instance_shape=False because the transforms can change the shape of the batch (resize, crop, etc)
     @MultiBatchTransformMixin._validate_before_and_after_is_same(instance_shape=False)
@@ -495,9 +496,12 @@ class MultiBatchCompose(MultiBatchTransformMixin, TransformsMixin):
     def __init__(self):
         
         for idx, transform in enumerate(self.transforms):
-            if not isinstance(transform, BatchTransformMixin):
-                # todo change for warning
-                print(f"{transform} (idx {idx}) is not a BatchTransformMixin, be careful to use transforms that support batch operations")
+            if not isinstance(transform, MultiBatchTransformMixin):
+                warnings.warn(
+                    f"{transform} (idx {idx}) is not a {MultiBatchTransformMixin.__name__}, be careful to use transforms that support batch operations.",
+                    stacklevel=2,
+                )
+
     
     # instance_shape=False because the transforms can change the shape of the batch (resize, crop, etc)
     @MultiBatchTransformMixin._validate_before_and_after_is_same(instance_shape=False)
@@ -980,7 +984,6 @@ if __name__ == "__main__":
             generator.random((128, 3, 260, 260)), 
             device=args.device,
         )
-        # todo change this by real images and inspect them with matplotlib
         batch_random_crop = BatchRandomCrop(size=(224, 224), generator=generator)
         transformed_img_batch = batch_random_crop(img_batch)
         assert transformed_img_batch.shape[-2:] == (224, 224)

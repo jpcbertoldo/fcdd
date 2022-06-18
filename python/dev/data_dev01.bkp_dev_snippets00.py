@@ -91,7 +91,6 @@ top = torch.tensor([0, 0, 2])
 left = torch.tensor([0, 3, 3])
 width = 2
 height = 2
-# todo make width/height int args and validate right/bottom in generation
 
 (batchsize, nchannels, im_height, im_width) = batchshape = batch.shape
 croped_batchshape = batchshape[:-2] + (width, height)
