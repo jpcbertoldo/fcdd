@@ -37,13 +37,16 @@ __version__ = "v1.0.0"
 
 # when computing ROC on the pixels, extract a sample of this many pixels
 # used in the ROC callbacks for train and validation
-PIXELWISE_ROC_LIMIT_POINTS = 3000
+PIXELWISE_ROC_LIMIT_POINTS = 3000  # 3k
 
 # when computing precision-recall curve (and avg precision) on the pixels, extract a sample of this many pixels
 # used in the ROC callbacks for train and validation
-PIXELWISE_PR_LIMIT_POINTS = 3000
+PIXELWISE_PR_LIMIT_POINTS = 3000  # 3k
 
-
+# when logging histograms, log the histograms of this many random values (not all in the array/tensor)
+PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TRAIN = 3000  # 3k
+PIXELWISE_HISTOGRAMS_LIMIT_POINTS_VALIDATION = 3000  # 3k
+PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TEST = 30000  # 30k 
 
 
 # ======================================== exceptions ========================================
@@ -255,79 +258,6 @@ WANDB_CHECKPOINT_MODES = (
     # WANDB_CHECKPOINT_MODE_ALL, 
 )
 print(f"WANDB_CHECKPOINT_MODES={WANDB_CHECKPOINT_MODES}")
-
-
-# ======================================== utills ========================================
-       
-def _reduce_curve_number_of_points(x, y, npoints) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Reduces the number of points in the curve by interpolating linearly.
-    Suitable for ROC and PR curves.
-    """
-    func = interp1d(x, y, kind='linear')
-    xmin, xmax = np.min(x), np.max(x)
-    xs = np.linspace(xmin, xmax, npoints, endpoint=True)
-    return xs, func(xs)
-  
-  
-@torch.no_grad()
-def compute_gtmap_pr(
-    anomaly_scores,
-    original_gtmaps,
-    net, 
-    limit_npoints: int = 3000,
-):
-    """
-    The scores are upsampled to the images' original size and then the PR is computed.
-    The scores are normalized between 0 and 1, and interpreted as anomaly "probability".
-    """
-    
-    # GTMAPS pixel-wise anomaly detection = explanation performance
-    print('Computing PR score')
-    
-    # Reduces the anomaly score to be a score per pixel (explanation)
-    anomaly_scores = anomaly_scores.mean(1).unsqueeze(1)
-    anomaly_scores = net.receptive_upsample(anomaly_scores, std=net.gauss_std)
-        
-    # Further upsampling for original dataset size
-    anomaly_scores = torch.nn.functional.interpolate(anomaly_scores, (original_gtmaps.shape[-2:]))
-    flat_gtmaps, flat_ascores = original_gtmaps.reshape(-1).int().tolist(), anomaly_scores.reshape(-1).tolist()
-    
-    # ths = thresholds
-    precision, recall, ths = precision_recall_curve(
-        y_true=flat_gtmaps, 
-        probas_pred=flat_ascores,
-    )
-    
-    # a (0, 1) point is added to make the graph look better
-    # i discard this because it's not useful and there is no 
-    # corresponding threshold 
-    precision, recall = precision[:-1], recall[:-1]
-    
-    # recall must be in descending order 
-    # recall = recall[::-1]
-    
-    # reduce the number of points of the curve
-    npoints = ths.shape[0]
-    
-    if npoints > limit_npoints:
-        
-        _, precision = _reduce_curve_number_of_points(
-            x=ths, 
-            y=precision, 
-            npoints=limit_npoints,
-        )
-        ths, recall = _reduce_curve_number_of_points(
-            x=ths, 
-            y=recall, 
-            npoints=limit_npoints,
-        )
-    
-    ap_score = average_precision_score(y_true=flat_gtmaps, y_score=flat_ascores)
-    
-    print(f'##### GTMAP AP TEST SCORE {ap_score} #####')
-    gtmap_pr_res = dict(recall=recall, precision=precision, ths=ths, ap=ap_score)
-    return gtmap_pr_res
 
 
 # ==========================================================================================
@@ -813,7 +743,7 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_score_histogram_train,
                 python_generator=create_python_random_generator(seed),
-                limit_points=3000,  # 3k
+                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TRAIN,  # 3k
             ),
         ])
 
@@ -827,7 +757,7 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_score_histogram_validation,
                 python_generator=create_python_random_generator(seed),
-                limit_points=3000,  # 3k
+                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_VALIDATION,  # 3k
             ),
         ])
     
@@ -840,7 +770,7 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_score_histogram_test,
                 python_generator=create_python_random_generator(seed),
-                limit_points=30000,  # 30k
+                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TEST,  # 30k
             ),
         ])
     
@@ -855,7 +785,7 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_loss_histogram_train,
                 python_generator=create_python_random_generator(seed),
-                limit_points=3000,  # 3k
+                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TRAIN,  # 3k
             ),
         ])
     
@@ -868,7 +798,7 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_loss_histogram_validation,
                 python_generator=create_python_random_generator(seed),
-                limit_points=3000,  # 3k
+                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_VALIDATION,  # 3k
             ),
         ])
     
@@ -881,7 +811,7 @@ def run_one(
                 gt_key="gtmaps", 
                 mode=log_loss_histogram_test,
                 python_generator=create_python_random_generator(seed),
-                limit_points=30000,  # 30k
+                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TEST,  # 30k
             ),
         ])
 
@@ -954,10 +884,6 @@ def run_one(
         # i should learn how to properly deal with
         # the sanity check but for now it's causing too much trouble
         num_sanity_val_steps=0,
-        # todo add accumulate_grad_batches
-        # todo add auto_scale_batch_size
-        # chek deterministic in detail
-        # todo make specific callbacks on LightningModule.configure_callbacks(),
         check_val_every_n_epoch=lightning_check_val_every_n_epoch,
         accumulate_grad_batches=lightning_accumulate_grad_batches,
         profiler=get_lightning_profiler(lightning_profiler),
