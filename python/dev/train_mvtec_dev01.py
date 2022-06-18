@@ -35,8 +35,8 @@ parser.set_defaults(
     # script
     test=True,
     preview_nimages=5,
-    it=3,
-    seeds=None,
+    n_seeds=3,
+    # seeds=None,
     classes=None,
     # files
     # wandb
@@ -60,6 +60,7 @@ parser.set_defaults(
     lightning_model_summary_max_depth=4,
     lightning_check_val_every_n_epoch=1,
     lightning_accumulate_grad_batches=1,
+    lightning_profiler="simple",
 )
 args = parser.parse_args()
 train_dev01.args_validate_dataset_specific_choices(args)

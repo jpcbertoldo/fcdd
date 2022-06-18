@@ -18,6 +18,7 @@ import torch
 import wandb
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.trainer.states import RunningStage
+from pytorch_lightning.profiler import SimpleProfiler, PyTorchProfiler, AdvancedProfiler
 from scipy.interpolate import interp1d
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from torch.profiler import tensorboard_trace_handler
@@ -41,6 +42,9 @@ PIXELWISE_ROC_LIMIT_POINTS = 3000
 # when computing precision-recall curve (and avg precision) on the pixels, extract a sample of this many pixels
 # used in the ROC callbacks for train and validation
 PIXELWISE_PR_LIMIT_POINTS = 3000
+
+
+
 
 # ======================================== exceptions ========================================
 
@@ -210,6 +214,19 @@ LIGHTNING_PRECISION_CHOICES = (
     LIGHTNING_PRECISION_16,
 )
 print(f"LIGHTNING_PRECISION_CHOICES={LIGHTNING_PRECISION_CHOICES}")
+
+
+LIGHTNING_PROFILER_NONE = "none"
+LIGHTNING_PROFILER_SIMPLE = "simple"
+LIGHTNING_PROFILER_ADVANCED = "advanced"
+LIGHTNING_PROFILER_PYTORCH = "pytorch"
+LIGHTNING_PROFILER_CHOICES = (
+    LIGHTNING_PROFILER_NONE,
+    LIGHTNING_PROFILER_SIMPLE,
+    LIGHTNING_PROFILER_ADVANCED,
+    LIGHTNING_PROFILER_PYTORCH,
+)
+print(f"LIGHTNING_PROFILER_CHOICES={LIGHTNING_PROFILER_CHOICES}")
 
 
 # ======================================== wandb ========================================
@@ -473,6 +490,12 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         "--lightning-accumulate-grad-batches", type=int,
         help="Accumulate gradients for THIS batches. https://pytorch-lightning.readthedocs.io/en/latest/advanced/training_tricks.html#accumulate-gradients"
     )
+    parser.add_argument(
+        "--lightning-profiler", type=str, choices=LIGHTNING_PROFILER_CHOICES,
+        help="simple and advanced: https://pytorch-lightning.readthedocs.io/en/latest/tuning/profiler_basic.html\n"
+             "pytorch: https://pytorch-lightning.readthedocs.io/en/latest/tuning/profiler_intermediate.html\n"
+             "in any case it is saved in a f"
+    )
     return parser
 
 
@@ -606,6 +629,7 @@ def run_one(
     lightning_model_summary_max_depth: int,
     lightning_check_val_every_n_epoch: int,
     lightning_accumulate_grad_batches: int,
+    lightning_profiler: str, 
 ):
     
     # minimal validation for early mistakes
@@ -619,6 +643,7 @@ def run_one(
     if lightning_strategy is not None:
         assert lightning_strategy in LIGHTNING_STRATEGY_CHOICES, f"Invalid lightning_strategy: {lightning_strategy}, chose from {LIGHTNING_STRATEGY_CHOICES}"
     assert lightning_precision in LIGHTNING_PRECISION_CHOICES, f"Invalid lightning_precision: {lightning_precision}, chose from {LIGHTNING_PRECISION_CHOICES}"
+    assert lightning_profiler in LIGHTNING_PROFILER_CHOICES, f"Invalid lightning_profiler: {lightning_profiler}, chose from {LIGHTNING_PROFILER_CHOICES}"
     
     assert len(wandb_log_roc) == 3, f"wandb_log_roc should have 3 bools, for train/validation/test, but got {wandb_log_roc}" 
     assert all(isinstance(obj, bool) for obj in wandb_log_roc), f"wandb_log_roc should only have bool, got {wandb_log_roc}"
@@ -885,6 +910,35 @@ def run_one(
             with_stack=True,
         )
         callbacks.append(TorchTensorboardProfilerCallback(profiler))
+        
+    def get_lightning_profiler(profiler_choice):
+        
+        if profiler_choice == LIGHTNING_PROFILER_NONE:
+            return None
+        
+        elif profiler_choice == LIGHTNING_PROFILER_SIMPLE:
+            return SimpleProfiler(
+                dirpath=wandb_logger.save_dir,
+                filename=f"lightning-profiler.{LIGHTNING_PROFILER_SIMPLE}.txt",
+                extended=True,
+            )
+        
+        elif profiler_choice == LIGHTNING_PROFILER_ADVANCED:
+            return AdvancedProfiler(
+                dirpath=wandb_logger.save_dir,
+                filename=f"lightning-profiler.{LIGHTNING_PROFILER_ADVANCED}.txt",
+
+            )
+        
+        elif profiler_choice == LIGHTNING_PROFILER_PYTORCH:
+            return PyTorchProfiler(
+                dirpath=wandb_logger.save_dir,
+                filename=f"lightning-profiler.{LIGHTNING_PROFILER_PYTORCH}.txt",
+                sort_by_key="cuda_time_total",
+            )
+        
+        else:
+            raise NotImplementedError(f"Profiler {profiler_choice} not implemented.")
 
     # ================================ FIT ================================
     trainer = pl.Trainer(
@@ -906,6 +960,7 @@ def run_one(
         # todo make specific callbacks on LightningModule.configure_callbacks(),
         check_val_every_n_epoch=lightning_check_val_every_n_epoch,
         accumulate_grad_batches=lightning_accumulate_grad_batches,
+        profiler=get_lightning_profiler(lightning_profiler),
     )
     
     with profiler:
