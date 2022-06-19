@@ -24,9 +24,9 @@ from sklearn.metrics import average_precision_score, precision_recall_curve
 from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
-from callbacks_dev01 import (LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODES, DataloaderPreviewCallback,
+from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_BATCH, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODES, DataloaderPreviewCallback,
                              LogAveragePrecisionCallback, LogHistogramCallback,
-                             LogHistogramsSuperposedPerClassCallback,
+                             LogHistogramsSuperposedPerClassCallback, LogImageHeatmapTableCallback,
                              LogRocCallback, TorchTensorboardProfilerCallback)
 from common_dev01 import (create_python_random_generator, create_seed, hashify_config,
                           seed_int2str, seed_str2int)
@@ -762,9 +762,64 @@ def run_one(
         )
     # ========================================================================= heatmaps
     
+    def add_callbacks_log_image_heatmap(
+        nsamples_train, nsamples_validation, nsamples_test, 
+        resolution_train, resolution_validation, resolution_test
+    ):
     
+        if nsamples_train > 0:
+            callbacks.extend([     
+                LogImageHeatmapTableCallback(
+                    stage=RunningStage.TRAINING,
+                    imgs_key="inputs",
+                    scores_key="score_maps",
+                    masks_key="gtmaps",
+                    nsamples_each_class=nsamples_train,
+                    resolution=resolution_train,
+                    heatmap_normalization=HEATMAP_NORMALIZATION_MINMAX_BATCH,
+                    python_generator=create_python_random_generator(seed),
+                ),
+            ])
+        
+        if nsamples_validation > 0:
+            callbacks.extend([     
+                LogImageHeatmapTableCallback(
+                    stage=RunningStage.VALIDATING,
+                    imgs_key="inputs",
+                    scores_key="score_maps",
+                    masks_key="gtmaps",
+                    nsamples_each_class=nsamples_validation,
+                    resolution=resolution_validation,
+                    heatmap_normalization=HEATMAP_NORMALIZATION_MINMAX_BATCH,
+                    python_generator=create_python_random_generator(seed),
+                ),
+            ])
+        
+        if nsamples_test > 0:
+            callbacks.extend([     
+                LogImageHeatmapTableCallback(
+                    stage=RunningStage.TESTING,
+                    imgs_key="inputs",
+                    scores_key="score_maps",
+                    masks_key="gtmaps",
+                    nsamples_each_class=nsamples_test,
+                    resolution=resolution_test,
+                    heatmap_normalization=HEATMAP_NORMALIZATION_MINMAX_BATCH,
+                    python_generator=create_python_random_generator(seed),
+                ),
+            ])
+        
+    # todo put in cli
+    log_image_heatmap_nsamples = 5, 5, 5
+    log_image_heatmap_resolution = None, None, None  # dont change
+    
+    add_callbacks_log_image_heatmap(
+        *log_image_heatmap_nsamples, 
+        *log_image_heatmap_resolution,
+    )
     # ========================================================================= histograms
     
+    # todo put in cli
     log_score_histogram_train, log_score_histogram_validation, log_score_histogram_test = wandb_log_score_histogram
     
     if log_score_histogram_train != LOG_HISTOGRAM_MODE_NONE:
@@ -807,6 +862,7 @@ def run_one(
             ),
         ])
     
+    # todo put in cli
     log_loss_histogram_train, log_loss_histogram_validation, log_loss_histogram_test = wandb_log_loss_histogram
     
     if log_loss_histogram_train != LOG_HISTOGRAM_MODE_NONE:

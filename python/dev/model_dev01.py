@@ -267,7 +267,6 @@ class FCDD_CNN224_VGG(LightningModule):
     
     def teardown(self, stage=None):
         self.last_epoch_outputs = None
-        # heatmap_generation()
     
     # DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE
     

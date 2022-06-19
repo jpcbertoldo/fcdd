@@ -8,6 +8,7 @@ from tkinter import W
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
+from python.dev.mvtec_dataset_dev01 import NORMAL_LABEL
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.trainer.states import RunningStage
@@ -16,6 +17,8 @@ from torch import Tensor
 
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
 
+import torchvision.transforms.functional_tensor as TFT
+from torchvision.transforms import InterpolationMode 
 
 def merge_steps_outputs(steps_outputs: List[Dict[str, Tensor]]):
     """
@@ -586,3 +589,180 @@ class TorchTensorboardProfilerCallback(pl.Callback):
   def on_train_batch_end(self, trainer, pl_module, outputs, *args, **kwargs):
     self.profiler.step()
     # pl_module.log_dict(outputs)  # also logging the loss, while we're here
+
+
+HEATMAP_NORMALIZATION_MINMAX_BATCH = "minmax-batch"
+HEATMAP_NORMALIZATION_MINMAX_INSTANCE = "minmax-instance"
+HEATMAP_NORMALIZATION_CHOICES = (
+    HEATMAP_NORMALIZATION_MINMAX_BATCH,
+    HEATMAP_NORMALIZATION_MINMAX_INSTANCE,
+)
+
+
+class LogImageHeatmapTableCallback(
+    MultiStageEpochEndCallbackMixin,
+    LastEpochOutputsDependentCallbackMixin, 
+    RandomCallbackMixin, 
+    pl.Callback,
+):
+    
+    @MultiStageEpochEndCallbackMixin.init_stage  
+    @RandomCallbackMixin.init_python_generator
+    def __init__(
+        self, 
+        imgs_key: str,
+        heatmaps_key: str,
+        masks_key: str,
+        labels_key: str,
+        nsamples_each_class: int,
+        resolution: Optional[int],
+        heatmap_normalization: str,
+    ):
+        """
+        it is assumed that the number and order of images is the same every epoch
+        """
+        super().__init__()
+        
+        assert imgs_key != "", f"imgs_key must be provided"
+        assert heatmaps_key != "", f"heatmaps_key must not be empty"
+        assert masks_key != "", f"masks_key must not be empty"
+        assert labels_key != "", f"labels_key must not be empty"
+        
+        # make sure there is no repeated key
+        keys = [imgs_key, heatmaps_key, masks_key, labels_key]
+        assert len(keys) == len(set(keys)), f"keys must be unique, got {keys}"
+        
+        assert nsamples_each_class > 0, f"nsamples must be > 0, got {nsamples_each_class}"   
+
+        assert heatmap_normalization in HEATMAP_NORMALIZATION_CHOICES, f"heatmap_normalization must be one of {HEATMAP_NORMALIZATION_CHOICES}, got {heatmap_normalization}" 
+
+        if resolution is not None:
+            assert resolution > 0, f"resolution must be > 0, got {resolution}"
+                
+        self.imgs_key = imgs_key
+        self.heatmaps_key = heatmaps_key
+        self.masks_key = masks_key
+        self.labels_key = labels_key
+        self.nsamples_each_class = nsamples_each_class
+        self.heatmap_normalization = heatmap_normalization
+        self.resolution = resolution
+                
+        # lazy initialization because we don't know the batch size in advance
+        self.selected_instances_indices = None
+    
+    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
+    def setup(self, trainer, pl_module, stage=None):
+        pass  # just let the mixin do its job
+    
+    def _multi_stage_epoch_end_do(self, trainer, pl_module):
+        
+        try:
+            imgs: Tensor = pl_module.last_epoch_outputs[self.imgs_key]
+            heatmaps: Tensor = pl_module.last_epoch_outputs[self.heatmaps_key]
+            masks: Tensor = pl_module.last_epoch_outputs[self.masks_key]
+            labels: Tensor = pl_module.last_epoch_outputs[self.labels_key]
+        
+        except KeyError as ex:
+            msg = ex.args[0]
+            keys = [self.imgs_key, self.heatmaps_key, self.masks_key, self.labels_key]
+            
+            # another exception not from here?
+            if all(key not in msg for key in keys):
+                raise ex
+            
+            raise ValueError(f"pl_module.last_epoch_outputs should have the keys={keys}, did you configure the model correctly? or passed me the wrong keys?") from ex
+        
+        if self.selected_instances_indices is None:
+            
+            labels = labels.numpy()
+            normals_indices = np.where(labels == NOMINAL_TARGET)
+            anomalies_indices = np.where(labels == ANOMALY_TARGET)
+            
+            if len(normals_indices) > self.nsamples_each_class:
+                normals_indices = self.python_generator.choice(normals_indices, self.nsamples_each_class, replace=False)
+                
+            if len(anomalies_indices) > self.nsamples_each_class:
+                anomalies_indices = self.python_generator.choice(anomalies_indices, self.nsamples_each_class, replace=False)
+                
+            self.selected_instances_indices = np.concatenate([normals_indices, anomalies_indices]).tolist()
+        
+        self._log(trainer, pl_module, imgs, heatmaps, masks, labels, self.selected_instances_indices)
+    
+    def _log(
+        self, 
+        trainer: pl.Trainer, 
+        pl_module: pl.LightningModule, 
+        imgs: Tensor, 
+        heatmaps: Tensor,
+        masks: Tensor, 
+        labels: Tensor,
+        selected_instances_indices: List[int],
+    ):
+        
+        assert isinstance(imgs, torch.Tensor), f"imgs must be a torch.Tensor, got {type(imgs)}"
+        assert isinstance(heatmaps, torch.Tensor), f"scores must be a torch.Tensor, got {type(heatmaps)}"
+        assert isinstance(masks, torch.Tensor), f"binary_gt must be a torch.Tensor, got {type(masks)}"
+        
+        assert heatmaps.shape == masks.shape, f"scores and binary_gt must have the same shape, got {heatmaps.shape} and {masks.shape}"
+        assert imgs.shape[0] == heatmaps.shape[0], f"imgs and scores must have the same number of samples, got {imgs.shape[0]} and {heatmaps.shape[0]}"
+        assert imgs.shape[2:] == heatmaps.shape[2:], f"imgs and scores must have the same shape, got {imgs.shape} and {heatmaps.shape}"
+        
+        assert (imgs >= 0).all(), f"imgs must be > 0"
+        assert (imgs <= 1).all(), f"imgs must be <= 1"
+        
+        unique_gt_values = tuple(sorted(torch.unique(masks)))
+        assert unique_gt_values in ((0,), (1,), (0, 1)), f"binary_gt must have only 0 and 1 values, got {unique_gt_values}"
+        
+        assert (heatmaps >= 0).all(), f"scores must be >= 0, got {heatmaps}"
+        
+        current_stage = trainer.state.stage
+        logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
+        table_logkey = f"{logkey_prefix}images-heatmaps-table"
+        
+        if self.heatmap_normalization == HEATMAP_NORMALIZATION_MINMAX_BATCH:
+            with torch.no_grad():
+                min_ = heatmaps.min()
+                heatmaps = (heatmaps - min_) / (heatmaps.max() - min_)
+        
+        elif self.heatmap_normalization == HEATMAP_NORMALIZATION_MINMAX_INSTANCE:
+            with torch.no_grad():
+                min_ = heatmaps.min(dim=(1, 2, 3), keepdim=True)
+                max_ = heatmaps.max(dim=(1, 2, 3), keepdim=True)
+                heatmaps = (heatmaps - min_) / (max_ - min_)
+        else:
+            raise NotImplementedError(f"heatmap_normalization={self.heatmap_normalization} is not implemented")
+        
+        import wandb
+        table = wandb.Table(columns=["idx", "idx-in-epoch", "label", "image", "heatmap", "normalization"])
+        
+        for idx, idx_in_epoch in enumerate(selected_instances_indices):
+            img, heatmap, mask, label = imgs[idx_in_epoch], heatmaps[idx_in_epoch], masks[idx_in_epoch], labels[idx_in_epoch]
+            
+            img_h, img_w = img.shape[2:]
+            
+            if img_h == img_w:
+                raise NotImplementedError(f"imgs must be square, got {img_h}x{img_w}")
+        
+            if img_w != self.resolution:
+                img = TFT.resize(
+                    img, self.resolution, 
+                    interpolation=InterpolationMode.BILINEAR,
+                )
+                heatmap = TFT.resize(
+                    heatmap, self.resolution,
+                    interpolation=InterpolationMode.BILINEAR,
+                )
+                mask = TFT.resize(
+                    mask, self.resolution,
+                    interpolation=InterpolationMode.NEAREST,
+                )
+                
+            wandb_img = wandb.Image(
+                img, masks=dict(ground_truth=dict(mask_data=mask, class_labels=["normal", "anomalous"]))
+            )     
+            wandb_heatmap = wandb.Image(
+                heatmap, masks=dict(ground_truth=dict(mask_data=mask, class_labels=["normal", "anomalous"]))
+            )
+            table.add_data(idx, idx_in_epoch, label, wandb_img, wandb_heatmap, self.heatmap_normalization)
+
+        wandb.log({table_logkey: table})            
