@@ -28,7 +28,7 @@ from callbacks_dev01 import (LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODES,
                              LogAveragePrecisionCallback, LogHistogramCallback,
                              LogHistogramsSuperposedPerClassCallback,
                              LogRocCallback, TorchTensorboardProfilerCallback)
-from common_dev01 import (create_python_random_generator, create_seed,
+from common_dev01 import (create_python_random_generator, create_seed, hashify_config,
                           seed_int2str, seed_str2int)
 
 
@@ -989,6 +989,27 @@ def run(**kwargs) -> dict:
                     cuda_visible_devices=cuda_visible_devices,
                     script_version=__version__,
                 ),
+            }
+            
+            # add a few hashes to the make it 
+            # easier to group things in wandb
+            wandb_config = {
+                **wandb_config,
+                **dict(
+                    confighash_full=hashify_config(wandb_config),
+                    confighash_class_supervise=hashify_config(
+                        wandb_config, keys=("normal_class", "supervise_mode")
+                    ),
+                    confighash_class_supervise_loss=hashify_config(
+                        wandb_config, keys=("normal_class", "supervise_mode", "loss_mode")
+                    ),
+                    confighash_class_supervise_model=hashify_config(
+                        wandb_config, keys=("normal_class", "supervise_mode", "model")
+                    ),
+                    confighash_class_supervise_loss_model=hashify_config(
+                        wandb_config, keys=("normal_class", "supervise_mode", "loss_mode", "model")
+                    ),
+                )
             }
             
             wandb_init_kwargs = dict(

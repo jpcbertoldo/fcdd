@@ -1,4 +1,6 @@
 import random
+import hashlib
+import json
 
 import numpy
 import torch
@@ -33,12 +35,14 @@ def create_numpy_random_generator(seed: int) -> numpy.random.Generator:
     print(f"random generator {gen} ({type(gen)}) instantiaed from the provided seed: {seed_int2str(seed)}")
     return gen    
     
+    
 def create_python_random_generator(seed: int) -> random.Random:
     assert isinstance(seed, int), f"seed must be an integer, got {type(seed)}"
     assert seed >= 0, f"seed must be >= 0, got {seed_int2str(seed)}"
     gen = random.Random(seed)
     print(f"random generator generator {gen} ({type(gen)}) instantiaed from the provided seed: {seed_int2str(seed)}")
     return gen
+
 
 def create_torch_random_generator(seed: int) -> torch.Generator:
     assert isinstance(seed, int), f"seed must be an integer, got {type(seed)}"
@@ -47,3 +51,22 @@ def create_torch_random_generator(seed: int) -> torch.Generator:
     gen.manual_seed(seed)
     print(f"random generator {gen} ({type(gen)}) instantiaed from the provided seed: {seed_int2str(seed)}")
     return gen
+
+
+def hashify_config(config_dict: dict, keys=None) -> str:
+    """
+    put the configs specified by `keys` in a string and hash it with 6 bytes 
+    in order to get a redable 12-character that can be used to more easily
+    group things in wandb 
+    
+    if `keys` not given, then all the keys in the dict are used
+    """
+    HEXDIGEST_N_CHARACTERS = 12
+    if keys is None:
+        keys = set(config_dict.keys())
+    tobehashed = {k: v for k, v in config_dict.items() if k in keys}
+    # sort by key
+    tobehashed = sorted(tobehashed.items(), key=lambda kv: kv[0])
+    tobehashed = json.dumps(tobehashed).encode("utf-8")
+    return  hashlib.blake2b(tobehashed, digest_size = HEXDIGEST_N_CHARACTERS // 2).hexdigest()
+
