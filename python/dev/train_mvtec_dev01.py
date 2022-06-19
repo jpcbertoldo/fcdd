@@ -11,7 +11,7 @@ from callbacks_dev01 import LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG
 parser = train_dev01.parser_add_arguments(ArgumentParser())
 parser.set_defaults(
     # training
-    epochs=50, 
+    epochs=500,  # before each epoch was doing 10 cycles over the data 
     learning_rate=1e-3,
     weight_decay=1e-4, 
     # model 
@@ -24,7 +24,7 @@ parser.set_defaults(
     dataset=mvtec_dataset_dev01.DATASET_NAME,
     raw_shape=(260, 260),
     net_shape=(224, 224),
-    batch_size=128,
+    batch_size=64,  # it was 128, i'm accumulating batches to simulate the same size
     nworkers=2,
     pin_memory=False,
     preprocessing=mvtec_dataset_dev01.PREPROCESSING_LCNAUG1,
@@ -34,7 +34,7 @@ parser.set_defaults(
     gauss_std=12, 
     # script
     test=True,
-    preview_nimages=5,
+    preview_nimages=0,
     n_seeds=3,
     # seeds=None,
     classes=None,
@@ -58,8 +58,8 @@ parser.set_defaults(
     lightning_strategy=train_dev01.LIGHTNING_STRATEGY_NONE,
     lightning_precision=train_dev01.LIGHTNING_PRECISION_32,
     lightning_model_summary_max_depth=4,
-    lightning_check_val_every_n_epoch=1,
-    lightning_accumulate_grad_batches=1,
+    lightning_check_val_every_n_epoch=10,
+    lightning_accumulate_grad_batches=2,
     lightning_profiler="simple",
 )
 args = parser.parse_args()

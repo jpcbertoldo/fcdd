@@ -24,7 +24,7 @@ from sklearn.metrics import average_precision_score, precision_recall_curve
 from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
-from callbacks_dev01 import (LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODES,
+from callbacks_dev01 import (LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODES, DataloaderPreviewCallback,
                              LogAveragePrecisionCallback, LogHistogramCallback,
                              LogHistogramsSuperposedPerClassCallback,
                              LogRocCallback, TorchTensorboardProfilerCallback)
@@ -828,14 +828,14 @@ def run_one(
             ),
         ])
 
-    # if preview_nimages > 0:
-    #     datamodule.setup("fit")
-    #     callbacks.append(
-    #         DataloaderPreviewCallback(
-    #             dataloader=datamodule.train_dataloader(embed_preprocessing=True), 
-    #             n_samples=preview_nimages, logkey_prefix="train-preview"
-    #         ),
-    #     )
+    if preview_nimages > 0:
+        datamodule.setup("fit")
+        callbacks.append(
+            DataloaderPreviewCallback(
+                dataloader=datamodule.train_dataloader(embed_preprocessing=True), 
+                n_samples=preview_nimages, logkey_prefix="train/preview"
+            ),
+        )
     
     # ================================ PROFILING ================================
     
