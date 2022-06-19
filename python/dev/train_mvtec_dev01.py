@@ -61,6 +61,8 @@ parser.set_defaults(
     lightning_check_val_every_n_epoch=10,
     lightning_accumulate_grad_batches=2,
     lightning_profiler="simple",
+    lightning_gradient_clip_val=0,
+    lightning_gradient_clip_algorithm=train_dev01.LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM,
 )
 args = parser.parse_args()
 train_dev01.args_validate_dataset_specific_choices(args)

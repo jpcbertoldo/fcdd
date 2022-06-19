@@ -239,6 +239,14 @@ LIGHTNING_PROFILER_CHOICES = (
 print(f"LIGHTNING_PROFILER_CHOICES={LIGHTNING_PROFILER_CHOICES}")
 
 
+LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE = "value"  # pytorch lightning's default
+LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM = "norm"
+LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES = (
+    LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM,
+    LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE, 
+)
+
+
 # ======================================== wandb ========================================
 
 WANDB_WATCH_NONE = "none"
@@ -433,6 +441,16 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
              "pytorch: https://pytorch-lightning.readthedocs.io/en/latest/tuning/profiler_intermediate.html\n"
              "in any case it is saved in a f"
     )
+    group_gradient_clipping = parser.add_argument_group("gradient-clipping")
+    group_gradient_clipping.add_argument(
+        "--lightning-gradient-clip-val", type=float,
+        help=f"https://pytorch-lightning.readthedocs.io/en/latest/advanced/training_tricks.html#gradient-clipping",
+    )
+    group_gradient_clipping.add_argument(
+        "--lightning-gradient-clip-algorithm", type=str, choices=LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES,
+        help=f"https://pytorch-lightning.readthedocs.io/en/latest/advanced/training_tricks.html#gradient-clipping",
+    )
+    
     return parser
 
 
@@ -567,6 +585,8 @@ def run_one(
     lightning_check_val_every_n_epoch: int,
     lightning_accumulate_grad_batches: int,
     lightning_profiler: str, 
+    lightning_gradient_clip_val: float,
+    lightning_gradient_clip_algorithm: str, 
 ):
     
     # minimal validation for early mistakes
@@ -900,6 +920,8 @@ def run_one(
         check_val_every_n_epoch=lightning_check_val_every_n_epoch,
         accumulate_grad_batches=lightning_accumulate_grad_batches,
         profiler=get_lightning_profiler(lightning_profiler),
+        gradient_clip_val=lightning_gradient_clip_val,
+        gradient_clip_algorithm=lightning_gradient_clip_algorithm,
     )
     
     with profiler:
