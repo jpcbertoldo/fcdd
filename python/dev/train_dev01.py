@@ -81,6 +81,13 @@ def dataset_class_labels(dataset_name: str) -> List[str]:
     return {
         mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.CLASSES_LABELS,
     }[dataset_name]
+    
+
+@unknown_dataset
+def dataset_class_fullqualified(dataset_name: str) -> List[str]:
+    return {
+        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.CLASSES_FULLQUALIFIED,
+    }[dataset_name]
 
 
 @unknown_dataset
@@ -606,6 +613,12 @@ def run_one(
         pin_memory=pin_memory,
         seed=seed,
     )
+    dataset_summary_update_dict = dict(
+        normal_class_label=dataset_class_labels(dataset)[normal_class],
+        mvtec_class_type=mvtec_dataset_dev01.CLASSES_TYPES[normal_class],
+        normal_class_fullqualified=dataset_class_fullqualified(dataset)[normal_class],
+    )
+    wandb.run.summary.update(dataset_summary_update_dict)
     datamodule.prepare_data()
 
     # ================================ MODEL ================================
@@ -983,7 +996,6 @@ def run(**kwargs) -> dict:
                 **run_one_kwargs,
                 **dict(
                     seeds_str=seed_int2str(seed),
-                    normal_class_label=dataset_class_labels(dataset)[c],
                     script_start_time=script_start_time,
                     it=it,
                     cuda_visible_devices=cuda_visible_devices,
@@ -996,18 +1008,20 @@ def run(**kwargs) -> dict:
             wandb_config = {
                 **wandb_config,
                 **dict(
-                    confighash_full=hashify_config(wandb_config),
-                    confighash_class_supervise=hashify_config(
-                        wandb_config, keys=("normal_class", "supervise_mode")
+                    confighash_full=hashify_config(wandb_config, keys=[
+                        "epochs", "learning_rate", "weight_decay", "model", "loss", "optimizer", "scheduler", "scheduler_paramaters", "dataset", "raw_shape", "net_shape", "batch_size", "preprocessing", "supervise_mode", "real_anomaly_limit", "normal_class",                         
+                    ]),
+                    confighash_dataset_class_supervise=hashify_config(
+                        wandb_config, keys=("datset", "normal_class", "supervise_mode")
                     ),
-                    confighash_class_supervise_loss=hashify_config(
-                        wandb_config, keys=("normal_class", "supervise_mode", "loss_mode")
+                    confighash_dataset_class_supervise_loss=hashify_config(
+                        wandb_config, keys=("datset", "normal_class", "supervise_mode", "loss")
                     ),
-                    confighash_class_supervise_model=hashify_config(
-                        wandb_config, keys=("normal_class", "supervise_mode", "model")
+                    confighash_dataset_class_supervise_model=hashify_config(
+                        wandb_config, keys=("datset", "normal_class", "supervise_mode", "model")
                     ),
-                    confighash_class_supervise_loss_model=hashify_config(
-                        wandb_config, keys=("normal_class", "supervise_mode", "loss_mode", "model")
+                    confighash_dataset_class_supervise_loss_model=hashify_config(
+                        wandb_config, keys=("datset", "normal_class", "supervise_mode", "loss", "model")
                     ),
                 )
             }
