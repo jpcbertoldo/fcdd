@@ -4,22 +4,6 @@ i could adapt it to my usage
 """
 
 
-import abc
-import functools
-import random
-from tkinter import W
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
-
-import numpy as np
-import pytorch_lightning as pl
-import torch
-from pytorch_lightning.trainer.states import RunningStage
-from sklearn.metrics import (roc_auc_score, roc_curve)
-from torch import Tensor
-
-from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
-
-
 def roc_curve(
     y_true=None, y_probas=None, labels=None, classes_to_plot=None, title=None
 ):
@@ -130,10 +114,10 @@ def roc_curve(
         
         
         
-import wandb
-from wandb import util
 from wandb.plots.utils import test_missing, test_types
 
+import wandb
+from wandb import util
 
 chart_limit = wandb.Table.MAX_ROWS
 

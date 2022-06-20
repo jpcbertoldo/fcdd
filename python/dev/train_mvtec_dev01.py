@@ -6,7 +6,8 @@ from argparse import ArgumentParser
 import model_dev01
 import mvtec_dataset_dev01
 import train_dev01
-from callbacks_dev01 import LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG
+from callbacks_dev01 import LOG_HISTOGRAM_MODE_LOG, LOG_HISTOGRAM_MODE_NONE
+
 
 parser = train_dev01.parser_add_arguments(ArgumentParser())
 parser.set_defaults(
@@ -15,7 +16,7 @@ parser.set_defaults(
     learning_rate=1e-3,
     weight_decay=1e-4, 
     # model 
-    model=model_dev01.FCDD_CNN224_VGG.__name__,
+    model=model_dev01.FCDD_CNN224_VGG_F.__name__,
     loss=model_dev01.LOSS_PIXELWISE_BATCH_AVG,
     optimizer=model_dev01.OPTIMIZER_SGD,
     scheduler=model_dev01.SCHEDULER_LAMBDA,
@@ -30,8 +31,6 @@ parser.set_defaults(
     preprocessing=mvtec_dataset_dev01.PREPROCESSING_LCNAUG1,
     supervise_mode=mvtec_dataset_dev01.SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
     real_anomaly_limit=1,
-    # heatmap
-    gauss_std=12, 
     # script
     test=True,
     preview_nimages=0,

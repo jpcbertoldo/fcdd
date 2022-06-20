@@ -1,6 +1,8 @@
-import random
+#!/usr/bin/env python
+
 import hashlib
 import json
+import random
 
 import numpy
 import torch

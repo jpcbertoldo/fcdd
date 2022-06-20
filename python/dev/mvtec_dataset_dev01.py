@@ -3,10 +3,9 @@ import hashlib
 import os
 import tarfile
 import tempfile
-from dataclasses import replace
 from itertools import cycle
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
 import numpy.random

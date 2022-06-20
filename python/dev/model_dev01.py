@@ -2,15 +2,14 @@
 # coding: utf-8
 
 
-import functools
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
-from fcdd.models.bases import ReceptiveNet
 from pytorch_lightning import LightningModule
 from pytorch_lightning.trainer.states import RunningStage
 from torch import Tensor
@@ -27,11 +26,12 @@ SCHEDULER_LAMBDA = 'lambda'
 SCHEDULER_CHOICES = (SCHEDULER_LAMBDA,)
 print(f"SCHEDULER_CHOICES={SCHEDULER_CHOICES}")
 
+LOSS_OLD_FCDD = 'old_fcdd'
 LOSS_PIXELWISE_BATCH_AVG = 'pixelwise_batch_avg'
 LOSS_CHOICES = (LOSS_PIXELWISE_BATCH_AVG,)
 
 
-class FCDD_CNN224_VGG(LightningModule):
+class FCDD_CNN224_VGG_F(LightningModule):
     """
     # VGG_11BN based net with most of the VGG layers having weights 
     # pretrained on the ImageNet classification task.
@@ -45,7 +45,6 @@ class FCDD_CNN224_VGG(LightningModule):
         self, 
         # model
         in_shape: Tuple[int, int, int], 
-        gauss_std: float,
         # optimizer
         optimizer_name: str,
         lr: float,
@@ -64,10 +63,7 @@ class FCDD_CNN224_VGG(LightningModule):
         super().__init__()
         
         self.last_epoch_outputs = None
-        
-        self._receptive_field_net = ReceptiveNet((3,) + in_shape, bias=True)
         self.in_shape = in_shape
-        self.gauss_std = gauss_std
         
         state_dict = load_state_dict_from_url(
             torchvision.models.vgg.model_urls['vgg11_bn'],
@@ -80,26 +76,26 @@ class FCDD_CNN224_VGG(LightningModule):
         }
 
         self.features = nn.Sequential(
-            self._receptive_field_net._create_conv2d(3, 64, 3, 1, 1),
+            torch.nn.Conv2d(3, 64, 3, 1, 1),
             nn.BatchNorm2d(64),
             nn.ReLU(True),
-            self._receptive_field_net._create_maxpool2d(2, 2),
-            self._receptive_field_net._create_conv2d(64, 128, 3, 1, 1),
+            torch.nn.MaxPool2d(2, 2),
+            torch.nn.Conv2d(64, 128, 3, 1, 1),
             nn.BatchNorm2d(128),
             nn.ReLU(True),
-            self._receptive_field_net._create_maxpool2d(2, 2),
-            self._receptive_field_net._create_conv2d(128, 256, 3, 1, 1),
+            torch.nn.MaxPool2d(2, 2),
+            torch.nn.Conv2d(128, 256, 3, 1, 1),
             nn.BatchNorm2d(256),
             nn.ReLU(True),
-            self._receptive_field_net._create_conv2d(256, 256, 3, 1, 1),
+            torch.nn.Conv2d(256, 256, 3, 1, 1),
             nn.BatchNorm2d(256),
             nn.ReLU(True),
-            self._receptive_field_net._create_maxpool2d(2, 2),
+            torch.nn.MaxPool2d(2, 2),
             # Frozen version freezes up to here
-            self._receptive_field_net._create_conv2d(256, 512, 3, 1, 1),
+            torch.nn.Conv2d(256, 512, 3, 1, 1),
             nn.BatchNorm2d(512),
             nn.ReLU(True),
-            self._receptive_field_net._create_conv2d(512, 512, 3, 1, 1),
+            torch.nn.Conv2d(512, 512, 3, 1, 1),
             nn.BatchNorm2d(512),
             nn.ReLU(True),
             # CUT
@@ -119,7 +115,7 @@ class FCDD_CNN224_VGG(LightningModule):
             for p in m.parameters():
                 p.requires_grad = False
         
-        self.conv_final = self._receptive_field_net._create_conv2d(512, 1, 1)
+        self.conv_final = torch.nn.Conv2d(512, 1, 1)
         
         self.save_hyperparameters()
         pass
@@ -130,28 +126,53 @@ class FCDD_CNN224_VGG(LightningModule):
         x = self.conv_final(x)
         return x
     
-    def loss(self, inputs: Tensor, gtmaps: Tensor) -> Tensor:
-        """ computes the FCDD """
+    def loss(self, scores: Tensor, masks: Tensor, labels: Tensor) -> Tuple[Tensor, Tensor]:
         
-        anomaly_score_maps = self(inputs) 
+        assert scores.shape[1:] == masks.shape[1:], f"{scores.shape[1:]} != {masks.shape[1:]}"
+        assert scores.shape[0] == masks.shape[0] == labels.shape[0], f"{scores.shape[0]} != {masks.shape[0]} != {labels.shape[0]}"
         
-        loss_maps = anomaly_score_maps = anomaly_score_maps ** 2
-        anomaly_score_maps = anomaly_score_maps.sqrt()
+        assert (scores >= 0).all(), f"{scores.min()} < 0"
         
-        loss_maps = (loss_maps + 1).sqrt() - 1
+        unique_labels = tuple(sorted(labels.unique().tolist()))
+        assert unique_labels in ((0,), (1,), (0, 1)), f"labels not \in {{0, 1}}, unique_labels={unique_labels}"
         
-        gauss_std = self.hparams["gauss_std"]
-        anomaly_score_maps = self._receptive_field_net.receptive_upsample(anomaly_score_maps, reception=True, std=gauss_std, cpu=False)
-        loss_maps = self._receptive_field_net.receptive_upsample(loss_maps, reception=True, std=gauss_std, cpu=False)
+        unique_mask_values = tuple(sorted(unique_mask_values.unique().tolist()))
+        assert unique_mask_values in ((0,), (1,), (0, 1)), f"mask values not \in {{0, 1}}, unique_mask_values={unique_mask_values}"
+                        
+        if self.loss_name == LOSS_OLD_FCDD:
+            
+            # scores \in R+^{N x 1 x H x W}
+            loss_maps = (scores + 1).sqrt() - 1
+            
+            norm_loss_maps = (loss_maps * (1 - masks))
+            
+            anom_loss_maps = -(((1 - (-loss_maps).exp()) + 1e-31).log())
+            anom_loss_maps = anom_loss_maps * masks
+            
+            loss_maps = norm_loss_maps + anom_loss_maps
         
-        norm_loss_maps = (loss_maps * (1 - gtmaps))
+        elif self.loss_name == LOSS_PIXELWISE_BATCH_AVG:
+            
+            # scores \in R+^{N x 1 x H x W}
+            loss_maps = (scores + 1).sqrt() - 1
+            
+            # normal term is kept the same
+            norm_loss_maps = (loss_maps * (1 - masks))
+            
+            # anomalous term is pushed
+            anom_loss_maps = - (((1 - (-loss_maps).exp()) + 1e-31).log())
+            anom_loss_maps = anom_loss_maps * masks
+            
+            n_pixels_normal = (1 - masks).sum()
+            n_pixels_anomalous = masks.sum()
+            ratio_norm_anom = n_pixels_normal / (n_pixels_anomalous + 1)
+            
+            loss_maps = norm_loss_maps + ratio_norm_anom * anom_loss_maps     
+            
+        else:
+            raise NotImplementedError(f"loss '{self.loss_name}' not implemented")
         
-        anom_loss_maps = -(((1 - (-loss_maps).exp()) + 1e-31).log())
-        anom_loss_maps = anom_loss_maps * gtmaps
-        
-        loss_maps = norm_loss_maps + anom_loss_maps
-        
-        return anomaly_score_maps, loss_maps, loss_maps.mean()
+        return loss_maps, loss_maps.mean()
 
     def configure_optimizers(self):
         
@@ -195,10 +216,82 @@ class FCDD_CNN224_VGG(LightningModule):
         
         return [optimizer], [scheduler]     
     
+    @property
+    def reception(self):
+        """
+        receptive field specifically hard-coded for the archicteture FCDD_CNN224_VGG
+        """
+        return {
+            'n': 28, 'j': 8, 'r': 62, 's': 3.5, 'img_shape': (3, 224, 224),
+            # !!!
+            # this one didnt exist before, i hard-coded it in there to further simplify
+            # this is only valid for the class FCDD_CNN224_VGG_F
+            # !!!
+            'std': 12,
+        }
+    
     def _common_step(self, batch, batch_idx, stage):
         
+        # inputs \in [0, 1]^{N x C=3 x H x W}
+        # labels \in {0, 1}^{N}
+        # gtmaps \in {0, 1}^{N x 1 x H x W}
         inputs, labels, gtmaps = batch
-        score_maps, loss_maps, loss = self.loss(inputs=inputs, gtmaps=gtmaps)
+        # score_maps \in {0, 1}^{N x 1 x H x W}
+        score_maps = self(inputs) ** 2
+        
+        def receptive_upsample(pixels: torch.Tensor) -> torch.Tensor:
+            """
+            Implement this to upsample given tensor images based on the receptive field with a Gaussian kernel.
+            """
+            assert pixels.dim() == 4 and pixels.size(1) == 1, 'receptive upsample works atm only for one channel'
+            
+            pixels = pixels.squeeze(1)
+            
+            ishape = self.reception['img_shape']
+            pixshp = pixels.shape
+            
+            # regarding s: if between pixels, pick the first
+            s, j, r = int(self.reception['s']), self.reception['j'], self.reception['r']
+            
+            # !!!
+            # this one didnt exist before, i hard-coded it in there to further simplify
+            # this is only valid for the class FCDD_CNN224_VGG_F
+            # !!!
+            std = self.reception['std']
+            
+            def gkern(k: int, std: float = None):
+                "" "Returns a 2D Gaussian kernel array with given kernel size k and std std """
+                from scipy import signal
+                if k % 2 == 0:
+                    # if kernel size is even, signal.gaussian returns center values sampled from gaussian at x=-1 and x=1
+                    # which is much less than 1.0 (depending on std). Instead, sample with kernel size k-1 and duplicate center
+                    # value, which is 1.0. Then divide whole signal by 2, because the duplicate results in a too high signal.
+                    gkern1d = signal.gaussian(k - 1, std=std).reshape(k - 1, 1)
+                    gkern1d = np.insert(gkern1d, (k - 1) // 2, gkern1d[(k - 1) // 2]) / 2
+                else:
+                    gkern1d = signal.gaussian(k, std=std).reshape(k, 1)
+                gkern2d = np.outer(gkern1d, gkern1d)
+                return gkern2d
+            
+            gaus = torch.from_numpy(gkern(r, std)).float().to(pixels.device)
+            pad = (r - 1) // 2
+            
+            if (r - 1) % 2 == 0:
+                res = torch.nn.functional.conv_transpose2d(
+                    pixels.unsqueeze(1), gaus.unsqueeze(0).unsqueeze(0), stride=j, padding=0,
+                    output_padding=ishape[-1] - (pixshp[-1] - 1) * j - 1
+                )
+                
+            else:
+                res = torch.nn.functional.conv_transpose2d(
+                    pixels.unsqueeze(1), gaus.unsqueeze(0).unsqueeze(0), stride=j, padding=0,
+                    output_padding=ishape[-1] - (pixshp[-1] - 1) * j - 1 - 1
+                )
+            out = res[:, :, pad - s:-pad - s, pad - s:-pad - s]  # shift by receptive center (s)
+            return out
+            
+        score_maps = receptive_upsample(score_maps)
+        score_maps, loss_maps, loss = self.loss(scores=score_maps, masks=gtmaps, labels=labels)
         
         # separate normal/anomaly
         with torch.no_grad():
@@ -268,21 +361,3 @@ class FCDD_CNN224_VGG(LightningModule):
     def teardown(self, stage=None):
         self.last_epoch_outputs = None
     
-    # DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE DEPRECATE
-    
-    def set_reception(self, *args, **kwargs):
-        return self._receptive_field_net.set_reception(*args, **kwargs)
-    
-    def receptive_upsample(self, *args, **kwargs):
-        return self._receptive_field_net.receptive_upsample(*args, **kwargs)
-
-    def reset_parameters(self, *args, **kwargs):
-        return self._receptive_field_net.reset_parameters(*args, **kwargs)
-   
-    @property
-    def reception(self):
-        return self._receptive_field_net.reception
-
-    @property
-    def initial_reception(self):
-        return self._receptive_field_net.initial_reception

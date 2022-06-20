@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # coding: utf-8
-
 import contextlib
 import functools
 import os
@@ -13,25 +12,30 @@ from re import A
 from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
-from pyrsistent import T
 import pytorch_lightning as pl
 import torch
-import wandb
+from pyrsistent import T
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.profiler import (AdvancedProfiler, PyTorchProfiler,
+                                        SimpleProfiler)
 from pytorch_lightning.trainer.states import RunningStage
-from pytorch_lightning.profiler import SimpleProfiler, PyTorchProfiler, AdvancedProfiler
 from scipy.interpolate import interp1d
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
-from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_BATCH, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODES, DataloaderPreviewCallback,
+import wandb
+from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_BATCH,
+                             LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODES,
+                             DataloaderPreviewCallback,
                              LogAveragePrecisionCallback, LogHistogramCallback,
-                             LogHistogramsSuperposedPerClassCallback, LogImageHeatmapTableCallback, LogPerInstanceValueCallback, LogPercentilesPerClassCallback,
-                             LogRocCallback, TorchTensorboardProfilerCallback)
-from common_dev01 import (create_python_random_generator, create_seed, hashify_config,
-                          seed_int2str, seed_str2int)
-
+                             LogHistogramsSuperposedPerClassCallback,
+                             LogImageHeatmapTableCallback,
+                             LogPercentilesPerClassCallback,
+                             LogPerInstanceValueCallback, LogRocCallback,
+                             TorchTensorboardProfilerCallback)
+from common_dev01 import (create_python_random_generator, create_seed,
+                          hashify_config, seed_int2str, seed_str2int)
 
 __version__ = "v1.0.0"
 
@@ -594,8 +598,6 @@ def run_one(
     real_anomaly_limit: int,
     # dataset (run-specific)
     normal_class: int,
-    # heatmap
-    gauss_std: float,
     # script
     test: bool,
     preview_nimages: int,

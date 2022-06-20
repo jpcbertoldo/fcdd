@@ -4,22 +4,20 @@
 import abc
 import functools
 import random
-from tkinter import W
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
-from python.dev.mvtec_dataset_dev01 import NORMAL_LABEL
 import pytorch_lightning as pl
 import torch
-from torch import Tensor
+import torchvision.transforms.functional_tensor as TFT
+from python.dev.mvtec_dataset_dev01 import NORMAL_LABEL
 from pytorch_lightning.trainer.states import RunningStage
-from sklearn.metrics import (roc_auc_score, average_precision_score)
+from sklearn.metrics import average_precision_score, roc_auc_score
 from torch import Tensor
+from torchvision.transforms import InterpolationMode
 
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
 
-import torchvision.transforms.functional_tensor as TFT
-from torchvision.transforms import InterpolationMode 
 
 def merge_steps_outputs(steps_outputs: List[Dict[str, Tensor]]):
     """
@@ -250,9 +248,9 @@ class LogRocCallback(
         auc_logkey = f"{logkey_prefix}roc-auc"
         
         if self.log_curve:
-            import wandb
             # i copied and adapted wandb.plot.roc_curve.roc_curve()
             import hacked_dev01
+            import wandb
             wandb.log({curve_logkey: hacked_dev01.roc_curve(binary_gt, scores, labels=["anomalous"])})
            
         trainer.model.log(auc_logkey, roc_auc_score(binary_gt, scores))
@@ -341,9 +339,9 @@ class LogAveragePrecisionCallback(
         avg_precision_logkey = f"{logkey_prefix}avg-precision"
         
         if self.log_curve:
-            import wandb
             # i copied and adapted wandb.plot.pr_curve.pr_curve()
             import hacked_dev01
+            import wandb
             wandb.log({curve_logkey: hacked_dev01.pr_curve(binary_gt, scores, labels=["anomalous"])})
            
         trainer.model.log(avg_precision_logkey, average_precision_score(binary_gt, scores))
