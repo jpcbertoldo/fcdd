@@ -766,3 +766,69 @@ class LogImageHeatmapTableCallback(
             table.add_data(idx, idx_in_epoch, label, wandb_img, wandb_heatmap, self.heatmap_normalization)
 
         wandb.log({table_logkey: table})            
+        
+
+class LogPercentilesPerClassCallback(
+    MultiStageEpochEndCallbackMixin,
+    LastEpochOutputsDependentCallbackMixin,  
+    pl.Callback,
+):
+    
+    @MultiStageEpochEndCallbackMixin.init_stage
+    def __init__(self, values_key: str, gt_key: str, percentiles: Tuple[float, ...],):
+        """
+        Args:
+            values_key & gt_key: inside the last_epoch_outputs, how are the values and their respective labels called?
+        """
+        super().__init__()
+        assert values_key != "", f"values_key must not be empty"
+        assert gt_key != "", f"gt_key must not be empty"
+        assert values_key != gt_key, f"values_key and gt_key must be different, got {values_key} and {gt_key}"
+        assert len(percentiles) > 0, f"got {len(percentiles)}"
+        assert all(0 <= p <= 100 for p in percentiles), f"got {percentiles}"
+        self.values_key = values_key
+        self.gt_key = gt_key
+        self.percentiles = percentiles
+
+    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
+    def setup(self, trainer, pl_module, stage=None):
+        pass  # just let the mixin do its job
+        
+    def _multi_stage_epoch_end_do(self, trainer, pl_module):
+        self._log(trainer, pl_module)
+    
+    def _log(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        
+        try:
+            values = pl_module.last_epoch_outputs[self.values_key]
+            gt = pl_module.last_epoch_outputs[self.gt_key]
+            
+        except KeyError as ex:
+            msg = ex.args[0]
+            if self.values_key not in msg and self.gt_key not in msg:
+                raise ex
+            raise ValueError(f"pl_module.last_epoch_outputs should have the keys self.values_key={self.values_key} and self.gt_key={self.gt_key}, did you configure the model correctly? or passed me the wrong keys?") from ex
+        
+        assert isinstance(values, torch.Tensor), f"values must be a torch.Tensor, got {type(values)}"
+        assert isinstance(gt, torch.Tensor), f"gt must be a torch.Tensor, got {type(gt)}"
+
+        assert values.shape == gt.shape, f"values and gtg must have the same shape, got {values.shape} and {gt.shape}"
+                        
+        # make sure they are 1D (it doesn't matter if they were not before)
+        values = values.reshape(-1, 1)  # wandb.plot.roc_curve() wants it like this
+        gt = gt.reshape(-1, 1)
+        
+        values_normal = values[gt == NOMINAL_TARGET]
+        values_anomalous = values[gt == ANOMALY_TARGET]
+
+        current_stage = trainer.state.stage
+        logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
+        logkey = f"{logkey_prefix}percentiles-per-class-of-{self.values_key}"
+             
+        import wandb
+        
+        table = wandb.Table(columns=["percentile", "normal", "anomalous"])
+        
+        for perc in self.percentiles:
+            table.add_data(perc, np.percentile(values_normal, q=perc), np.percentile(values_anomalous, q=perc))
+        

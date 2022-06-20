@@ -54,6 +54,9 @@ parser.set_defaults(
     wandb_log_image_heatmap_resolution=(None, None, None),
     wandb_log_histogram_score=(LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG),
     wandb_log_histogram_loss=(LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG),
+    wandb_log_percentiles_score=(
+        (0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
+    ),
     # pytorch lightning 
     lightning_accelerator=train_dev01.LIGHTNING_ACCELERATOR_GPU,
     lightning_ndevices=1,

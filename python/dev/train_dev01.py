@@ -13,6 +13,7 @@ from re import A
 from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
+from pyrsistent import T
 import pytorch_lightning as pl
 import torch
 import wandb
@@ -26,7 +27,7 @@ from torch.profiler import tensorboard_trace_handler
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_BATCH, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODES, DataloaderPreviewCallback,
                              LogAveragePrecisionCallback, LogHistogramCallback,
-                             LogHistogramsSuperposedPerClassCallback, LogImageHeatmapTableCallback,
+                             LogHistogramsSuperposedPerClassCallback, LogImageHeatmapTableCallback, LogPercentilesPerClassCallback,
                              LogRocCallback, TorchTensorboardProfilerCallback)
 from common_dev01 import (create_python_random_generator, create_seed, hashify_config,
                           seed_int2str, seed_str2int)
@@ -415,6 +416,15 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         "--wandb-log-histogram-resolution", nargs=3, type=int,
         help="size of the image (width=height), and if 'None' then keep the original size"
     )
+    parser.add_argument(
+        "--wandb-log-percentiles-score-train", type=float, nargs="*",
+        help="If set, the score will be logged at the given percentiles for train (normal and anomalous scores separatedly)."
+    )
+    parser.add_argument(
+        "--wandb-log-percentiles-score-validation", type=float, nargs="*",
+        help="If set, the score will be logged at the given percentiles for train (normal and anomalous scores separatedly)."
+    )
+    
     # ================================ pytorch lightning =================================
     parser.add_argument(
         "--lightning-accelerator", type=str, 
@@ -533,6 +543,15 @@ def args_post_parse(args_):
             time.sleep(1/3)  # let the system state change
         args_.seeds = tuple(seeds)
         del vars(args_)['n_seeds']
+    
+    # ================================== wandb_log_percentiles_score ==================================
+        
+    args_.wandb_log_percentiles_score = (
+        args_.wandb_log_percentiles_score_train,
+        args_.wandb_log_percentiles_score_validation,
+    ) 
+    del vars(args_)['wandb_log_percentiles_score_train']
+    del vars(args_)['wandb_log_percentiles_score_validation']
         
     return args_
 
@@ -591,6 +610,7 @@ def run_one(
     wandb_log_image_heatmap_resolution: Tuple[int, int, int],
     wandb_log_histogram_score: Tuple[bool, bool, bool],
     wandb_log_histogram_loss: Tuple[bool, bool, bool],
+    wandb_log_percentiles_score: Tuple[Tuple[float, ...], Tuple[float, ...]],
     # pytorch lightning
     lightning_accelerator: str,
     lightning_ndevices: int,
@@ -935,10 +955,36 @@ def run_one(
         callbacks.append(
             DataloaderPreviewCallback(
                 dataloader=datamodule.train_dataloader(embed_preprocessing=True), 
-                n_samples=preview_nimages, logkey_prefix="train/preview"
-            ),
+                n_samples=preview_nimages, logkey_prefix="train/preview",
+            )
         )
     
+    # ================================ PERCENTILES ================================
+    
+    def add_callbacks_log_percentiles_score(train: Tuple[float, ...], validation: Tuple[float, ...]):
+    
+        if len(train) > 0:
+            callbacks.append(
+                LogPercentilesPerClassCallback(
+                    stage=RunningStage.TRAINING, 
+                    values_key="score_maps",
+                    gt_key="gtmaps", 
+                    percentiles=train,
+                )
+            )
+                     
+        if len(validation) > 0:
+            callbacks.append(
+                LogPercentilesPerClassCallback(
+                    stage=RunningStage.VALIDATING, 
+                    values_key="score_maps",
+                    gt_key="gtmaps", 
+                    percentiles=validation,
+                )
+            )           
+    
+    add_callbacks_log_percentiles_score(*wandb_log_percentiles_score)
+
     # ================================ PROFILING ================================
     
     if not wandb_profile:
