@@ -53,10 +53,8 @@ parser.set_defaults(
     wandb_log_image_heatmap_resolution=(None, None, None),
     wandb_log_histogram_score=(None, None, LOG_HISTOGRAM_MODE_LOG),
     wandb_log_histogram_loss=(None, None, LOG_HISTOGRAM_MODE_LOG),
-    wandb_log_percentiles_score=(
-        (0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
-        (0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
-    ),
+    wandb_log_percentiles_score_train=(0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
+    wandb_log_percentiles_score_validation=(0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
     wandb_log_perinstance_mean_score = (True, True, True),
     wandb_log_perinstance_mean_loss = (True, True, True),
     # pytorch lightning 

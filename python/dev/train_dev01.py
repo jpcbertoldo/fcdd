@@ -651,10 +651,11 @@ def run_one(
     assert all(isinstance(obj, bool) for obj in wandb_log_roc), f"wandb_log_roc should only have bool, got {wandb_log_roc}"
     assert len(wandb_log_pr) == 3, f"wandb_log_pr should have 3 bools, for train/validation/test, but got {wandb_log_pr}" 
     assert all(isinstance(obj, bool) for obj in wandb_log_pr), f"wandb_log_pr should only have bool, got {wandb_log_pr}"
-    assert len(wandb_log_score_histogram) == 3, f"wandb_log_score_histogram should have 3 bools, for train/validation/test, but got {len(wandb_log_score_histogram)} things"
-    assert all(val in LOG_HISTOGRAM_MODES for val in wandb_log_score_histogram), f"wandb_log_score_histogram values should be in {LOG_HISTOGRAM_MODES}, got {wandb_log_score_histogram}"
-    assert len(wandb_log_loss_histogram) == 3, f"wandb_log_loss_histogram should have 3 bools, for train/validation/test, but got {len(wandb_log_loss_histogram)} things"
-    assert all(val in LOG_HISTOGRAM_MODES for val in wandb_log_loss_histogram), f"wandb_log_loss_histogram values should be in {LOG_HISTOGRAM_MODES}, got {wandb_log_loss_histogram}"
+    
+    assert len(wandb_log_histogram_score) == 3, f"wandb_log_histogram_score should have 3 bools, for train/validation/test, but got {len(wandb_log_histogram_score)} things"
+    assert all(val in LOG_HISTOGRAM_MODES for val in wandb_log_histogram_score), f"wandb_log_histogram_score values should be in {LOG_HISTOGRAM_MODES}, got {wandb_log_histogram_score}"
+    assert len(wandb_log_histogram_loss) == 3, f"wandb_log_histogram_loss should have 3 bools, for train/validation/test, but got {len(wandb_log_histogram_loss)} things"
+    assert all(val in LOG_HISTOGRAM_MODES for val in wandb_log_histogram_loss), f"wandb_log_histogram_loss values should be in {LOG_HISTOGRAM_MODES}, got {wandb_log_histogram_loss}"
 
     logdir.mkdir(parents=True, exist_ok=True)
     
