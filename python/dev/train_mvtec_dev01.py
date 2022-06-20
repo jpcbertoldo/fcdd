@@ -6,7 +6,7 @@ from argparse import ArgumentParser
 import model_dev01
 import mvtec_dataset_dev01
 import train_dev01
-from callbacks_dev01 import LOG_HISTOGRAM_MODE_LOG, LOG_HISTOGRAM_MODE_NONE
+from callbacks_dev01 import LOG_HISTOGRAM_MODE_LOG
 
 
 parser = train_dev01.parser_add_arguments(ArgumentParser())
@@ -23,18 +23,18 @@ parser.set_defaults(
     scheduler_paramaters=[0.985],
     # dataset
     dataset=mvtec_dataset_dev01.DATASET_NAME,
-    raw_shape=(260, 260),
+    raw_shape=(240, 240),
     net_shape=(224, 224),
     batch_size=64,  # it was 128, i'm accumulating batches to simulate the same size
-    nworkers=2,
+    nworkers=4,
     pin_memory=False,
     preprocessing=mvtec_dataset_dev01.PREPROCESSING_LCNAUG1,
-    supervise_mode=mvtec_dataset_dev01.SUPERVISE_MODE_SYNTHETIC_ANOMALY_CONFETTI,
+    supervise_mode=mvtec_dataset_dev01.SUPERVISE_MODE_REAL_ANOMALY,
     real_anomaly_limit=1,
     # script
     test=True,
     preview_nimages=0,
-    n_seeds=3,
+    # n_seeds=3,
     # seeds=None,
     classes=None,
     # files
@@ -43,16 +43,16 @@ parser.set_defaults(
     wandb_tags=["dev01",],
     wandb_profile=False,
     wandb_offline=False,
-    wandb_watch=train_dev01.WANDB_WATCH_NONE,
+    wandb_watch=None,
     wandb_watch_log_freq=100,  # wandb's default
     wandb_checkpoint_mode=train_dev01.WANDB_CHECKPOINT_MODE_LAST,
     # train/validation/test
     wandb_log_roc=(False, True, True),
     wandb_log_pr=(False, True, True),
-    wandb_log_image_heatmap_nsamples=(0, 10, 30),
+    wandb_log_image_heatmap_nsamples=(0, 4, 30),
     wandb_log_image_heatmap_resolution=(None, None, None),
-    wandb_log_histogram_score=(LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG),
-    wandb_log_histogram_loss=(LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG),
+    wandb_log_histogram_score=(None, None, LOG_HISTOGRAM_MODE_LOG),
+    wandb_log_histogram_loss=(None, None, LOG_HISTOGRAM_MODE_LOG),
     wandb_log_percentiles_score=(
         (0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
         (0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
@@ -62,7 +62,7 @@ parser.set_defaults(
     # pytorch lightning 
     lightning_accelerator=train_dev01.LIGHTNING_ACCELERATOR_GPU,
     lightning_ndevices=1,
-    lightning_strategy=train_dev01.LIGHTNING_STRATEGY_NONE,
+    lightning_strategy=None,
     lightning_precision=train_dev01.LIGHTNING_PRECISION_32,
     lightning_model_summary_max_depth=4,
     lightning_check_val_every_n_epoch=10,

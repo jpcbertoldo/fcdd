@@ -25,8 +25,7 @@ from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
-from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_BATCH,
-                             LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODES,
+from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_BATCH, LOG_HISTOGRAM_MODES,
                              DataloaderPreviewCallback,
                              LogAveragePrecisionCallback, LogHistogramCallback,
                              LogHistogramsSuperposedPerClassCallback,
@@ -213,10 +212,9 @@ LIGHTNING_ACCELERATOR_CHOICES = (
 print(f"LIGHTNING_ACCELERATOR_CHOICES={LIGHTNING_ACCELERATOR_CHOICES}")
 
 # src: https://pytorch-lightning.readthedocs.io/en/latest/extensions/strategy.html
-LIGHTNING_STRATEGY_NONE = "none"
 LIGHTNING_STRATEGY_DDP = "ddp"
 LIGHTNING_STRATEGY_CHOICES = (
-    LIGHTNING_STRATEGY_NONE,
+    None,
     LIGHTNING_STRATEGY_DDP,
 )
 print(f"LIGHTNING_STRATEGY_CHOICES={LIGHTNING_STRATEGY_CHOICES}")
@@ -231,12 +229,11 @@ LIGHTNING_PRECISION_CHOICES = (
 print(f"LIGHTNING_PRECISION_CHOICES={LIGHTNING_PRECISION_CHOICES}")
 
 
-LIGHTNING_PROFILER_NONE = "none"
 LIGHTNING_PROFILER_SIMPLE = "simple"
 LIGHTNING_PROFILER_ADVANCED = "advanced"
 LIGHTNING_PROFILER_PYTORCH = "pytorch"
 LIGHTNING_PROFILER_CHOICES = (
-    LIGHTNING_PROFILER_NONE,
+    None,
     LIGHTNING_PROFILER_SIMPLE,
     LIGHTNING_PROFILER_ADVANCED,
     LIGHTNING_PROFILER_PYTORCH,
@@ -254,12 +251,11 @@ LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES = (
 
 # ======================================== wandb ========================================
 
-WANDB_WATCH_NONE = "none"
 WANDB_WATCH_GRADIENTS = "gradients"
 WANDB_WATCH_ALL = "all"
 WANDB_WATCH_PARAMETERS = "parameters"
 WANDB_WATCH_CHOICES = (
-    WANDB_WATCH_NONE,
+    None,
     WANDB_WATCH_GRADIENTS,
     WANDB_WATCH_ALL,
     WANDB_WATCH_PARAMETERS,
@@ -267,12 +263,11 @@ WANDB_WATCH_CHOICES = (
 print(f"WANDB_WATCH_CHOICES={WANDB_WATCH_CHOICES}")
 
 
-WANDB_CHECKPOINT_MODE_NONE = "none"
 WANDB_CHECKPOINT_MODE_LAST = "last"
 # WANDB_CHECKPOINT_MODE_BEST = "best"
 # WANDB_CHECKPOINT_MODE_ALL = "all"
 WANDB_CHECKPOINT_MODES = (
-    WANDB_CHECKPOINT_MODE_NONE,
+    None,
     WANDB_CHECKPOINT_MODE_LAST,
     # WANDB_CHECKPOINT_MODE_BEST,
     # WANDB_CHECKPOINT_MODE_ALL, 
@@ -285,6 +280,19 @@ print(f"WANDB_CHECKPOINT_MODES={WANDB_CHECKPOINT_MODES}")
 # ======================================== parser ==========================================
 # ==========================================================================================
 # ==========================================================================================
+
+
+def none_or_str(value: str):
+    if value.lower() == 'none':
+        return None
+    return value
+
+
+def none_or_int(value: str):
+    if value.lower() == 'none':
+        return None
+    return int(value)
+
 
 def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     """
@@ -383,7 +391,7 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument("--wandb-offline", action="store_true", help="If set, will not sync with the webserver.",)
     parser.add_argument(
         # choices taken from wandb/sdk/wandb_watch.py => watch()
-        "--wandb-watch", type=str, default=None, choices=WANDB_WATCH_CHOICES, 
+        "--wandb-watch", type=none_or_str, choices=WANDB_WATCH_CHOICES, 
         help="Argument for wandb_logger.watch(..., log=WANDB_WATCH).",
     )
     parser.add_argument(
@@ -391,7 +399,7 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         help="Log frequency of gradients and parameters. Argument for wandb_logger.watch(..., log_freq=WANDB_WATCH_LOG_FREQ). ",
     )
     parser.add_argument(        
-        "--wandb-checkpoint-mode", type=str, choices=WANDB_CHECKPOINT_MODES, default=WANDB_CHECKPOINT_MODE_LAST,
+        "--wandb-checkpoint-mode", type=none_or_str, choices=WANDB_CHECKPOINT_MODES,
         help="How to save checkpoints."
     )
     parser.add_argument(
@@ -403,11 +411,11 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         help="If set, the average precision curve will be logged, respectively, for train/validation/test. On test the PR curve is also logged."
     )
     parser.add_argument(
-        "--wandb-log-histogram-score", type=str, nargs=3, choices=LOG_HISTOGRAM_MODES,
+        "--wandb-log-histogram-score", type=none_or_str, nargs=3, choices=LOG_HISTOGRAM_MODES,
         help="if and how to log  score values; you should give 3 values, respectively for the train/validation/test hooks"
     )
     parser.add_argument(
-        "--wandb-log-histogram-loss", type=str, nargs=3, choices=LOG_HISTOGRAM_MODES,
+        "--wandb-log-histogram-loss", type=none_or_str, nargs=3, choices=LOG_HISTOGRAM_MODES,
         help="if and how to log loss values; you should give 3 values, respectively for the train/validation/test hooks"
     )
     group_log_image_heatmap = parser.add_argument_group("log-image-heatmap")
@@ -417,7 +425,7 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
              "alwyas log the same ones assuming the order of images doesnt' change"
     )
     group_log_image_heatmap.add_argument(
-        "--wandb-log-histogram-resolution", nargs=3, type=int,
+        "--wandb-log-histogram-resolution", nargs=3, type=none_or_int,
         help="size of the image (width=height), and if 'None' then keep the original size"
     )
     parser.add_argument(
@@ -446,7 +454,7 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     )
     parser.add_argument("--lightning-ndevices", type=int, default=1, help="Number of devices (gpus) to use for training.")
     parser.add_argument(
-        "--lightning-strategy", type=str, 
+        "--lightning-strategy", type=none_or_str, 
         default=None, 
         choices=LIGHTNING_STRATEGY_CHOICES,
         help="See https://pytorch-lightning.readthedocs.io/en/latest/extensions/strategy.html"
@@ -468,7 +476,7 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         help="Accumulate gradients for THIS batches. https://pytorch-lightning.readthedocs.io/en/latest/advanced/training_tricks.html#accumulate-gradients"
     )
     parser.add_argument(
-        "--lightning-profiler", type=str, choices=LIGHTNING_PROFILER_CHOICES,
+        "--lightning-profiler", type=none_or_str, choices=LIGHTNING_PROFILER_CHOICES,
         help="simple and advanced: https://pytorch-lightning.readthedocs.io/en/latest/tuning/profiler_basic.html\n"
              "pytorch: https://pytorch-lightning.readthedocs.io/en/latest/tuning/profiler_intermediate.html\n"
              "in any case it is saved in a f"
@@ -504,17 +512,7 @@ def args_post_parse(args_):
         """ takes a timestamp (seconds since epoch) and transforms that into a datetime string representation """
         return datetime.fromtimestamp(i).strftime('%Y%m%d%H%M%S')
     args_.script_start_time = int(time.time())
-    
-    # ================================== none ==================================
-    if args_.lightning_strategy is not None:
-        args_.lightning_strategy = None if args_.lightning_strategy == LIGHTNING_STRATEGY_NONE else args_.lightning_strategy
 
-    if args_.wandb_watch is not None:
-        args_.wandb_watch = None if args_.wandb_watch == WANDB_WATCH_NONE else args_.wandb_watch
-
-    if args_.wandb_checkpoint_mode is not None:
-        args_.wandb_checkpoint_mode = None if args_.wandb_checkpoint_mode == WANDB_CHECKPOINT_MODE_NONE else args_.wandb_checkpoint_mode
-      
     # ================================== list 2 tuple (imutable) ==================================
     args_.raw_shape = tuple(args_.raw_shape)
     args_.net_shape = tuple(args_.net_shape)
@@ -871,7 +869,7 @@ def run_one(
     
     def add_callbacks_log_histogram_score(train_mode: str, validation_mode: str, test_mode: str):
         
-        if train_mode != LOG_HISTOGRAM_MODE_NONE:
+        if train_mode is None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.TRAINING, key="score_maps", mode=train_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -885,7 +883,7 @@ def run_one(
                 ),
             ])
 
-        if validation_mode != LOG_HISTOGRAM_MODE_NONE:
+        if validation_mode is None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.VALIDATING, key="score_maps", mode=validation_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -899,7 +897,7 @@ def run_one(
                 ),
             ])
         
-        if test_mode != LOG_HISTOGRAM_MODE_NONE:
+        if test_mode is None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.TESTING, key="score_maps", mode=test_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -918,7 +916,7 @@ def run_one(
     
     def add_callbacks_log_histogram_loss(train_mode: str, validation_mode: str, test_mode: str):
         
-        if train_mode != LOG_HISTOGRAM_MODE_NONE:
+        if train_mode is None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.TRAINING, key="loss_maps", mode=train_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -932,7 +930,7 @@ def run_one(
                 ),
             ])
 
-        if validation_mode != LOG_HISTOGRAM_MODE_NONE:
+        if validation_mode is None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.VALIDATING, key="loss_maps", mode=validation_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -946,7 +944,7 @@ def run_one(
                 ),
             ])
         
-        if test_mode != LOG_HISTOGRAM_MODE_NONE:
+        if test_mode is None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.TESTING, key="loss_maps", mode=test_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -1080,7 +1078,7 @@ def run_one(
     
     def get_lightning_profiler(profiler_choice):
         
-        if profiler_choice == LIGHTNING_PROFILER_NONE:
+        if profiler_choice is None:
             return None
         
         elif profiler_choice == LIGHTNING_PROFILER_SIMPLE:
@@ -1161,6 +1159,7 @@ def run_one(
 def run(**kwargs) -> dict:
     """see the arguments in run_one()"""
     
+    # todo:refactor: make the cuda device selection a decorator
     cuda_visible_devices = kwargs.pop("cuda_visible_devices", None)
     if cuda_visible_devices is not None:
         print(f"Using cuda devices: {cuda_visible_devices} ==> setting environment variable CUDA_VISIBLE_DEVICES")
@@ -1179,10 +1178,9 @@ def run(**kwargs) -> dict:
     
     wandb_checkpoint_mode = kwargs.pop("wandb_checkpoint_mode")
     
-    if wandb_checkpoint_mode is None:
-        log_model = False 
-    else:
-        log_model = wandb_checkpoint_mode != WANDB_CHECKPOINT_MODE_NONE
+    # later the case of multiple saving modes will be handled
+    # for now the 'else' is just True, which means 'last'
+    log_model = False if wandb_checkpoint_mode is None else True
         
     if log_model:
         assert not wandb_offline, f"wandb_offline={wandb_offline} is incompatible with log_model={log_model} (from wandb_checkpoint_mode={wandb_checkpoint_mode})"

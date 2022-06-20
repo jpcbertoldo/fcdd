@@ -347,10 +347,9 @@ class LogAveragePrecisionCallback(
         trainer.model.log(avg_precision_logkey, average_precision_score(binary_gt, scores))
   
   
-LOG_HISTOGRAM_MODE_NONE = "none"
 LOG_HISTOGRAM_MODE_LOG = "log"
 LOG_HISTOGRAM_MODE_SUMMARY = "summary"
-LOG_HISTOGRAM_MODES = (LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG, LOG_HISTOGRAM_MODE_SUMMARY)
+LOG_HISTOGRAM_MODES = (None, LOG_HISTOGRAM_MODE_LOG, LOG_HISTOGRAM_MODE_SUMMARY)
        
 class LogHistogramCallback(
     MultiStageEpochEndCallbackMixin,
@@ -367,8 +366,7 @@ class LogHistogramCallback(
         super().__init__()
         assert key != "", f"key must not be empty"
         assert mode in LOG_HISTOGRAM_MODES, f"log_mode must be one of {LOG_HISTOGRAM_MODES}, got '{mode}'"
-        if mode == LOG_HISTOGRAM_MODE_NONE:
-            raise ValueError(f"mode={mode} should not be used, just dont add the callback to the trainer :)")
+        assert mode is not None, f"log_mode must not be None, just dont add the callback to the trainer :)"
         self.key = key
         self.mode = mode
 
@@ -432,8 +430,7 @@ class LogHistogramsSuperposedPerClassCallback(
         assert values_key != gt_key, f"scores_key and gt_key must be different, got {values_key} and {gt_key}"
         
         assert mode in LOG_HISTOGRAM_MODES, f"log_mode must be one of {LOG_HISTOGRAM_MODES}, got '{mode}'"
-        if mode == LOG_HISTOGRAM_MODE_NONE:
-            raise ValueError(f"mode={mode} should not be used, just dont add the callback to the trainer :)")
+        assert mode is not None, f"log_mode must not be None, just dont add the callback to the trainer :)"
                 
         if limit_points is not None:
             assert limit_points > 0, f"limit_points must be > 0 or None, got {limit_points}"
