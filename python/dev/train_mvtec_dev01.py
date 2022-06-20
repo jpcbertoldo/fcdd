@@ -50,8 +50,10 @@ parser.set_defaults(
     # train/validation/test
     wandb_log_roc=(False, True, True),
     wandb_log_pr=(False, True, True),
-    wandb_log_score_histogram=(LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG),
-    wandb_log_loss_histogram=(LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG),
+    wandb_log_image_heatmap_nsamples=(0, 10, 30),
+    wandb_log_image_heatmap_resolution=(None, None, None),
+    wandb_log_histogram_score=(LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG),
+    wandb_log_histogram_loss=(LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODE_LOG),
     # pytorch lightning 
     lightning_accelerator=train_dev01.LIGHTNING_ACCELERATOR_GPU,
     lightning_ndevices=1,

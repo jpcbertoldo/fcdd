@@ -398,13 +398,23 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         help="If set, the average precision curve will be logged, respectively, for train/validation/test. On test the PR curve is also logged."
     )
     parser.add_argument(
-        "--wandb-log-score-histogram", type=str, nargs=3, choices=LOG_HISTOGRAM_MODES,
+        "--wandb-log-histogram-score", type=str, nargs=3, choices=LOG_HISTOGRAM_MODES,
         help="if and how to log  score values; you should give 3 values, respectively for the train/validation/test hooks"
-    ),
+    )
     parser.add_argument(
-        "--wandb-log-loss-histogram", type=str, nargs=3, choices=LOG_HISTOGRAM_MODES,
+        "--wandb-log-histogram-loss", type=str, nargs=3, choices=LOG_HISTOGRAM_MODES,
         help="if and how to log loss values; you should give 3 values, respectively for the train/validation/test hooks"
-    ),
+    )
+    group_log_image_heatmap = parser.add_argument_group("log-image-heatmap")
+    group_log_image_heatmap.add_argument(
+        "--wandb-log-histogram-nsamples", nargs=3, type=int,
+        help="how many of each class (normal/anomalous) per epoch?"
+             "alwyas log the same ones assuming the order of images doesnt' change"
+    )
+    group_log_image_heatmap.add_argument(
+        "--wandb-log-histogram-resolution", nargs=3, type=int,
+        help="size of the image (width=height), and if 'None' then keep the original size"
+    )
     # ================================ pytorch lightning =================================
     parser.add_argument(
         "--lightning-accelerator", type=str, 
@@ -572,10 +582,15 @@ def run_one(
     wandb_profile: bool,
     wandb_watch: Optional[str],
     wandb_watch_log_freq: int,
+    # wandb (train/validation/test)
+    # each one below is a tuple of 3 things
+    # which respectively configure the train/validation/test phases
     wandb_log_roc: Tuple[bool, bool, bool],
     wandb_log_pr: Tuple[bool, bool, bool],
-    wandb_log_score_histogram: Tuple[str, str, str],
-    wandb_log_loss_histogram: Tuple[str, str, str],
+    wandb_log_image_heatmap_nsamples: Tuple[int, int, int],
+    wandb_log_image_heatmap_resolution: Tuple[int, int, int],
+    wandb_log_histogram_score: Tuple[bool, bool, bool],
+    wandb_log_histogram_loss: Tuple[bool, bool, bool],
     # pytorch lightning
     lightning_accelerator: str,
     lightning_ndevices: int,
@@ -686,85 +701,93 @@ def run_one(
         pl.callbacks.RichModelSummary(max_depth=lightning_model_summary_max_depth),
     ]
     
-    log_roc_train, log_roc_validation, log_roc_test = wandb_log_roc
     # ========================================================================= ROC
+
+    def add_callbacks_log_roc(train: bool, validation: bool, test: bool):
     
-    if log_roc_train:
-        callbacks.append(
-            LogRocCallback(
-                stage=RunningStage.TRAINING,
-                scores_key="score_maps",
-                gt_key="gtmaps",
-                log_curve=False,
-                limit_points=PIXELWISE_ROC_LIMIT_POINTS,
-                python_generator=create_python_random_generator(seed),
+        if train:
+            callbacks.append(
+                LogRocCallback(
+                    stage=RunningStage.TRAINING,
+                    scores_key="score_maps",
+                    gt_key="gtmaps",
+                    log_curve=False,
+                    limit_points=PIXELWISE_ROC_LIMIT_POINTS,
+                    python_generator=create_python_random_generator(seed),
+                )
             )
-        )
-        
-    if log_roc_validation:
-        callbacks.append(
-            LogRocCallback(
-                stage=RunningStage.VALIDATING,
-                scores_key="score_maps",
-                gt_key="gtmaps",
-                log_curve=False,
-                limit_points=PIXELWISE_ROC_LIMIT_POINTS, 
-                python_generator=create_python_random_generator(seed),
+            
+        if validation:
+            callbacks.append(
+                LogRocCallback(
+                    stage=RunningStage.VALIDATING,
+                    scores_key="score_maps",
+                    gt_key="gtmaps",
+                    log_curve=False,
+                    limit_points=PIXELWISE_ROC_LIMIT_POINTS, 
+                    python_generator=create_python_random_generator(seed),
+                )
             )
-        )
-        
-    if log_roc_test:
-        callbacks.append(
-            LogRocCallback(
-                stage=RunningStage.TESTING,
-                scores_key="score_maps",
-                gt_key="gtmaps",
-                log_curve=True,
-                limit_points=None,
-                python_generator=create_python_random_generator(seed),
+            
+        if test:
+            callbacks.append(
+                LogRocCallback(
+                    stage=RunningStage.TESTING,
+                    scores_key="score_maps",
+                    gt_key="gtmaps",
+                    log_curve=True,
+                    limit_points=None,
+                    python_generator=create_python_random_generator(seed),
+                )
             )
-        )
+            
+    add_callbacks_log_roc(*wandb_log_roc)
+    
     # ========================================================================= PR
-    log_pr_train, log_pr_validation, log_pr_test = wandb_log_pr
     
-    if log_pr_train:
-        callbacks.append(
-            LogAveragePrecisionCallback(
-                stage=RunningStage.TRAINING,
-                scores_key="score_maps",
-                gt_key="gtmaps",
-                log_curve=False,
-                limit_points=PIXELWISE_PR_LIMIT_POINTS, 
-                python_generator=create_python_random_generator(seed),
+    def add_callbacks_log_pr(train: bool, validation: bool, test: bool):
+    
+        if train:
+            callbacks.append(
+                LogAveragePrecisionCallback(
+                    stage=RunningStage.TRAINING,
+                    scores_key="score_maps",
+                    gt_key="gtmaps",
+                    log_curve=False,
+                    limit_points=PIXELWISE_PR_LIMIT_POINTS, 
+                    python_generator=create_python_random_generator(seed),
+                )
             )
-        )
-    if log_pr_validation:
-        callbacks.append(
-            LogAveragePrecisionCallback(
-                stage=RunningStage.VALIDATING,
-                scores_key="score_maps",
-                gt_key="gtmaps",
-                log_curve=False,
-                limit_points=PIXELWISE_PR_LIMIT_POINTS,  
-                python_generator=create_python_random_generator(seed),
+        if validation:
+            callbacks.append(
+                LogAveragePrecisionCallback(
+                    stage=RunningStage.VALIDATING,
+                    scores_key="score_maps",
+                    gt_key="gtmaps",
+                    log_curve=False,
+                    limit_points=PIXELWISE_PR_LIMIT_POINTS,  
+                    python_generator=create_python_random_generator(seed),
+                )
             )
-        )
-    if log_pr_test:
-        callbacks.append(
-            LogAveragePrecisionCallback(
-                stage=RunningStage.TESTING,
-                scores_key="score_maps",
-                gt_key="gtmaps",
-                log_curve=True,
-                limit_points=None,
-                python_generator=create_python_random_generator(seed),
+        if test:
+            callbacks.append(
+                LogAveragePrecisionCallback(
+                    stage=RunningStage.TESTING,
+                    scores_key="score_maps",
+                    gt_key="gtmaps",
+                    log_curve=True,
+                    limit_points=None,
+                    python_generator=create_python_random_generator(seed),
+                )
             )
-        )
+            
+    add_callbacks_log_pr(*wandb_log_pr)        
+    
     # ========================================================================= heatmaps
     
     def add_callbacks_log_image_heatmap(
-        nsamples_train, nsamples_validation, nsamples_test, 
-        resolution_train, resolution_validation, resolution_test
+        nsamples_train: int, nsamples_validation: int, nsamples_test: int, 
+        resolution_train: Optional[int], resolution_validation: Optional[int], resolution_test: Optional[int],
     ):
     
         if nsamples_train > 0:
@@ -808,101 +831,104 @@ def run_one(
                     python_generator=create_python_random_generator(seed),
                 ),
             ])
-        
-    # todo put in cli
-    log_image_heatmap_nsamples = 5, 5, 5
-    log_image_heatmap_resolution = None, None, None  # dont change
     
     add_callbacks_log_image_heatmap(
-        *log_image_heatmap_nsamples, 
-        *log_image_heatmap_resolution,
+        *wandb_log_image_heatmap_nsamples, *wandb_log_image_heatmap_resolution,
     )
     # ========================================================================= histograms
     
-    # todo put in cli
-    log_score_histogram_train, log_score_histogram_validation, log_score_histogram_test = wandb_log_score_histogram
-    
-    if log_score_histogram_train != LOG_HISTOGRAM_MODE_NONE:
-        callbacks.extend([
-            LogHistogramCallback(stage=RunningStage.TRAINING, key="score_maps", mode=log_score_histogram_train,), 
-            LogHistogramsSuperposedPerClassCallback(
-                stage=RunningStage.TRAINING, 
-                values_key="score_maps", 
-                gt_key="gtmaps", 
-                mode=log_score_histogram_train,
-                python_generator=create_python_random_generator(seed),
-                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TRAIN,  # 3k
-            ),
-        ])
-
-    if log_score_histogram_validation != LOG_HISTOGRAM_MODE_NONE:
+    def add_callbacks_log_histogram_score(train_mode: str, validation_mode: str, test_mode: str):
         
-        callbacks.extend([
-            LogHistogramCallback(stage=RunningStage.VALIDATING, key="score_maps", mode=log_score_histogram_validation,), 
-            LogHistogramsSuperposedPerClassCallback(
-                stage=RunningStage.VALIDATING, 
-                values_key="score_maps", 
-                gt_key="gtmaps", 
-                mode=log_score_histogram_validation,
-                python_generator=create_python_random_generator(seed),
-                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_VALIDATION,  # 3k
-            ),
-        ])
+        if train_mode != LOG_HISTOGRAM_MODE_NONE:
+            callbacks.extend([
+                LogHistogramCallback(stage=RunningStage.TRAINING, key="score_maps", mode=train_mode,), 
+                LogHistogramsSuperposedPerClassCallback(
+                    stage=RunningStage.TRAINING, 
+                    mode=train_mode,
+                    limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TRAIN,  # 3k
+                    # same everywhere 
+                    values_key="score_maps", 
+                    gt_key="gtmaps", 
+                    python_generator=create_python_random_generator(seed),
+                ),
+            ])
+
+        if validation_mode != LOG_HISTOGRAM_MODE_NONE:
+            callbacks.extend([
+                LogHistogramCallback(stage=RunningStage.VALIDATING, key="score_maps", mode=validation_mode,), 
+                LogHistogramsSuperposedPerClassCallback(
+                    stage=RunningStage.VALIDATING, 
+                    mode=validation_mode,
+                    limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_VALIDATION,  # 3k
+                    # same everywhere 
+                    values_key="score_maps", 
+                    gt_key="gtmaps", 
+                    python_generator=create_python_random_generator(seed),
+                ),
+            ])
+        
+        if test_mode != LOG_HISTOGRAM_MODE_NONE:
+            callbacks.extend([
+                LogHistogramCallback(stage=RunningStage.TESTING, key="score_maps", mode=test_mode,), 
+                LogHistogramsSuperposedPerClassCallback(
+                    stage=RunningStage.TESTING, 
+                    mode=test_mode,
+                    limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TEST,  # 30k
+                    # same everywhere 
+                    values_key="score_maps", 
+                    gt_key="gtmaps", 
+                    python_generator=create_python_random_generator(seed),
+                ),
+            ])
+            
+    add_callbacks_log_histogram_score(*wandb_log_histogram_score)
     
-    if log_score_histogram_test != LOG_HISTOGRAM_MODE_NONE:
-        callbacks.extend([
-            LogHistogramCallback(stage=RunningStage.TESTING, key="score_maps", mode=log_score_histogram_test,), 
-            LogHistogramsSuperposedPerClassCallback(
-                stage=RunningStage.TESTING, 
-                values_key="score_maps", 
-                gt_key="gtmaps", 
-                mode=log_score_histogram_test,
-                python_generator=create_python_random_generator(seed),
-                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TEST,  # 30k
-            ),
-        ])
     
-    # todo put in cli
-    log_loss_histogram_train, log_loss_histogram_validation, log_loss_histogram_test = wandb_log_loss_histogram
-    
-    if log_loss_histogram_train != LOG_HISTOGRAM_MODE_NONE:
-        callbacks.extend([
-            LogHistogramCallback(stage=RunningStage.TRAINING, key="loss_maps", mode=log_loss_histogram_train,), 
-            LogHistogramsSuperposedPerClassCallback(
-                stage=RunningStage.TRAINING, 
-                values_key="loss_maps", 
-                gt_key="gtmaps", 
-                mode=log_loss_histogram_train,
-                python_generator=create_python_random_generator(seed),
-                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TRAIN,  # 3k
-            ),
-        ])
-    
-    if log_loss_histogram_validation != LOG_HISTOGRAM_MODE_NONE:
-        callbacks.extend([
-            LogHistogramCallback(stage=RunningStage.VALIDATING, key="loss_maps", mode=log_loss_histogram_validation,), 
-            LogHistogramsSuperposedPerClassCallback(
-                stage=RunningStage.VALIDATING, 
-                values_key="loss_maps", 
-                gt_key="gtmaps", 
-                mode=log_loss_histogram_validation,
-                python_generator=create_python_random_generator(seed),
-                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_VALIDATION,  # 3k
-            ),
-        ])
-    
-    if log_loss_histogram_test != LOG_HISTOGRAM_MODE_NONE:
-        callbacks.extend([
-            LogHistogramCallback(stage=RunningStage.TESTING, key="loss_maps", mode=log_loss_histogram_test,), 
-            LogHistogramsSuperposedPerClassCallback(
-                stage=RunningStage.TESTING, 
-                values_key="loss_maps", 
-                gt_key="gtmaps", 
-                mode=log_loss_histogram_test,
-                python_generator=create_python_random_generator(seed),
-                limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TEST,  # 30k
-            ),
-        ])
+    def add_callbacks_log_histogram_loss(train_mode: str, validation_mode: str, test_mode: str):
+        
+        if train_mode != LOG_HISTOGRAM_MODE_NONE:
+            callbacks.extend([
+                LogHistogramCallback(stage=RunningStage.TRAINING, key="loss_maps", mode=train_mode,), 
+                LogHistogramsSuperposedPerClassCallback(
+                    stage=RunningStage.TRAINING, 
+                    mode=train_mode,
+                    limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TRAIN,  # 3k
+                    # same everywhere 
+                    values_key="loss_maps", 
+                    gt_key="gtmaps", 
+                    python_generator=create_python_random_generator(seed),
+                ),
+            ])
+
+        if validation_mode != LOG_HISTOGRAM_MODE_NONE:
+            callbacks.extend([
+                LogHistogramCallback(stage=RunningStage.VALIDATING, key="loss_maps", mode=validation_mode,), 
+                LogHistogramsSuperposedPerClassCallback(
+                    stage=RunningStage.VALIDATING, 
+                    mode=validation_mode,
+                    limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_VALIDATION,  # 3k
+                    # same everywhere 
+                    values_key="loss_maps", 
+                    gt_key="gtmaps", 
+                    python_generator=create_python_random_generator(seed),
+                ),
+            ])
+        
+        if test_mode != LOG_HISTOGRAM_MODE_NONE:
+            callbacks.extend([
+                LogHistogramCallback(stage=RunningStage.TESTING, key="loss_maps", mode=test_mode,), 
+                LogHistogramsSuperposedPerClassCallback(
+                    stage=RunningStage.TESTING, 
+                    mode=test_mode,
+                    limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TEST,  # 30k
+                    # same everywhere 
+                    values_key="loss_maps", 
+                    gt_key="gtmaps", 
+                    python_generator=create_python_random_generator(seed),
+                ),
+            ])
+        
+    add_callbacks_log_histogram_loss(*wandb_log_histogram_loss)
 
     if preview_nimages > 0:
         datamodule.setup("fit")
@@ -929,7 +955,7 @@ def run_one(
             with_stack=True,
         )
         callbacks.append(TorchTensorboardProfilerCallback(profiler))
-        
+    
     def get_lightning_profiler(profiler_choice):
         
         if profiler_choice == LIGHTNING_PROFILER_NONE:
@@ -959,6 +985,8 @@ def run_one(
         else:
             raise NotImplementedError(f"Profiler {profiler_choice} not implemented.")
 
+    trainer_profiler = get_lightning_profiler(lightning_profiler)
+    
     # ================================ FIT ================================
     trainer = pl.Trainer(
         accelerator=lightning_accelerator,
@@ -975,7 +1003,7 @@ def run_one(
         num_sanity_val_steps=0,
         check_val_every_n_epoch=lightning_check_val_every_n_epoch,
         accumulate_grad_batches=lightning_accumulate_grad_batches,
-        profiler=get_lightning_profiler(lightning_profiler),
+        profiler=trainer_profiler,
         gradient_clip_val=lightning_gradient_clip_val,
         gradient_clip_algorithm=lightning_gradient_clip_algorithm,
     )
@@ -991,6 +1019,9 @@ def run_one(
         profile_art = wandb.Artifact(f"trace-{wandb.run.id}", type="profile")
         profile_art.add_file(str(next(profile_dir.glob("*.pt.trace.json"))), "trace.pt.trace.json")
         wandb_logger.experiment.log_artifact(profile_art)
+    
+    if trainer_profiler is not None:
+        wandb.save(str(Path(trainer_profiler.dirpath) / trainer_profiler.filename), policy="now") 
 
     if not test:
         return 
