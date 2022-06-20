@@ -11,6 +11,7 @@ import numpy as np
 from python.dev.mvtec_dataset_dev01 import NORMAL_LABEL
 import pytorch_lightning as pl
 import torch
+from torch import Tensor
 from pytorch_lightning.trainer.states import RunningStage
 from sklearn.metrics import (roc_auc_score, average_precision_score)
 from torch import Tensor
@@ -223,8 +224,8 @@ class LogRocCallback(
                 raise ex
             raise ValueError(f"pl_module.last_epoch_outputs should have the keys self.score_key={self.scores_key} and self.gt_key={self.gt_key}, did you configure the model correctly? or passed me the wrong keys?") from ex
         
-        assert isinstance(scores, torch.Tensor), f"scores must be a torch.Tensor, got {type(scores)}"
-        assert isinstance(binary_gt, torch.Tensor), f"binary_gt must be a torch.Tensor, got {type(binary_gt)}"
+        assert isinstance(scores, Tensor), f"scores must be a torch.Tensor, got {type(scores)}"
+        assert isinstance(binary_gt, Tensor), f"binary_gt must be a torch.Tensor, got {type(binary_gt)}"
         
         assert scores.shape == binary_gt.shape, f"scores and binary_gt must have the same shape, got {scores.shape} and {binary_gt.shape}"
         
@@ -313,8 +314,8 @@ class LogAveragePrecisionCallback(
                 raise ex
             raise ValueError(f"pl_module.last_epoch_outputs should have the keys self.score_key={self.scores_key} and self.gt_key={self.gt_key}, did you configure the model correctly? or passed me the wrong keys?") from ex
         
-        assert isinstance(scores, torch.Tensor), f"scores must be a torch.Tensor, got {type(scores)}"
-        assert isinstance(binary_gt, torch.Tensor), f"binary_gt must be a torch.Tensor, got {type(binary_gt)}"
+        assert isinstance(scores, Tensor), f"scores must be a torch.Tensor, got {type(scores)}"
+        assert isinstance(binary_gt, Tensor), f"binary_gt must be a torch.Tensor, got {type(binary_gt)}"
         
         assert scores.shape == binary_gt.shape, f"scores and binary_gt must have the same shape, got {scores.shape} and {binary_gt.shape}"
         
@@ -391,7 +392,7 @@ class LogHistogramCallback(
                 raise ex
             raise ValueError(f"pl_module.last_epoch_outputs should have the key self.key={self.key}, did you configure the model correctly? or passed me the wrong key?") from ex
         
-        assert isinstance(values, torch.Tensor), f"scores must be a torch.Tensor, got {type(values)}"
+        assert isinstance(values, Tensor), f"scores must be a torch.Tensor, got {type(values)}"
         
         current_stage = trainer.state.stage
         logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
@@ -463,8 +464,8 @@ class LogHistogramsSuperposedPerClassCallback(
                 raise ex
             raise ValueError(f"pl_module.last_epoch_outputs should have the keys self.values_key={self.values_key} and self.gt_key={self.gt_key}, did you configure the model correctly? or passed me the wrong keys?") from ex
         
-        assert isinstance(values, torch.Tensor), f"values must be a torch.Tensor, got {type(values)}"
-        assert isinstance(gt, torch.Tensor), f"gt must be a torch.Tensor, got {type(gt)}"
+        assert isinstance(values, Tensor), f"values must be a torch.Tensor, got {type(values)}"
+        assert isinstance(gt, Tensor), f"gt must be a torch.Tensor, got {type(gt)}"
 
         assert values.shape == gt.shape, f"values and gtg must have the same shape, got {values.shape} and {gt.shape}"
                         
@@ -699,9 +700,9 @@ class LogImageHeatmapTableCallback(
         selected_instances_indices: List[int],
     ):
         
-        assert isinstance(imgs, torch.Tensor), f"imgs must be a torch.Tensor, got {type(imgs)}"
-        assert isinstance(heatmaps, torch.Tensor), f"scores must be a torch.Tensor, got {type(heatmaps)}"
-        assert isinstance(masks, torch.Tensor), f"binary_gt must be a torch.Tensor, got {type(masks)}"
+        assert isinstance(imgs, Tensor), f"imgs must be a torch.Tensor, got {type(imgs)}"
+        assert isinstance(heatmaps, Tensor), f"scores must be a torch.Tensor, got {type(heatmaps)}"
+        assert isinstance(masks, Tensor), f"binary_gt must be a torch.Tensor, got {type(masks)}"
         
         assert heatmaps.shape == masks.shape, f"scores and binary_gt must have the same shape, got {heatmaps.shape} and {masks.shape}"
         assert imgs.shape[0] == heatmaps.shape[0], f"imgs and scores must have the same number of samples, got {imgs.shape[0]} and {heatmaps.shape[0]}"
@@ -795,9 +796,6 @@ class LogPercentilesPerClassCallback(
         pass  # just let the mixin do its job
         
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
-        self._log(trainer, pl_module)
-    
-    def _log(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         
         try:
             values = pl_module.last_epoch_outputs[self.values_key]
@@ -809,15 +807,17 @@ class LogPercentilesPerClassCallback(
                 raise ex
             raise ValueError(f"pl_module.last_epoch_outputs should have the keys self.values_key={self.values_key} and self.gt_key={self.gt_key}, did you configure the model correctly? or passed me the wrong keys?") from ex
         
-        assert isinstance(values, torch.Tensor), f"values must be a torch.Tensor, got {type(values)}"
-        assert isinstance(gt, torch.Tensor), f"gt must be a torch.Tensor, got {type(gt)}"
+        self._log(trainer, pl_module, values, gt)
+    
+    def _log(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule, values: Tensor, gt: Tensor
+    ):
+        
+        assert isinstance(values, Tensor), f"values must be a torch.Tensor, got {type(values)}"
+        assert isinstance(gt, Tensor), f"gt must be a torch.Tensor, got {type(gt)}"
 
         assert values.shape == gt.shape, f"values and gtg must have the same shape, got {values.shape} and {gt.shape}"
-                        
-        # make sure they are 1D (it doesn't matter if they were not before)
-        values = values.reshape(-1, 1)  # wandb.plot.roc_curve() wants it like this
-        gt = gt.reshape(-1, 1)
-        
+                                
         values_normal = values[gt == NOMINAL_TARGET]
         values_anomalous = values[gt == ANOMALY_TARGET]
 
@@ -832,3 +832,72 @@ class LogPercentilesPerClassCallback(
         for perc in self.percentiles:
             table.add_data(perc, np.percentile(values_normal, q=perc), np.percentile(values_anomalous, q=perc))
         
+        wandb.log({logkey: table})        
+        
+
+class LogPerInstanceValueCallback(
+    MultiStageEpochEndCallbackMixin,
+    LastEpochOutputsDependentCallbackMixin,  
+    pl.Callback,
+):
+    
+    @MultiStageEpochEndCallbackMixin.init_stage
+    def __init__(self, values_key: str, labels_key: str,):
+        """
+        Args:
+            values_key & gt_key: inside the last_epoch_outputs, how are the values and their respective labels called?
+        """
+        super().__init__()
+        assert values_key != "", f"values_key must not be empty"
+        assert labels_key != "", f"gt_key must not be empty"
+        assert values_key != labels_key, f"values_key and gt_key must be different, got {values_key} and {labels_key}"
+        self.values_key = values_key
+        self.labels_key = labels_key
+
+    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
+    def setup(self, trainer, pl_module, stage=None):
+        pass  # just let the mixin do its job
+        
+    def _multi_stage_epoch_end_do(self, trainer, pl_module):
+        
+        try:
+            values = pl_module.last_epoch_outputs[self.values_key]
+            labels = pl_module.last_epoch_outputs[self.labels_key]
+            
+        except KeyError as ex:
+            msg = ex.args[0]
+            if self.values_key not in msg and self.labels_key not in msg:
+                raise ex
+            raise ValueError(f"pl_module.last_epoch_outputs should have the keys self.values_key={self.values_key} and self.labels_key={self.labels_key}, did you configure the model correctly? or passed me the wrong keys?") from ex
+        
+        self._log(trainer, pl_module, values, labels)
+    
+    def _log(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule, values: Tensor, labels: Tensor        
+    ):
+        assert isinstance(values, Tensor), f"values must be a torch.Tensor, got {type(values)}"
+        assert isinstance(labels, Tensor), f"labels must be a torch.Tensor, got {type(labels)}"
+
+        assert values.shape[0] == labels.shape[0], f"values and labels must have the same number of instances, got {values.shape[0]} and {labels.shape[0]}"
+
+        ninstances = values.shape[0]
+        table = torch.cat(
+            [
+                torch.arange(ninstances),
+                values.mean(dim=(1, 2, 3)).unsqueeze(1), 
+                labels.unsqueeze(1),
+            ],
+            dim=1,
+        )
+        
+        import wandb
+        table = wandb.Table(
+            data=table.numpy(),
+            columns=["idx", f"image-mean", "image-label"]
+        )
+
+        current_stage = trainer.state.stage
+        logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
+        logkey = f"{logkey_prefix}per-instance-value-of-{self.values_key}"
+             
+        wandb.log({logkey: table})        

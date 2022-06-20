@@ -27,7 +27,7 @@ from torch.profiler import tensorboard_trace_handler
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_BATCH, LOG_HISTOGRAM_MODE_NONE, LOG_HISTOGRAM_MODES, DataloaderPreviewCallback,
                              LogAveragePrecisionCallback, LogHistogramCallback,
-                             LogHistogramsSuperposedPerClassCallback, LogImageHeatmapTableCallback, LogPercentilesPerClassCallback,
+                             LogHistogramsSuperposedPerClassCallback, LogImageHeatmapTableCallback, LogPerInstanceValueCallback, LogPercentilesPerClassCallback,
                              LogRocCallback, TorchTensorboardProfilerCallback)
 from common_dev01 import (create_python_random_generator, create_seed, hashify_config,
                           seed_int2str, seed_str2int)
@@ -424,6 +424,14 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         "--wandb-log-percentiles-score-validation", type=float, nargs="*",
         help="If set, the score will be logged at the given percentiles for train (normal and anomalous scores separatedly)."
     )
+    parser.add_argument(
+        "--wandb-log-perinstance-mean-score", type=bool, nargs=3,
+        help="if true then the pixel score will be averaged per instance and logged in a table"
+    )
+    parser.add_argument(
+        "--wandb-log-perinstance-mean-loss", type=bool, nargs=3,
+        help="if true then the loss will be averaged per instance and logged in a table; you should give 3 values, respectively for the train/validation/test hooks"
+    )
     
     # ================================ pytorch lightning =================================
     parser.add_argument(
@@ -611,6 +619,8 @@ def run_one(
     wandb_log_histogram_score: Tuple[bool, bool, bool],
     wandb_log_histogram_loss: Tuple[bool, bool, bool],
     wandb_log_percentiles_score: Tuple[Tuple[float, ...], Tuple[float, ...]],
+    wandb_log_perinstance_mean_score: Tuple[bool, bool, bool],
+    wandb_log_perinstance_mean_loss: Tuple[bool, bool, bool], 
     # pytorch lightning
     lightning_accelerator: str,
     lightning_ndevices: int,
@@ -984,6 +994,70 @@ def run_one(
             )           
     
     add_callbacks_log_percentiles_score(*wandb_log_percentiles_score)
+    
+    # ================================ PER-INSTANCE ================================
+    
+    # score
+    def add_callbacks_log_perinstance_mean_score(train: bool, validation: bool, test: bool):
+    
+        if train:
+            callbacks.append(
+                LogPerInstanceValueCallback(
+                    stage=RunningStage.TRAINING,
+                    values_key="score_maps",
+                    labels_key="labels",
+                )
+            )
+                     
+        if validation:
+            callbacks.append(
+                LogPerInstanceValueCallback(
+                    stage=RunningStage.VALIDATING,
+                    values_key="score_maps",
+                    labels_key="labels",
+                )
+            )    
+        
+        if test:
+            callbacks.append(
+                LogPerInstanceValueCallback(
+                    stage=RunningStage.TESTING,
+                    values_key="score_maps",
+                    labels_key="labels",
+                )
+            )
+    # loss            
+    def add_callbacks_log_perinstance_mean_loss(train: bool, validation: bool, test: bool):
+    
+        if train:
+            callbacks.append(
+                LogPerInstanceValueCallback(
+                    stage=RunningStage.TRAINING,
+                    values_key="loss_maps",
+                    labels_key="labels",
+                )
+            )
+                     
+        if validation:
+            callbacks.append(
+                LogPerInstanceValueCallback(
+                    stage=RunningStage.VALIDATING,
+                    values_key="loss_maps",
+                    labels_key="labels",
+                )
+            )    
+        
+        if test:
+            callbacks.append(
+                LogPerInstanceValueCallback(
+                    stage=RunningStage.TESTING,
+                    values_key="loss_maps",
+                    labels_key="labels",
+                )
+            )
+               
+    add_callbacks_log_perinstance_mean_score(*wandb_log_perinstance_mean_score)
+    add_callbacks_log_perinstance_mean_loss(*wandb_log_perinstance_mean_loss)
 
     # ================================ PROFILING ================================
     
