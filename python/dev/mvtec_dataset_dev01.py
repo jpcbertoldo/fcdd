@@ -5,7 +5,7 @@ import tarfile
 import tempfile
 from itertools import cycle
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import numpy.random
@@ -17,7 +17,7 @@ from six.moves import urllib
 from skimage.transform import rotate as im_rotate
 from torch import Tensor
 from torch.nn.functional import interpolate as torch_interpolate
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader  #, Subset
 from torch.utils.data.dataset import Dataset
 from torchvision.datasets import VisionDataset
 from torchvision.datasets.imagenet import check_integrity
@@ -42,7 +42,7 @@ CLASSES_LABELS = (
 )
 
 CLASSES_FULLQUALIFIED = tuple(
-    f"{DATASET_NAME}_{CLASSES_LABELS[idx]:02d}_{label}" 
+    f"{DATASET_NAME}_{idx:02d}_{label}" 
     for idx, label in enumerate(CLASSES_LABELS)
 )
 
@@ -564,7 +564,28 @@ class MvTec(VisionDataset, Dataset, LightningDataset):
         self._anomaly_label_strings = None
         self._original_gtmaps = None
         
-            
+        # these will restraint the set of images to a subset
+        # it's used for when picking images from the test set 
+        # to use as anomalies during the training
+        self._subset_indices = None
+    
+    # todo make subset-able feature a mixin
+    @property
+    def is_subset(self) -> bool:
+        return self._subset_indices is not None
+    
+    @property
+    def subset_indices(self) -> List[int]:
+        assert self._subset_indices is not None, "subset_indices not set"
+        return self._subset_indices
+    
+    @subset_indices.setter
+    def subset_indices(self, indices: List[int]):
+        assert self._subset_indices is None, "subset_indices already set"
+        assert len(indices) <= len(self.imgs), f"subset_indices must be a subset of the full dataset, but got {len(indices)} and {len(self.imgs)}"
+        assert all(0 <= i < len(self.imgs) for i in indices), f"subset_indices must be a subset of the full dataset (of size {len(self.imgs)}), but got {indices}"
+        self._subset_indices = indices
+                
     @property
     def normal_class_label(self):
         return CLASSES_LABELS[self.normal_class]
@@ -914,6 +935,9 @@ class MvTec(VisionDataset, Dataset, LightningDataset):
 
     def __getitem__(self, index: int) -> Tuple[Tensor, int, Tensor]:
         
+        if self.is_subset:
+            index = self.subset_indices[index]
+        
         # using clone() to avoid modifying the original tensors
         class_label = self.labels[index].clone()
         assert class_label == self.normal_class, f'Expected class label {self.normal_class} but got {class_label}'
@@ -927,7 +951,7 @@ class MvTec(VisionDataset, Dataset, LightningDataset):
         return img, target, gtmap
 
     def __len__(self) -> int:
-        return len(self.imgs)
+        return len(self.imgs) if not self.is_subset else len(self.subset_indices)
 
     def _prepare_original_data(self):
         
@@ -1459,14 +1483,14 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                         test=test_indices,
                     )
                 
-                self.test_subsplits_indices = dict(
+                self.test_subsplits_indices: Dict[str, List[int]] = dict(
                     supervision=np.sort(np.concatenate(tuple(
                         ss["supervision"] 
                         for ss in self.test_subsplits_indices_per_anomalytype.values()
-                    ))),
+                    ))).tolist(),
                     test=np.sort(np.concatenate(tuple(
                         ss["test"] for ss in self.test_subsplits_indices_per_anomalytype.values()
-                    ))),
+                    ))).tolist(),
                 )
                 
                 # create a copy with all none cuz the train transforms are already applied
@@ -1478,11 +1502,13 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                 )
                 # no need to prepare data, it's already done in the test set
                 self.real_anomaly_mvtec.setup()
-                self.real_anomaly_mvtec = Subset(
-                    self.real_anomaly_mvtec, 
-                    self.test_subsplits_indices["supervision"],
-                )
-                self.test_mvtec = Subset(self.test_mvtec, self.test_subsplits_indices["test"])
+                # self.real_anomaly_mvtec = Subset(
+                #     self.real_anomaly_mvtec, 
+                #     self.test_subsplits_indices["supervision"],
+                # )
+                # self.test_mvtec = Subset(self.test_mvtec, self.test_subsplits_indices["test"])
+                self.real_anomaly_mvtec.subset_indices = self.test_subsplits_indices["supervision"]
+                self.test_mvtec.subset_indices = self.test_subsplits_indices["test"]
                 
                 # __wrapped__ is needed for the online instance replacer because of _validate_batch_after_transform
                 self.online_instance_replacer.__wrapped__.real_anomaly_dataloader = DataLoader(
@@ -1496,11 +1522,6 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
 
         elif stage == 'test':
             
-            # this is ugly but whatever
-            # if it is a subset it's because it's already been setup above
-            if isinstance(self.test_mvtec, Subset):
-                return
-
             if self.test_mvtec.is_setup:
                 return
 

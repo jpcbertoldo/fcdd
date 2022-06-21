@@ -10,7 +10,6 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import torchvision.transforms.functional_tensor as TFT
-from python.dev.mvtec_dataset_dev01 import NORMAL_LABEL
 from pytorch_lightning.trainer.states import RunningStage
 from sklearn.metrics import average_precision_score, roc_auc_score
 from torch import Tensor
@@ -213,7 +212,7 @@ class LogRocCallback(
     def _log_roc(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         
         try:
-            scores = pl_module.last_epoch_outputs[self.scores_key]
+            scores = pl_module.last_epoch_outputs[self.scores_key].detach()
             binary_gt = pl_module.last_epoch_outputs[self.gt_key]
         
         except KeyError as ex:
@@ -303,7 +302,7 @@ class LogAveragePrecisionCallback(
     def _log_avg_precision(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         
         try:
-            scores = pl_module.last_epoch_outputs[self.scores_key]
+            scores = pl_module.last_epoch_outputs[self.scores_key].detach()
             binary_gt = pl_module.last_epoch_outputs[self.gt_key]
         
         except KeyError as ex:
@@ -380,7 +379,7 @@ class LogHistogramCallback(
     def _log_histogram(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         
         try:
-            values = pl_module.last_epoch_outputs[self.key]
+            values = pl_module.last_epoch_outputs[self.key].detach()
         
         except KeyError as ex:
             msg = ex.args[0]
@@ -450,7 +449,7 @@ class LogHistogramsSuperposedPerClassCallback(
     def _log_histograms_supperposed_per_class(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         
         try:
-            values = pl_module.last_epoch_outputs[self.values_key]
+            values = pl_module.last_epoch_outputs[self.values_key].detach()
             gt = pl_module.last_epoch_outputs[self.gt_key]
             
         except KeyError as ex:
@@ -607,7 +606,7 @@ class LogImageHeatmapTableCallback(
     def __init__(
         self, 
         imgs_key: str,
-        heatmaps_key: str,
+        scores_key: str,
         masks_key: str,
         labels_key: str,
         nsamples_each_class: int,
@@ -620,12 +619,12 @@ class LogImageHeatmapTableCallback(
         super().__init__()
         
         assert imgs_key != "", f"imgs_key must be provided"
-        assert heatmaps_key != "", f"heatmaps_key must not be empty"
+        assert scores_key != "", f"heatmaps_key must not be empty"
         assert masks_key != "", f"masks_key must not be empty"
         assert labels_key != "", f"labels_key must not be empty"
         
         # make sure there is no repeated key
-        keys = [imgs_key, heatmaps_key, masks_key, labels_key]
+        keys = [imgs_key, scores_key, masks_key, labels_key]
         assert len(keys) == len(set(keys)), f"keys must be unique, got {keys}"
         
         assert nsamples_each_class > 0, f"nsamples must be > 0, got {nsamples_each_class}"   
@@ -636,7 +635,7 @@ class LogImageHeatmapTableCallback(
             assert resolution > 0, f"resolution must be > 0, got {resolution}"
                 
         self.imgs_key = imgs_key
-        self.heatmaps_key = heatmaps_key
+        self.scores_key = scores_key
         self.masks_key = masks_key
         self.labels_key = labels_key
         self.nsamples_each_class = nsamples_each_class
@@ -653,14 +652,14 @@ class LogImageHeatmapTableCallback(
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
         
         try:
-            imgs: Tensor = pl_module.last_epoch_outputs[self.imgs_key]
-            heatmaps: Tensor = pl_module.last_epoch_outputs[self.heatmaps_key]
+            imgs: Tensor = pl_module.last_epoch_outputs[self.imgs_key].detach()
+            scores: Tensor = pl_module.last_epoch_outputs[self.scores_key].detach()
             masks: Tensor = pl_module.last_epoch_outputs[self.masks_key]
             labels: Tensor = pl_module.last_epoch_outputs[self.labels_key]
         
         except KeyError as ex:
             msg = ex.args[0]
-            keys = [self.imgs_key, self.heatmaps_key, self.masks_key, self.labels_key]
+            keys = [self.imgs_key, self.scores_key, self.masks_key, self.labels_key]
             
             # another exception not from here?
             if all(key not in msg for key in keys):
@@ -671,37 +670,39 @@ class LogImageHeatmapTableCallback(
         if self.selected_instances_indices is None:
             
             labels = labels.numpy()
-            normals_indices = np.where(labels == NOMINAL_TARGET)
-            anomalies_indices = np.where(labels == ANOMALY_TARGET)
+            normals_indices = np.where(labels == NOMINAL_TARGET)[0]
+            anomalies_indices = np.where(labels == ANOMALY_TARGET)[0]
             
             if len(normals_indices) > self.nsamples_each_class:
-                normals_indices = self.python_generator.choice(normals_indices, self.nsamples_each_class, replace=False)
+                # python_generator.sample() is without replacement
+                normals_indices: List[int] = self.python_generator.sample(normals_indices.tolist(), self.nsamples_each_class)
                 
             if len(anomalies_indices) > self.nsamples_each_class:
-                anomalies_indices = self.python_generator.choice(anomalies_indices, self.nsamples_each_class, replace=False)
+                # python_generator.sample() is without replacement
+                anomalies_indices: List[int] = self.python_generator.sample(anomalies_indices.tolist(), self.nsamples_each_class)
                 
-            self.selected_instances_indices = np.concatenate([normals_indices, anomalies_indices]).tolist()
+            self.selected_instances_indices = [*normals_indices, *anomalies_indices]
         
-        self._log(trainer, pl_module, imgs, heatmaps, masks, labels, self.selected_instances_indices)
+        self._log(trainer, pl_module, imgs, scores, masks, labels, self.selected_instances_indices)
     
     def _log(
         self, 
         trainer: pl.Trainer, 
         pl_module: pl.LightningModule, 
         imgs: Tensor, 
-        heatmaps: Tensor,
+        scores: Tensor,
         masks: Tensor, 
         labels: Tensor,
         selected_instances_indices: List[int],
     ):
         
         assert isinstance(imgs, Tensor), f"imgs must be a torch.Tensor, got {type(imgs)}"
-        assert isinstance(heatmaps, Tensor), f"scores must be a torch.Tensor, got {type(heatmaps)}"
+        assert isinstance(scores, Tensor), f"scores must be a torch.Tensor, got {type(scores)}"
         assert isinstance(masks, Tensor), f"binary_gt must be a torch.Tensor, got {type(masks)}"
         
-        assert heatmaps.shape == masks.shape, f"scores and binary_gt must have the same shape, got {heatmaps.shape} and {masks.shape}"
-        assert imgs.shape[0] == heatmaps.shape[0], f"imgs and scores must have the same number of samples, got {imgs.shape[0]} and {heatmaps.shape[0]}"
-        assert imgs.shape[2:] == heatmaps.shape[2:], f"imgs and scores must have the same shape, got {imgs.shape} and {heatmaps.shape}"
+        assert scores.shape == masks.shape, f"scores and binary_gt must have the same shape, got {scores.shape} and {masks.shape}"
+        assert imgs.shape[0] == scores.shape[0], f"imgs and scores must have the same number of samples, got {imgs.shape[0]} and {scores.shape[0]}"
+        assert imgs.shape[2:] == scores.shape[2:], f"imgs and scores must have the same shape, got {imgs.shape} and {scores.shape}"
         
         assert (imgs >= 0).all(), f"imgs must be > 0"
         assert (imgs <= 1).all(), f"imgs must be <= 1"
@@ -709,7 +710,7 @@ class LogImageHeatmapTableCallback(
         unique_gt_values = tuple(sorted(torch.unique(masks)))
         assert unique_gt_values in ((0,), (1,), (0, 1)), f"binary_gt must have only 0 and 1 values, got {unique_gt_values}"
         
-        assert (heatmaps >= 0).all(), f"scores must be >= 0, got {heatmaps}"
+        assert (scores >= 0).all(), f"scores must be >= 0, got {scores}"
         
         current_stage = trainer.state.stage
         logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
@@ -717,47 +718,57 @@ class LogImageHeatmapTableCallback(
         
         if self.heatmap_normalization == HEATMAP_NORMALIZATION_MINMAX_BATCH:
             with torch.no_grad():
-                min_ = heatmaps.min()
-                heatmaps = (heatmaps - min_) / (heatmaps.max() - min_)
+                min_ = scores.min()
+                scores = (scores - min_) / (scores.max() - min_)
         
         elif self.heatmap_normalization == HEATMAP_NORMALIZATION_MINMAX_INSTANCE:
             with torch.no_grad():
-                min_ = heatmaps.min(dim=(1, 2, 3), keepdim=True)
-                max_ = heatmaps.max(dim=(1, 2, 3), keepdim=True)
-                heatmaps = (heatmaps - min_) / (max_ - min_)
+                min_ = scores.min(dim=(1, 2, 3), keepdim=True)
+                max_ = scores.max(dim=(1, 2, 3), keepdim=True)
+                scores = (scores - min_) / (max_ - min_)
         else:
             raise NotImplementedError(f"heatmap_normalization={self.heatmap_normalization} is not implemented")
+        
+        # imgs: [instances, channels=3, height, width]
+        # scores: [instances, 1, height, width]
+        # masks: [instances, 1, height, width]
+        # labels: [instances]
+        imgs, scores, masks, labels = imgs[selected_instances_indices], scores[selected_instances_indices], masks[selected_instances_indices], labels[selected_instances_indices]
+    
+        # self.resolution == None means: "dont change the resolution"
+        if self.resolution is not None:
+    
+            img_h, img_w = imgs.shape[-2:]
+            
+            if img_h != img_w:
+                raise NotImplementedError(f"imgs must be square, got {img_h}x{img_w}")
+
+            if img_w != self.resolution:
+                imgs = TFT.resize(imgs, self.resolution, interpolation="bilinear",)
+                scores = TFT.resize(scores, self.resolution,interpolation="bilinear",)
+                masks = TFT.resize(masks, self.resolution,interpolation="nearest",)
+            
+        imgs = imgs.numpy().transpose(0, 2, 3, 1)  # [instances, height, width, channels]
+        scores = scores.numpy().transpose(0, 2, 3, 1)  # [instances, height, width, channels]
+        masks = masks.squeeze(1).numpy()
+
+        class_labels_dict = {NOMINAL_TARGET: "normal", ANOMALY_TARGET: "anomalous",}
         
         import wandb
         table = wandb.Table(columns=["idx", "idx-in-epoch", "label", "image", "heatmap", "normalization"])
         
         for idx, idx_in_epoch in enumerate(selected_instances_indices):
-            img, heatmap, mask, label = imgs[idx_in_epoch], heatmaps[idx_in_epoch], masks[idx_in_epoch], labels[idx_in_epoch]
             
-            img_h, img_w = img.shape[2:]
-            
-            if img_h == img_w:
-                raise NotImplementedError(f"imgs must be square, got {img_h}x{img_w}")
-        
-            if img_w != self.resolution:
-                img = TFT.resize(
-                    img, self.resolution, 
-                    interpolation=InterpolationMode.BILINEAR,
-                )
-                heatmap = TFT.resize(
-                    heatmap, self.resolution,
-                    interpolation=InterpolationMode.BILINEAR,
-                )
-                mask = TFT.resize(
-                    mask, self.resolution,
-                    interpolation=InterpolationMode.NEAREST,
-                )
+            # their repectives in the singular lose the 1st dimension (instances)
+            img, score_map, mask, label = imgs[idx], scores[idx], masks[idx], labels[idx]
                 
             wandb_img = wandb.Image(
-                img, masks=dict(ground_truth=dict(mask_data=mask, class_labels=["normal", "anomalous"]))
+                img,
+                masks=dict(ground_truth=dict(mask_data=mask, class_labels=class_labels_dict,))
             )     
             wandb_heatmap = wandb.Image(
-                heatmap, masks=dict(ground_truth=dict(mask_data=mask, class_labels=["normal", "anomalous"]))
+                score_map,
+                masks=dict(ground_truth=dict(mask_data=mask, class_labels=class_labels_dict,))
             )
             table.add_data(idx, idx_in_epoch, label, wandb_img, wandb_heatmap, self.heatmap_normalization)
 
@@ -793,7 +804,7 @@ class LogPercentilesPerClassCallback(
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
         
         try:
-            values = pl_module.last_epoch_outputs[self.values_key]
+            values = pl_module.last_epoch_outputs[self.values_key].detach()
             gt = pl_module.last_epoch_outputs[self.gt_key]
             
         except KeyError as ex:
@@ -856,7 +867,7 @@ class LogPerInstanceValueCallback(
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
         
         try:
-            values = pl_module.last_epoch_outputs[self.values_key]
+            values = pl_module.last_epoch_outputs[self.values_key].detach()
             labels = pl_module.last_epoch_outputs[self.labels_key]
             
         except KeyError as ex:
@@ -878,7 +889,7 @@ class LogPerInstanceValueCallback(
         ninstances = values.shape[0]
         table = torch.cat(
             [
-                torch.arange(ninstances),
+                torch.arange(ninstances).unsqueeze(1),
                 values.mean(dim=(1, 2, 3)).unsqueeze(1), 
                 labels.unsqueeze(1),
             ],

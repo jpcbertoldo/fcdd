@@ -65,7 +65,7 @@ parser.set_defaults(
     lightning_model_summary_max_depth=4,
     lightning_check_val_every_n_epoch=10,
     lightning_accumulate_grad_batches=2,
-    lightning_profiler="simple",
+    lightning_profiler=train_dev01.LIGHTNING_PROFILER_SIMPLE,
     lightning_gradient_clip_val=0,
     lightning_gradient_clip_algorithm=train_dev01.LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM,
 )

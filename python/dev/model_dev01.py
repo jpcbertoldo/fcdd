@@ -136,10 +136,12 @@ class FCDD_CNN224_VGG_F(LightningModule):
         unique_labels = tuple(sorted(labels.unique().tolist()))
         assert unique_labels in ((0,), (1,), (0, 1)), f"labels not \in {{0, 1}}, unique_labels={unique_labels}"
         
-        unique_mask_values = tuple(sorted(unique_mask_values.unique().tolist()))
+        unique_mask_values = tuple(sorted(masks.unique().tolist()))
         assert unique_mask_values in ((0,), (1,), (0, 1)), f"mask values not \in {{0, 1}}, unique_mask_values={unique_mask_values}"
-                        
-        if self.loss_name == LOSS_OLD_FCDD:
+        
+        loss_name = self.hparams['loss_name']
+         
+        if loss_name == LOSS_OLD_FCDD:
             
             # scores \in R+^{N x 1 x H x W}
             loss_maps = (scores + 1).sqrt() - 1
@@ -151,7 +153,7 @@ class FCDD_CNN224_VGG_F(LightningModule):
             
             loss_maps = norm_loss_maps + anom_loss_maps
         
-        elif self.loss_name == LOSS_PIXELWISE_BATCH_AVG:
+        elif loss_name == LOSS_PIXELWISE_BATCH_AVG:
             
             # scores \in R+^{N x 1 x H x W}
             loss_maps = (scores + 1).sqrt() - 1
@@ -170,7 +172,7 @@ class FCDD_CNN224_VGG_F(LightningModule):
             loss_maps = norm_loss_maps + ratio_norm_anom * anom_loss_maps     
             
         else:
-            raise NotImplementedError(f"loss '{self.loss_name}' not implemented")
+            raise NotImplementedError(f"loss '{loss_name}' not implemented")
         
         return loss_maps, loss_maps.mean()
 
@@ -291,7 +293,7 @@ class FCDD_CNN224_VGG_F(LightningModule):
             return out
             
         score_maps = receptive_upsample(score_maps)
-        score_maps, loss_maps, loss = self.loss(scores=score_maps, masks=gtmaps, labels=labels)
+        loss_maps, loss = self.loss(scores=score_maps, masks=gtmaps, labels=labels)
         
         # separate normal/anomaly
         with torch.no_grad():

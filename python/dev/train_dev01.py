@@ -6,21 +6,16 @@ import os
 import time
 from argparse import ArgumentParser
 from datetime import datetime
-from gc import callbacks
 from pathlib import Path
 from re import A
 from typing import Any, Callable, List, Optional, Tuple
 
-import numpy as np
 import pytorch_lightning as pl
 import torch
-from pyrsistent import T
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profiler import (AdvancedProfiler, PyTorchProfiler,
                                         SimpleProfiler)
 from pytorch_lightning.trainer.states import RunningStage
-from scipy.interpolate import interp1d
-from sklearn.metrics import average_precision_score, precision_recall_curve
 from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
@@ -143,7 +138,7 @@ print(f"SUPERVISE_MODE_CHOICES={ALL_SUPERVISE_MODE_CHOICES}")
 import model_dev01
 
 MODEL_CLASSES = {
-    model_dev01.FCDD_CNN224_VGG.__name__: model_dev01.FCDD_CNN224_VGG,
+    model_dev01.FCDD_CNN224_VGG_F.__name__: model_dev01.FCDD_CNN224_VGG_F,
 }
 MODEL_CHOICES = tuple(sorted(MODEL_CLASSES.keys()))
 print(f"MODEL_CHOICES={MODEL_CHOICES}")
@@ -160,7 +155,7 @@ def unknown_model(wrapped: Callable[[str, ], Any]):
 @unknown_model
 def model_optimizer_choices(model_name: str) -> List[str]:
     return {
-        model_dev01.FCDD_CNN224_VGG.__name__: model_dev01.OPTIMIZER_CHOICES,
+        model_dev01.FCDD_CNN224_VGG_F.__name__: model_dev01.OPTIMIZER_CHOICES,
     }[model_name]   
 
 
@@ -175,7 +170,7 @@ print(f"OPTIMIZER_CHOICES={OPTIMIZER_CHOICES}")
 @unknown_model
 def model_scheduler_choices(model_name: str) -> List[str]:
     return {
-        model_dev01.FCDD_CNN224_VGG.__name__: model_dev01.SCHEDULER_CHOICES,
+        model_dev01.FCDD_CNN224_VGG_F.__name__: model_dev01.SCHEDULER_CHOICES,
     }[model_name]
 
 
@@ -190,7 +185,7 @@ print(f"SCHEDULER_CHOICES={SCHEDULER_CHOICES}")
 @unknown_model
 def model_loss_choices(model_name: str) -> List[str]:
     return {
-        model_dev01.FCDD_CNN224_VGG.__name__: model_dev01.LOSS_CHOICES,
+        model_dev01.FCDD_CNN224_VGG_F.__name__: model_dev01.LOSS_CHOICES,
     }[model_name]
 
 
@@ -338,11 +333,6 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         help='Determines the number of real anomalous images used in the case of real anomaly supervision. '
              'Has no impact on synthetic anomalies.'
     )
-    # ===================================== heatmap ======================================
-    parser.add_argument(
-        '--gauss-std', type=float,
-        help='Standard deviation of the Gaussian kernel used for upsampling and blurring.'
-    )
     # ====================================== script ======================================
     parser.add_argument(
         '--no-test', dest="test", action="store_false",
@@ -373,10 +363,10 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     # ====================================== files =======================================
     parser.add_argument(
         '--logdir', type=Path, default=Path("../../data/results"),
-        help='Where log data is to be stored. The start time is put after the dir name. Default: ../../data/results.'
+        help='Where log data is to be stored. A subfolder (rundir) is created in there. The start time is put after the dir name. Default: ../../data/results.'
     )
-    parser.add_argument('--logdir-suffix', type=str, default='',)
-    parser.add_argument('--logdir-prefix', type=str, default='',)
+    parser.add_argument('--rundir-suffix', type=str, default='',)
+    parser.add_argument('--rundir-prefix', type=str, default='',)
     parser.add_argument(
         '--datadir', type=Path, default=Path("../../data/datasets"),
         help='Where datasets are found or to be downloaded to. Default: ../../data/datasets.',
@@ -420,12 +410,12 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     )
     group_log_image_heatmap = parser.add_argument_group("log-image-heatmap")
     group_log_image_heatmap.add_argument(
-        "--wandb-log-histogram-nsamples", nargs=3, type=int,
+        "--wandb-log-image-heatmap-nsamples", nargs=3, type=int,
         help="how many of each class (normal/anomalous) per epoch?"
              "alwyas log the same ones assuming the order of images doesnt' change"
     )
     group_log_image_heatmap.add_argument(
-        "--wandb-log-histogram-resolution", nargs=3, type=none_or_int,
+        "--wandb-log-image-heatmap-resolution", nargs=3, type=none_or_int,
         help="size of the image (width=height), and if 'None' then keep the original size"
     )
     parser.add_argument(
@@ -525,19 +515,21 @@ def args_post_parse(args_):
     # ================================== paths ==================================
     args_.datadir = args_.datadir.resolve().absolute()
     
+    args_.rundir_prefix += '_' if args_.rundir_prefix else ''
+    args_.rundir_suffix = f"_{args_.rundir_suffix}" if args_.rundir_suffix else ''
+    rundir_name = f"{args_.rundir_prefix}run_{args_.script_start_time}{args_.rundir_suffix}"
+    del vars(args_)['rundir_suffix']
+    del vars(args_)['rundir_prefix']
+    
     logdir = args_.logdir.resolve().absolute()
-    logdir_name = f"{args_.logdir_prefix}{'_' if args_.logdir_prefix else ''}{logdir.name}_{time_format(args_.script_start_time)}{'_' if args_.logdir_suffix else ''}{args_.logdir_suffix}"
-    del vars(args_)['logdir_suffix']
-    del vars(args_)['logdir_prefix']
-    parent_dir = logdir.parent 
     if args_.wandb_project is not None:
-        parent_dir = parent_dir / args_.wandb_project    
-    parent_dir = parent_dir / args_.dataset
-    args_.logdir = parent_dir / logdir_name
+        logdir = logdir / args_.wandb_project    
+    logdir = logdir / args_.dataset
+    args_.logdir = logdir / rundir_name
     
     # ================================== seeds ==================================
     
-    if hasattr(args_, 'seeds'):
+    if args_.seeds is not None:
         for s in args_.seeds:
             assert type(s) == int, f"seed must be an int, got {type(s)}"
             assert s >= 0, f"seed must be >= 0, got {s}"
@@ -552,7 +544,8 @@ def args_post_parse(args_):
             seeds.append(create_seed())
             time.sleep(1/3)  # let the system state change
         args_.seeds = tuple(seeds)
-        del vars(args_)['n_seeds']
+        
+    del vars(args_)['n_seeds']
     
     # ================================== wandb_log_percentiles_score ==================================
         
@@ -697,7 +690,6 @@ def run_one(
     try:
         model = model_class(
             in_shape=datamodule.net_shape, 
-            gauss_std=gauss_std,
             loss_name=loss,
             # optimizer
             optimizer_name=optimizer,
@@ -828,6 +820,7 @@ def run_one(
                     imgs_key="inputs",
                     scores_key="score_maps",
                     masks_key="gtmaps",
+                    labels_key="labels",
                     nsamples_each_class=nsamples_train,
                     resolution=resolution_train,
                     heatmap_normalization=HEATMAP_NORMALIZATION_MINMAX_BATCH,
@@ -842,6 +835,7 @@ def run_one(
                     imgs_key="inputs",
                     scores_key="score_maps",
                     masks_key="gtmaps",
+                    labels_key="labels",
                     nsamples_each_class=nsamples_validation,
                     resolution=resolution_validation,
                     heatmap_normalization=HEATMAP_NORMALIZATION_MINMAX_BATCH,
@@ -856,6 +850,7 @@ def run_one(
                     imgs_key="inputs",
                     scores_key="score_maps",
                     masks_key="gtmaps",
+                    labels_key="labels",
                     nsamples_each_class=nsamples_test,
                     resolution=resolution_test,
                     heatmap_normalization=HEATMAP_NORMALIZATION_MINMAX_BATCH,
@@ -1085,21 +1080,21 @@ def run_one(
         elif profiler_choice == LIGHTNING_PROFILER_SIMPLE:
             return SimpleProfiler(
                 dirpath=wandb_logger.save_dir,
-                filename=f"lightning-profiler.{LIGHTNING_PROFILER_SIMPLE}.txt",
+                filename=f"lightning-profiler.{LIGHTNING_PROFILER_SIMPLE}",
                 extended=True,
             )
         
         elif profiler_choice == LIGHTNING_PROFILER_ADVANCED:
             return AdvancedProfiler(
                 dirpath=wandb_logger.save_dir,
-                filename=f"lightning-profiler.{LIGHTNING_PROFILER_ADVANCED}.txt",
+                filename=f"lightning-profiler.{LIGHTNING_PROFILER_ADVANCED}",
 
             )
         
         elif profiler_choice == LIGHTNING_PROFILER_PYTORCH:
             return PyTorchProfiler(
                 dirpath=wandb_logger.save_dir,
-                filename=f"lightning-profiler.{LIGHTNING_PROFILER_PYTORCH}.txt",
+                filename=f"lightning-profiler.{LIGHTNING_PROFILER_PYTORCH}",
                 sort_by_key="cuda_time_total",
             )
         
@@ -1130,7 +1125,7 @@ def run_one(
     )
     
     with profiler:
-        datamodule.setup("fit")
+        # datamodule.setup("fit")
         trainer.fit(model=model, datamodule=datamodule)
     
     if wandb_watch is not None:
@@ -1145,10 +1140,12 @@ def run_one(
         wandb.save(str(Path(trainer_profiler.dirpath) / trainer_profiler.filename), policy="now") 
 
     if not test:
+        print(f"experiment folder: {Path(wandb_logger.save_dir).resolve().absolute()}")
         return 
     
     # ================================ TEST ================================
     trainer.test(model=model, datamodule=datamodule)    
+    print(f"experiment folder: {Path(wandb_logger.save_dir).resolve().absolute()}")
         
 # ==========================================================================================
 # ==========================================================================================
