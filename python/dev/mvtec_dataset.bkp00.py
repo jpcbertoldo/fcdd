@@ -294,7 +294,7 @@ def generate_noise(
                 size, 0.000012, ((8, 8), (54, 54)), fillval=-255, clamp=False, awgn=0, rotation=45
             )
             generated_noise = generated_noise_rgb + generated_noise
-            # generated_noise = smooth_noise(generated_noise, 25, 5, 1.0)
+            generated_noise = smooth_noise(generated_noise, 25, 5, 1.0)
         
         elif noise_mode in ['mvtec', 'mvtec_gt']:
             raise NotImplementedError('MVTec-AD and MVTec-AD with ground-truth maps is only available with online supervision.')
@@ -1277,44 +1277,4 @@ class ADMvTec(TorchvisionDataset):
             self.normal_classes
         )
         self._test_set = GTSubset(test_set, test_idx_normal)
-    
         
-if __name__ == "__main__":
-    import os.path as pt
-
-    from pathlib import Path
-    logger = Logger(logdir=str(Path.home() / "fcdd/data/tmp"),)
-        
-    normal_class = 0
-    
-    ds = ADMvTec(
-        root=pt.join('..', '..', 'data', 'datasets'), 
-        normal_class=normal_class, 
-        preproc="lcnaug1",
-        supervise_mode="malformed_normal_gt", 
-        noise_mode="confetti", 
-        oe_limit=1, 
-        logger=logger, 
-        nominal_label=0,
-    )
-    images = ds.preview(percls=20, train=True)
-    images = torch.cat([
-        images,
-        images[2:3],
-        images[1:2] * images[4:5],
-    ], dim=0)
-
-    ds_order = ['norm', 'anom']
-    rowheaders = [
-        *ds_order, 
-        '', 
-        *['gtno' if s == 'norm' else 'gtan' for s in ds_order],
-        "",
-        "anom * gtan"
-    ]
-    logger.imsave(
-        name=f'ds_preview.{normal_class}', 
-        tensors=torch.cat([*images]), 
-        nrow=images.size(1),
-        rowheaders=rowheaders,
-    )

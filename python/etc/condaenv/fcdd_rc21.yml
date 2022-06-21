@@ -13,6 +13,7 @@ dependencies:
   - setuptools=57.*
   - conda-forge::ipywidgets  # this is needed for torch on jlab
   - conda-forge::pandas
+  - rich  # for rich text
 
   - pip:
     - wandb
