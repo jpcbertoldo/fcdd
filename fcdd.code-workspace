@@ -40,7 +40,7 @@
 		"files.exclude": {
 			"**/.ipynb_checkpoints/": true
 		},
-		"python.defaultInterpreterPath": "~/miniconda3/envs/fcdd_rc21/bin/python",
+		"python.defaultInterpreterPath": "/cluster/CMM/home/jcasagrandebertoldo/miniconda3/envs/fcdd_rc21/bin/python",
 		"terminal.integrated.defaultProfile.linux": "/home/bertoldo/.local/bin/zsh",
 		"jupyter.jupyterServerType": "local",
 		"scm.autoReveal": false,
