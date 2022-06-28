@@ -42,9 +42,10 @@ min_max_l1 = [
 ]
 # ---------------------------------------------------------------------------------------------------------------------------------
 
+from pathlib import Path
 
 # Path to your snapshot.pt
-snapshot = "fcdd/data/mvtec_snapshot.pt"
+snapshot = Path.home() / "fcdd/data/results/mvtec_fcdd_20220516164612/normal_7/it_1/snapshot.pt"
 
 # Pick the architecture that was used for the snapshot (mvtec's architecture defaults to the following)
 net = FCDD_CNN224_VGG_F((3, 224, 224), bias=True).cuda()
