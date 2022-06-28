@@ -7,12 +7,14 @@
 #SBATCH --partition  cmm-gpu
 #SBATCH --gres       gpu:1
 #SBATCH --mem        32G
+#SBATCH --nodelist   node002
 
 #SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/dev00-checkpoint02bis/%x-%N-%j.log
  
 # tous les evenements pertinents seront envoyes par email a cette adresse
 #SBATCH --mail-type  ALL
 #SBATCH --mail-user joaopcbertoldo@gmail.com
+
  
 # obs : la ligne suivante est necessaire pour forces l'exécution 
 . $HOME/.bashrc
