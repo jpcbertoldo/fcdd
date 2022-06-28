@@ -1208,11 +1208,13 @@ class FCDDTrainer:
             
             # these have raw/converted values or 0, and they are complementary
             norm_loss_maps = (loss * (1 - gtmaps))
+            
             anom_loss_maps = -(((1 - (-loss).exp()) + 1e-31).log())
             anom_loss_maps = anom_loss_maps * gtmaps
 
             # apply the hubert trick
-            loss = (loss**2 + 1).sqrt() - 1
+            norm_loss_maps = (norm_loss_maps**2 + 1).sqrt() - 1
+            anom_loss_maps = (anom_loss_maps**2 + 1).sqrt() - 1
 
             # balancing ratio
             n_pixels_normal = (1 - gtmaps).sum()
@@ -1229,12 +1231,12 @@ class FCDDTrainer:
             
             loss = (outs ** 2).sum(dim=1, keepdim=True)
             
+            loss = self.net.receptive_upsample(loss, reception=True, std=self.gauss_std, cpu=False)
+            
             # apply the hubert trick with a factor computed from the average distance
             avg_dist = loss.sqrt().mean()
             loss = (((loss / (avg_dist  + 1e-31)) + 1).sqrt() - 1) * avg_dist.sqrt()
-            
-            loss = self.net.receptive_upsample(loss, reception=True, std=self.gauss_std, cpu=False)
-            
+                        
             # these have raw/converted values or 0, and they are complementary
             norm_loss_maps = (loss * (1 - gtmaps))
             anom_loss_maps = -(((1 - (-loss).exp()) + 1e-31).log())
