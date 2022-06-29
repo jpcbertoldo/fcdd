@@ -42,16 +42,22 @@ min_max_l1 = [
 ]
 # ---------------------------------------------------------------------------------------------------------------------------------
 
+from pathlib import Path
 
 # Path to your snapshot.pt
-snapshot = "fcdd/data/mvtec_snapshot.pt"
+snapshot = "/home/bertoldo/repos/fcdd/data/snapshots/mvtec_fcdd_20220511154419.normal_12.it_1.snapshot.pt"
+snapshot_fpath = Path(snapshot)
+snapshot_dirpath = snapshot_fpath.parent / snapshot_fpath.stem
+snapshot_dirpath.mkdir(exist_ok=True, parents=True)
 
 # Pick the architecture that was used for the snapshot (mvtec's architecture defaults to the following)
 net = FCDD_CNN224_VGG_F((3, 224, 224), bias=True).cuda()
 
 # Path to a folder that contains a subfolder containing the images (this is required to use PyTorch's ImageFolder dataset).
 # For instance, if the images are in foo/my_images/xxx.png, point to foo. Make sure foo contains only one folder (e.g., my_images).
-images_path = "fcdd/data/datasets/foo"
+images_path = "/home/bertoldo/repos/fcdd/data/datasets/mvtec/demos/12_transistor_demo001"
+images_path = Path(images_path)
+snapshot_dirpath /= images_path.name
 
 # Pick the class the snapshot was trained on.
 normal_class = 0
@@ -69,11 +75,11 @@ transform = transforms.Compose([
 ])
 
 # [optional] to generate heatmaps, define a logger (with the path where the heatmaps should be saved to) and a quantile
-logger = None  # Logger("fcdd/data/results/foo")
+logger = Logger(str(snapshot_dirpath))
 quantile = 0.97
 
 # Create a trainer to use its loss function for computing anomaly scores
-ds = ImageFolder(images_path, transform, transforms.Lambda(lambda x: 0))
+ds = ImageFolder(str(images_path), transform, transforms.Lambda(lambda x: 0))
 loader = DataLoader(ds, batch_size=16, num_workers=0)
 trainer = FCDDTrainer(net, None, None, (None, None), logger, 'fcdd', 8, quantile, 224)
 trainer.load(snapshot)
