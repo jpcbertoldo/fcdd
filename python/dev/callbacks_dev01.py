@@ -930,3 +930,15 @@ class LogPerInstanceValueCallback(
         logkey = f"{logkey_prefix}per-instance-value-of-{self.values_key}"
 
         wandb.log({logkey: table})
+
+
+class LearningRateLoggerCallback(pl.Callback):
+    
+    def __init__(self):
+        super().__init__()
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        for idx, scheduler in enumerate(trainer.lr_schedulers):
+            # joao: idk why this [0] is necessary
+            current_lr = scheduler['scheduler'].get_last_lr()[0]
+            trainer.model.log(f"train/learning_rate_scheduler_idx={idx}", current_lr)
