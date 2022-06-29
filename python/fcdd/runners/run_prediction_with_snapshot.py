@@ -45,8 +45,7 @@ min_max_l1 = [
 from pathlib import Path
 
 # Path to your snapshot.pt
-snapshot = "/home/bertoldo/repos/fcdd/data/snapshots/mvtec_fcdd_20220511154419.normal_12.it_1.snapshot.pt"
-snapshot_fpath = Path(snapshot)
+snapshot_fpath = snapshot = Path.home() / "fcdd/data/results/mvtec_fcdd_20220516164612/normal_7/it_1/snapshot.pt"
 snapshot_dirpath = snapshot_fpath.parent / snapshot_fpath.stem
 snapshot_dirpath.mkdir(exist_ok=True, parents=True)
 

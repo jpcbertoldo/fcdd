@@ -34,7 +34,7 @@ parser.set_defaults(
     # script
     test=True,
     preview_nimages=0,
-    # n_seeds=3,
+    # n_seeds=1,
     # seeds=None,
     classes=None,
     # files
@@ -49,14 +49,17 @@ parser.set_defaults(
     # train/validation/test
     wandb_log_roc=(False, True, True),
     wandb_log_pr=(False, True, True),
-    wandb_log_image_heatmap_nsamples=(0, 4, 30),
+    wandb_log_image_heatmap_contrast_percentiles=(3., 97.),  # (contrast_min, contrast_max)
+    wandb_log_image_heatmap_nsamples=(0, 0, 30),
     wandb_log_image_heatmap_resolution=(None, None, None),
     wandb_log_histogram_score=(None, None, LOG_HISTOGRAM_MODE_LOG),
     wandb_log_histogram_loss=(None, None, LOG_HISTOGRAM_MODE_LOG),
-    wandb_log_percentiles_score_train=(0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
-    wandb_log_percentiles_score_validation=(0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
-    wandb_log_perinstance_mean_score = (True, True, True),
-    wandb_log_perinstance_mean_loss = (True, True, True),
+    # wandb_log_percentiles_score_train=(0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
+    wandb_log_percentiles_score_train=(),
+    # wandb_log_percentiles_score_validation=(0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
+    wandb_log_percentiles_score_validation=(),
+    wandb_log_perinstance_mean_score = (False, False, True),
+    wandb_log_perinstance_mean_loss = (False, False, True),
     # pytorch lightning 
     lightning_accelerator=train_dev01.LIGHTNING_ACCELERATOR_GPU,
     lightning_ndevices=1,

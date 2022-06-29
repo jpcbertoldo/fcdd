@@ -23,13 +23,24 @@
 			"name": "thalassa:home",
 			"path": "/cluster/CMM/home/jcasagrandebertoldo"
 		},
+		{
+			"name": "data/results",
+			"path": "./data/results"
+		},
 		
 	],
 	"settings": {
+		"files.watcherExclude": {
+			"**/.git/objects/**": true,
+			"**/.git/subtree-cache/**": true,
+			"**/node_modules/*/**": true,
+			"**/.hg/store/**": true,
+			"./data/": true,
+		},
 		"files.exclude": {
 			"**/.ipynb_checkpoints/": true
 		},
-		"python.defaultInterpreterPath": "~/miniconda3/envs/fcdd_rc21/bin/python",
+		"python.defaultInterpreterPath": "/cluster/CMM/home/jcasagrandebertoldo/miniconda3/envs/fcdd_rc21/bin/python",
 		"terminal.integrated.defaultProfile.linux": "/home/bertoldo/.local/bin/zsh",
 		"jupyter.jupyterServerType": "local",
 		"scm.autoReveal": false,

@@ -7,7 +7,7 @@
 #SBATCH --partition  cmm-gpu
 #SBATCH --gres       gpu:1
 #SBATCH --mem        32G
-#SBATCH --nodelist   node001
+# #####SBATCH --nodelist   node001,node002
 
 #SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/mvtec-train-dev00.checkpoint01/%x-%N-%j.log
  

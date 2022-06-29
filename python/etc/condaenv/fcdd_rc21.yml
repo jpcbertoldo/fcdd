@@ -15,8 +15,5 @@ dependencies:
   - conda-forge::pandas
   - rich  # for rich text
 
-  - pip:
-    - wandb
-
 # line to update the environment
 # conda env update --name fcdd_rc21 --file ${HOME}/fcdd/python/etc/condaenv/fcdd_rc21.yml --prune

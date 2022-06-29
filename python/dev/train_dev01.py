@@ -20,7 +20,7 @@ from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
-from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_BATCH, LOG_HISTOGRAM_MODES,
+from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH, HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH, LOG_HISTOGRAM_MODES,
                              DataloaderPreviewCallback,
                              LogAveragePrecisionCallback, LogHistogramCallback,
                              LogHistogramsSuperposedPerClassCallback,
@@ -373,7 +373,7 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     )
     # ====================================== wandb =======================================
     parser.add_argument("--wandb-project", type=str,)
-    parser.add_argument("--wandb-tags", type=str, nargs='*',)
+    parser.add_argument("--wandb-tags", type=str, nargs='*', action='extend',)
     parser.add_argument(
         "--wandb-profile", action="store_true",
         help="If set, the run will be profiled and sent to wandb."
@@ -409,6 +409,10 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         help="if and how to log loss values; you should give 3 values, respectively for the train/validation/test hooks"
     )
     group_log_image_heatmap = parser.add_argument_group("log-image-heatmap")
+    group_log_image_heatmap.add_argument(
+        "--wandb-log-image-heatmap-contrast-percentiles", type=float, nargs=2,
+        help="Percentile values for the contrast of the heatmap: min/max"
+    )
     group_log_image_heatmap.add_argument(
         "--wandb-log-image-heatmap-nsamples", nargs=3, type=int,
         help="how many of each class (normal/anomalous) per epoch?"
@@ -607,6 +611,7 @@ def run_one(
     # which respectively configure the train/validation/test phases
     wandb_log_roc: Tuple[bool, bool, bool],
     wandb_log_pr: Tuple[bool, bool, bool],
+    wandb_log_image_heatmap_contrast_percentiles: Tuple[float, float],
     wandb_log_image_heatmap_nsamples: Tuple[int, int, int],
     wandb_log_image_heatmap_resolution: Tuple[int, int, int],
     wandb_log_histogram_score: Tuple[bool, bool, bool],
@@ -823,7 +828,8 @@ def run_one(
                     labels_key="labels",
                     nsamples_each_class=nsamples_train,
                     resolution=resolution_train,
-                    heatmap_normalization=HEATMAP_NORMALIZATION_MINMAX_BATCH,
+                    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
+                    min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
                     python_generator=create_python_random_generator(seed),
                 ),
             ])
@@ -838,7 +844,8 @@ def run_one(
                     labels_key="labels",
                     nsamples_each_class=nsamples_validation,
                     resolution=resolution_validation,
-                    heatmap_normalization=HEATMAP_NORMALIZATION_MINMAX_BATCH,
+                    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
+                    min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
                     python_generator=create_python_random_generator(seed),
                 ),
             ])
@@ -853,7 +860,8 @@ def run_one(
                     labels_key="labels",
                     nsamples_each_class=nsamples_test,
                     resolution=resolution_test,
-                    heatmap_normalization=HEATMAP_NORMALIZATION_MINMAX_BATCH,
+                    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
+                    min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
                     python_generator=create_python_random_generator(seed),
                 ),
             ])
@@ -865,7 +873,7 @@ def run_one(
     
     def add_callbacks_log_histogram_score(train_mode: str, validation_mode: str, test_mode: str):
         
-        if train_mode is None:
+        if train_mode is not None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.TRAINING, key="score_maps", mode=train_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -879,7 +887,7 @@ def run_one(
                 ),
             ])
 
-        if validation_mode is None:
+        if validation_mode is not None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.VALIDATING, key="score_maps", mode=validation_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -893,7 +901,7 @@ def run_one(
                 ),
             ])
         
-        if test_mode is None:
+        if test_mode is not None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.TESTING, key="score_maps", mode=test_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -912,7 +920,7 @@ def run_one(
     
     def add_callbacks_log_histogram_loss(train_mode: str, validation_mode: str, test_mode: str):
         
-        if train_mode is None:
+        if train_mode is not None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.TRAINING, key="loss_maps", mode=train_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -926,7 +934,7 @@ def run_one(
                 ),
             ])
 
-        if validation_mode is None:
+        if validation_mode is not None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.VALIDATING, key="loss_maps", mode=validation_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -940,7 +948,7 @@ def run_one(
                 ),
             ])
         
-        if test_mode is None:
+        if test_mode is not None:
             callbacks.extend([
                 LogHistogramCallback(stage=RunningStage.TESTING, key="loss_maps", mode=test_mode,), 
                 LogHistogramsSuperposedPerClassCallback(
@@ -1262,6 +1270,7 @@ def run(**kwargs) -> dict:
                 save_code=True,
                 reinit=True,
             )
+            print(f"wandb_init_kwargs={wandb_init_kwargs}")
             wandb_logger = WandbLogger(
                 save_dir=str(logdir),
                 offline=wandb_offline,
@@ -1282,6 +1291,7 @@ def run(**kwargs) -> dict:
                 },
             )
             
+            print(f"run_one_kwargs={run_one_kwargs}")
             try:
                 run_one(wandb_logger=wandb_logger, **run_one_kwargs,)
             
@@ -1291,10 +1301,10 @@ def run(**kwargs) -> dict:
                     raise ScriptError(f"run_one() got an unexpected keyword argument: {msg}, did you forget to kwargs.pop() something?") from ex
                 raise ex
             except Exception as ex:
-                wandb_logger.finalize("failed")
+                # wandb_logger.finalize("failed")
                 wandb.finish(1)
                 raise ex
             else:
-                wandb_logger.finalize("success")
+                # wandb_logger.finalize("success")
                 wandb.finish(0)
                 
