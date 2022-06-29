@@ -304,7 +304,7 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument("--loss", type=str, choices=LOSS_CHOICES,)
     parser.add_argument('--optimizer', type=str, choices=OPTIMIZER_CHOICES,)
     parser.add_argument(
-        '--scheduler', type=str, choices=SCHEDULER_CHOICES,
+        '--scheduler', type=none_or_str, choices=SCHEDULER_CHOICES,
         help='The type of learning rate scheduler.'
              '"lambda", reduces the learning rate each epoch by a certain factor.'
     )
