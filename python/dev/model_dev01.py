@@ -51,7 +51,7 @@ class FCDD_CNN224_VGG_F(LightningModule):
         weight_decay: float,
         # scheduler
         scheduler_name: str,
-        scheduler_paramaters: list,
+        scheduler_parameters: list,
         # else
         loss_name: str,
     ):
