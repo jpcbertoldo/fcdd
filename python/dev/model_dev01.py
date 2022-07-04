@@ -256,11 +256,11 @@ class FCDD_CNN224_VGG_F(OptimizersMixin, PixelwiseHSCLossesMixin, LightningModul
         if scheduler_name is None:
             return [optimizer]
         
-        scheduler_paramaters = self.hparams['scheduler_paramaters']
+        scheduler_parameters = self.hparams['scheduler_parameters']
         
         if scheduler_name == SCHEDULER_LAMBDA:
-            assert len(scheduler_paramaters) == 1, 'lambda scheduler needs 1 parameter' 
-            scheduler = self.configure_scheduler_lambda(optimizer, lr_exp_decrease_rate=scheduler_paramaters[0])
+            assert len(scheduler_parameters) == 1, 'lambda scheduler needs 1 parameter' 
+            scheduler = self.configure_scheduler_lambda(optimizer, lr_exp_decrease_rate=scheduler_parameters[0])
             
         else:
             raise NotImplementedError(f'LR scheduler type {scheduler_name} not known.')
