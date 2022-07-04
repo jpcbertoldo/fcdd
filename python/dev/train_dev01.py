@@ -21,7 +21,7 @@ from torch.profiler import tensorboard_trace_handler
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
 from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH, HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH, LOG_HISTOGRAM_MODES,
-                             DataloaderPreviewCallback,
+                             DataloaderPreviewCallback, LearningRateLoggerCallback,
                              LogAveragePrecisionCallback, LogHistogramCallback,
                              LogHistogramsSuperposedPerClassCallback,
                              LogImageHeatmapTableCallback,
@@ -304,7 +304,7 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument("--loss", type=str, choices=LOSS_CHOICES,)
     parser.add_argument('--optimizer', type=str, choices=OPTIMIZER_CHOICES,)
     parser.add_argument(
-        '--scheduler', type=str, choices=SCHEDULER_CHOICES,
+        '--scheduler', type=none_or_str, choices=SCHEDULER_CHOICES,
         help='The type of learning rate scheduler.'
              '"lambda", reduces the learning rate each epoch by a certain factor.'
     )
@@ -727,6 +727,7 @@ def run_one(
     callbacks = [
         # pl.callbacks.ModelSummary(max_depth=lightning_model_summary_max_depth),
         pl.callbacks.RichModelSummary(max_depth=lightning_model_summary_max_depth),
+        LearningRateLoggerCallback(),
     ]
     
     # ========================================================================= ROC
