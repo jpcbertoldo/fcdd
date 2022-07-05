@@ -1,25 +1,26 @@
 #! /bin/bash
  
 # Personalisation de la tache
-#
-#SBATCH --job-name   fcdd-mvtec-train-dev01-triple-run
- 
+
+#SBATCH --job-name   fcdd-mvtec-train-dev01-4runspergpu-jobarray
 #SBATCH --partition  cmm-gpu
 #SBATCH --gres       gpu:1
 #SBATCH --cpus-per-task 2
-#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/train-dev01-4runspergpu/%x-%N-%A_%a-%j.log
+
+# SLURM_ARRAY_TASK_ID \in {0, 4, 8, 12}, at idx >= 15 the script will exit
+#SBATCH --array=0-15:4%1   # Id of job start-end % number of simultaneous running job
+
+# variable meanings
 # %x = job-name
 # %N = node-name
 # %A = SLURM_ARRAY_JOB_ID (same for all jobs in the same array)
 # %a = SLURM_ARRAY_TASK_ID (the job index in the array)
 # %j = SLURM_JOBID (unique for each job)
+#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/train-dev01-4runspergpu/%x-%N-%A_%a-%j.log
  
 # tous les evenements pertinents seront envoyes par email a cette adresse
 #SBATCH --mail-type  ALL
 #SBATCH --mail-user joaopcbertoldo@gmail.com
-
-# SLURM_ARRAY_TASK_ID \in {0, 4, 8, 12}, at idx >= 15 the script will exit
-#SBATCH --array=0-15:4%1   # Id of job start-end % number of simultaneous running job
 
 
 # obs : la ligne suivante est necessaire pour forces l'exécution 
@@ -35,6 +36,7 @@ Node=$(hostname)
 WorkDir=$HOME/fcdd/python/dev
 CONDA_ENV_NAME="fcdd_rc21"
 SCRIPT_FNAME="train_mvtec_dev01.py"
+SLURM_SCRIPT_FNAME=`basename "$0"`
 
 # etc
 MYTMPDIR="/cluster/CMM/data1/jcasagrandebertoldo/tmp"
@@ -54,6 +56,7 @@ echo "\$Node = $Node"
 echo "\$WorkDir = $WorkDir"
 echo "\$CONDA_ENV_NAME = $CONDA_ENV_NAME"
 echo "\$SCRIPT_FNAME = $SCRIPT_FNAME"
+echo "\$SLURM_SCRIPT_FNAME = $SLURM_SCRIPT_FNAME"
 
 echo "\$MYTMPDIR = ${MYTMPDIR}"
 
