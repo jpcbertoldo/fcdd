@@ -36,7 +36,6 @@ Node=$(hostname)
 WorkDir=$HOME/fcdd/python/dev
 CONDA_ENV_NAME="fcdd_rc21"
 SCRIPT_FNAME="train_mvtec_dev01.py"
-SLURM_SCRIPT_FNAME=`basename "$0"`
 
 # etc
 MYTMPDIR="/cluster/CMM/data1/jcasagrandebertoldo/tmp"
@@ -56,7 +55,6 @@ echo "\$Node = $Node"
 echo "\$WorkDir = $WorkDir"
 echo "\$CONDA_ENV_NAME = $CONDA_ENV_NAME"
 echo "\$SCRIPT_FNAME = $SCRIPT_FNAME"
-echo "\$SLURM_SCRIPT_FNAME = $SLURM_SCRIPT_FNAME"
 
 echo "\$MYTMPDIR = ${MYTMPDIR}"
 
