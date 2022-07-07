@@ -20,7 +20,7 @@ parser.set_defaults(
     loss=model_dev01.LOSS_PIXELWISE_BATCH_AVG,
     optimizer=model_dev01.OPTIMIZER_SGD,
     scheduler=model_dev01.SCHEDULER_LAMBDA,
-    scheduler_paramaters=[0.985],
+    scheduler_parameters=[0.985],
     # dataset
     dataset=mvtec_dataset_dev01.DATASET_NAME,
     raw_shape=(240, 240),

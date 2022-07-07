@@ -329,7 +329,7 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
              '"lambda", reduces the learning rate each epoch by a certain factor.'
     )
     parser.add_argument(
-        '--scheduler-paramaters', type=float, nargs='*',
+        '--scheduler-parameters', type=float, nargs='*',
         help='Sequence of learning rate scheduler parameters. '
              '"lambda": one parameter is allowed, the factor the learning rate is reduced per epoch. '
     )
@@ -603,7 +603,7 @@ def run_one(
     loss: str,
     optimizer: str, 
     scheduler: str,
-    scheduler_paramaters: list,
+    scheduler_parameters: list,
     # dataset
     dataset: str,
     raw_shape: Tuple[int, int],
@@ -733,8 +733,7 @@ def run_one(
             weight_decay=weight_decay,
             # scheduler
             scheduler_name=scheduler,
-            scheduler_paramaters=scheduler_paramaters,
-            model_name=model,
+            scheduler_parameters=scheduler_parameters,
         )
         
     except ModelError as ex:
@@ -1297,7 +1296,7 @@ def run(**kwargs) -> dict:
                 **wandb_config,
                 **dict(
                     confighash_full=hashify_config(wandb_config, keys=[
-                        "epochs", "learning_rate", "weight_decay", "model", "loss", "optimizer", "scheduler", "scheduler_paramaters", "dataset", "raw_shape", "net_shape", "batch_size", "preprocessing", "supervise_mode", "real_anomaly_limit", "normal_class",                         
+                        "epochs", "learning_rate", "weight_decay", "model", "loss", "optimizer", "scheduler", "scheduler_parameters", "dataset", "raw_shape", "net_shape", "batch_size", "preprocessing", "supervise_mode", "real_anomaly_limit", "normal_class",                         
                     ]),
                     confighash_dataset_class_supervise=hashify_config(
                         wandb_config, keys=("datset", "normal_class", "supervise_mode")

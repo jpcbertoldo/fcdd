@@ -196,10 +196,10 @@ class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
         optimizer_name: str,
         lr: float,
         weight_decay: float,
+        model_name: str,
         # scheduler
         scheduler_name: str,
-        scheduler_paramaters: list,
-        model_name: str,
+        scheduler_parameters: list,
         # else
         loss_name: str,
     ):
@@ -207,6 +207,9 @@ class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
         assert scheduler_name in SCHEDULER_CHOICES, f"scheduler_name={scheduler_name} not in {SCHEDULER_CHOICES}"
         assert loss_name in LOSS_FCDD_CHOICES, f"loss_name={loss_name} not in {LOSS_FCDD_CHOICES}"
         assert model_name in MODEL_CHOICES_FCDD, f"model_name={model_name} not in {MODEL_CHOICES_FCDD}"
+        
+        if model_name != MODEL_FCDD_CNN224_VGG_F:
+            raise NotImplementedError(f"model_name={model_name} not implemented")
         
         # for some reason pyttorch lightning needs this specific call super().__init__()
         super().__init__()
@@ -307,11 +310,11 @@ class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
         if scheduler_name is None:
             return [optimizer]
         
-        scheduler_paramaters = self.hparams['scheduler_paramaters']
+        scheduler_parameters = self.hparams['scheduler_parameters']
         
         if scheduler_name == SCHEDULER_LAMBDA:
-            assert len(scheduler_paramaters) == 1, 'lambda scheduler needs 1 parameter' 
-            scheduler = self.configure_scheduler_lambda(optimizer, lr_exp_decrease_rate=scheduler_paramaters[0])
+            assert len(scheduler_parameters) == 1, 'lambda scheduler needs 1 parameter' 
+            scheduler = self.configure_scheduler_lambda(optimizer, lr_exp_decrease_rate=scheduler_parameters[0])
             
         else:
             raise NotImplementedError(f'LR scheduler type {scheduler_name} not known.')
@@ -683,7 +686,7 @@ class HyperSphereU2Net(
         lr: float,
         weight_decay: float,
         scheduler_name: str,
-        scheduler_paramaters: list,
+        scheduler_parameters: list,
         loss_name: str,
         model_name: str,
         # this is held constant for now (there is no option in the cli)
@@ -1039,11 +1042,11 @@ class HyperSphereU2Net(
         if scheduler_name is None:
             return [optimizer]
         
-        scheduler_paramaters = self.hparams['scheduler_paramaters']
+        scheduler_parameters = self.hparams['scheduler_parameters']
         
         if scheduler_name == SCHEDULER_LAMBDA:
-            assert len(scheduler_paramaters) == 1, 'lambda scheduler needs 1 parameter' 
-            scheduler = self.configure_scheduler_lambda(optimizer, lr_exp_decrease_rate=scheduler_paramaters[0])
+            assert len(scheduler_parameters) == 1, 'lambda scheduler needs 1 parameter' 
+            scheduler = self.configure_scheduler_lambda(optimizer, lr_exp_decrease_rate=scheduler_parameters[0])
             
         else:
             raise NotImplementedError(f'LR scheduler type {scheduler_name} not known.')
