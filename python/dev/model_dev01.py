@@ -660,13 +660,13 @@ MODEL_U2NET_HEIGHT6_FULL = "u2net-height6-full"
 MODEL_U2NET_HEIGHT6_LITE = "u2net-height6-lite"
 MODEL_U2NET_HEIGHT4_LITE = "u2net-height4-lite"
 MODEL_U2NET_REPVGG_HEIGHT4_LITE = "u2net-repvgg-height4-lite"
-MODEL_U2NET_REPVGG_HEIGHT6_FULL = "u2net-repvgg-height6-full"
+MODEL_U2NET_REPVGG_HEIGHT5_FULL = "u2net-repvgg-height5-full"
 MODEL_HYPERSPHERE_U2NET_CHOICES = (
     MODEL_U2NET_HEIGHT6_FULL,
     MODEL_U2NET_HEIGHT6_LITE,
     MODEL_U2NET_HEIGHT4_LITE,
     MODEL_U2NET_REPVGG_HEIGHT4_LITE,
-    MODEL_U2NET_REPVGG_HEIGHT6_FULL,
+    MODEL_U2NET_REPVGG_HEIGHT5_FULL,
 )
 
 HYPERSHPERE_U2NET_LOSS_WEIGHTS_UNIFORM = "uniform"
@@ -778,15 +778,13 @@ class HyperSphereU2Net(
                 'stage1d': ((7, 128, 16, 64, False, U2NET_BASIC_BLOCK_REPVGG), 64),
             }
             
-        elif model == MODEL_U2NET_REPVGG_HEIGHT6_FULL:
+        elif model == MODEL_U2NET_REPVGG_HEIGHT5_FULL:
             self.architecture_config= {
                 'stage1': ((7, 3, 32, 64, False, U2NET_BASIC_BLOCK_REPVGG), None),
                 'stage2': ((6, 64, 32, 128, False, U2NET_BASIC_BLOCK_REPVGG), None),
                 'stage3': ((5, 128, 64, 256, False, U2NET_BASIC_BLOCK_REPVGG), None),
                 'stage4': ((4, 256, 128, 512, False, U2NET_BASIC_BLOCK_REPVGG), None),
-                'stage5': ((4, 512, 256, 512, True, U2NET_BASIC_BLOCK_REPVGG), None),
-                'stage6': ((4, 512, 256, 512, True, U2NET_BASIC_BLOCK_REPVGG), 512),
-                'stage5d': ((4, 1024, 256, 512, True, U2NET_BASIC_BLOCK_REPVGG), 512),
+                'stage5': ((4, 512, 256, 512, True, U2NET_BASIC_BLOCK_REPVGG), 512),
                 'stage4d': ((4, 1024, 128, 256, False, U2NET_BASIC_BLOCK_REPVGG), 256),
                 'stage3d': ((5, 512, 64, 128, False, U2NET_BASIC_BLOCK_REPVGG), 128),
                 'stage2d': ((6, 256, 32, 64, False, U2NET_BASIC_BLOCK_REPVGG), 64),
