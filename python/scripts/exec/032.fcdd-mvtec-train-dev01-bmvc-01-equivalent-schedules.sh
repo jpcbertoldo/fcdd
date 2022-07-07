@@ -46,22 +46,22 @@ echo "SBATCH_SCRIPT_FPATH = ${SBATCH_SCRIPT_FPATH}"
 # EXPLAIN 4 runs per gpu
 
 # do old x new loss
-# try 16bit
 
 # launch
-sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS} ${DEBUG_ARGS} --supervise-mode real-anomaly --loss old-fcdd
-sleep 5
-
-sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS} ${DEBUG_ARGS} --supervise-mode real-anomaly --loss pixelwise-batch-avg
-sleep 5
-
-
-# next: equivalent rate
-
-# later
-
-# sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS} ${DEBUG_ARGS} --supervise-mode synthetic-anomaly-confetti --loss old-fcdd
+# sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS} ${DEBUG_ARGS} --supervise-mode real-anomaly --loss old-fcdd
 # sleep 5
 
-# sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS} ${DEBUG_ARGS} --supervise-mode synthetic-anomaly-confetti --loss pixelwise-batch-avg
+# sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS} ${DEBUG_ARGS} --supervise-mode real-anomaly --loss pixelwise-batch-avg
 # sleep 5
+
+
+# equivalent rate DONE
+
+# next: unsup equivalent rate DONE
+# next: unsup old rate DONE
+
+sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS} ${DEBUG_ARGS} --supervise-mode synthetic-anomaly-confetti --loss old-fcdd
+sleep 5
+
+sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS} ${DEBUG_ARGS} --supervise-mode synthetic-anomaly-confetti --loss pixelwise-batch-avg
+sleep 5
