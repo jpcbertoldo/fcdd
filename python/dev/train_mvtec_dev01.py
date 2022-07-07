@@ -16,7 +16,7 @@ parser.set_defaults(
     learning_rate=1e-3,
     weight_decay=1e-4, 
     # model 
-    model=model_dev01.FCDD_CNN224_VGG_F.__name__,
+    model=model_dev01.MODEL_FCDD_CNN224_VGG_F,
     loss=model_dev01.LOSS_PIXELWISE_BATCH_AVG,
     optimizer=model_dev01.OPTIMIZER_SGD,
     scheduler=model_dev01.SCHEDULER_LAMBDA,
@@ -26,7 +26,7 @@ parser.set_defaults(
     raw_shape=(240, 240),
     net_shape=(224, 224),
     batch_size=64,  # it was 128, i'm accumulating batches to simulate the same size
-    nworkers=4,
+    nworkers=1,
     pin_memory=False,
     preprocessing=mvtec_dataset_dev01.PREPROCESSING_LCNAUG1,
     supervise_mode=mvtec_dataset_dev01.SUPERVISE_MODE_REAL_ANOMALY,
@@ -71,6 +71,7 @@ parser.set_defaults(
     lightning_profiler=train_dev01.LIGHTNING_PROFILER_SIMPLE,
     lightning_gradient_clip_val=0,
     lightning_gradient_clip_algorithm=train_dev01.LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM,
+    lightning_deterministic=False,
 )
 args = parser.parse_args()
 train_dev01.args_validate_dataset_specific_choices(args)

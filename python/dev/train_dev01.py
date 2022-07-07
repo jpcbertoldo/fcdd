@@ -31,7 +31,7 @@ from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH, HEATMAP_NORM
 from common_dev01 import (create_python_random_generator, create_seed,
                           hashify_config, seed_int2str, seed_str2int)
 
-__version__ = "v1.0.0"
+__version__ = "v1.0.1"
 
 
 # when computing ROC on the pixels, extract a sample of this many pixels
@@ -138,7 +138,12 @@ print(f"SUPERVISE_MODE_CHOICES={ALL_SUPERVISE_MODE_CHOICES}")
 import model_dev01
 
 MODEL_CLASSES = {
-    model_dev01.FCDD_CNN224_VGG_F.__name__: model_dev01.FCDD_CNN224_VGG_F,
+    model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.FCDD,
+    model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.HyperSphereU2Net,
+    model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.HyperSphereU2Net,
+    model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.HyperSphereU2Net,
+    model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.HyperSphereU2Net,
+    model_dev01.MODEL_U2NET_REPVGG_HEIGHT6_FULL: model_dev01.HyperSphereU2Net,
 }
 MODEL_CHOICES = tuple(sorted(MODEL_CLASSES.keys()))
 print(f"MODEL_CHOICES={MODEL_CHOICES}")
@@ -155,7 +160,12 @@ def unknown_model(wrapped: Callable[[str, ], Any]):
 @unknown_model
 def model_optimizer_choices(model_name: str) -> List[str]:
     return {
-        model_dev01.FCDD_CNN224_VGG_F.__name__: model_dev01.OPTIMIZER_CHOICES,
+        model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.OPTIMIZER_CHOICES,
+        model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.OPTIMIZER_CHOICES,
+        model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.OPTIMIZER_CHOICES,
+        model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.OPTIMIZER_CHOICES,
+        model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.OPTIMIZER_CHOICES,
+        model_dev01.MODEL_U2NET_REPVGG_HEIGHT6_FULL: model_dev01.OPTIMIZER_CHOICES,
     }[model_name]   
 
 
@@ -170,7 +180,12 @@ print(f"OPTIMIZER_CHOICES={OPTIMIZER_CHOICES}")
 @unknown_model
 def model_scheduler_choices(model_name: str) -> List[str]:
     return {
-        model_dev01.FCDD_CNN224_VGG_F.__name__: model_dev01.SCHEDULER_CHOICES,
+        model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.SCHEDULER_CHOICES,
+        model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.SCHEDULER_CHOICES,
+        model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.SCHEDULER_CHOICES,
+        model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.SCHEDULER_CHOICES,
+        model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.SCHEDULER_CHOICES,
+        model_dev01.MODEL_U2NET_REPVGG_HEIGHT6_FULL: model_dev01.SCHEDULER_CHOICES,
     }[model_name]
 
 
@@ -185,7 +200,12 @@ print(f"SCHEDULER_CHOICES={SCHEDULER_CHOICES}")
 @unknown_model
 def model_loss_choices(model_name: str) -> List[str]:
     return {
-        model_dev01.FCDD_CNN224_VGG_F.__name__: model_dev01.LOSS_CHOICES,
+        model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.LOSS_FCDD_CHOICES,
+        model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.LOSS_U2NET_CHOICES,
+        model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.LOSS_U2NET_CHOICES,
+        model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.LOSS_U2NET_CHOICES,
+        model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.LOSS_U2NET_CHOICES,
+        model_dev01.MODEL_U2NET_REPVGG_HEIGHT6_FULL: model_dev01.LOSS_U2NET_CHOICES,
     }[model_name]
 
 
@@ -484,7 +504,10 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         "--lightning-gradient-clip-algorithm", type=str, choices=LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES,
         help=f"https://pytorch-lightning.readthedocs.io/en/latest/advanced/training_tricks.html#gradient-clipping",
     )
-    
+    parser.add_argument(
+        "--lightning-deterministic", type=bool,
+        help="https://pytorch-lightning.readthedocs.io/en/stable/common/trainer.html#reproducibility",
+    )
     return parser
 
 
@@ -629,7 +652,8 @@ def run_one(
     lightning_accumulate_grad_batches: int,
     lightning_profiler: str, 
     lightning_gradient_clip_val: float,
-    lightning_gradient_clip_algorithm: str, 
+    lightning_gradient_clip_algorithm: str,
+    lightning_deterministic: bool, 
 ):
     
     # minimal validation for early mistakes
@@ -661,6 +685,13 @@ def run_one(
     (logdir / "seed.txt").write_text(seed_int2str(seed))
     torch.manual_seed(seed)
     
+    batch_size_effective = batch_size * lightning_accumulate_grad_batches if lightning_accumulate_grad_batches > 0 else batch_size
+    
+    summary_update_dict_inputs = dict(
+        batch_size_effective=batch_size_effective,
+    )
+    wandb.run.summary.update(summary_update_dict_inputs)
+    
     # ================================ DATA ================================
     
     # datamodule hard-coded for now, but later other datasets can be added
@@ -677,12 +708,12 @@ def run_one(
         pin_memory=pin_memory,
         seed=seed,
     )
-    dataset_summary_update_dict = dict(
+    summary_update_dict_dataset = dict(
         normal_class_label=dataset_class_labels(dataset)[normal_class],
         mvtec_class_type=mvtec_dataset_dev01.CLASSES_TYPES[normal_class],
         normal_class_fullqualified=dataset_class_fullqualified(dataset)[normal_class],
     )
-    wandb.run.summary.update(dataset_summary_update_dict)
+    wandb.run.summary.update(summary_update_dict_dataset)
     datamodule.prepare_data()
 
     # ================================ MODEL ================================
@@ -703,15 +734,24 @@ def run_one(
             # scheduler
             scheduler_name=scheduler,
             scheduler_paramaters=scheduler_paramaters,
+            model_name=model,
         )
+        
     except ModelError as ex:
         msg = ex.args[0]
         if "required positional arguments" in msg:
             raise ModelError(f"Model model_class={model_class.__name__} requires positional argument missing ") from ex
+        
+    def test_input_output_dimensions(inshape):    
+        random_tensor = torch.ones((1, 3, inshape[0], inshape[1]))
+        scores = model(random_tensor)
+        assert scores.shape[-2:] == inshape, f"{model.__class__.__name__} must return a tensor of shape (..., {inshape[0]}, {inshape[1]}), found {scores.shape}"
+        assert tuple(scores.shape[0:2]) == (1, 1), f"{model.__class__.__name__} must return a tensor of shape (1, 1, ...), found {scores.shape}"
+    
+    test_input_output_dimensions(datamodule.net_shape)
     
     def log_model_architecture(model_: torch.nn.Module):
         model_str = str(model_)
-        print(model_str)
         model_str_fpath = logdir / "model.txt"
         model_str_fpath.write_text(model_str)
          # now = dont keep syncing if it changes
@@ -1121,7 +1161,6 @@ def run_one(
         logger=wandb_logger,  
         log_every_n_steps=1,  
         max_epochs=epochs,    
-        deterministic=True,
         callbacks=callbacks, 
         # i should learn how to properly deal with
         # the sanity check but for now it's causing too much trouble
@@ -1131,6 +1170,7 @@ def run_one(
         profiler=trainer_profiler,
         gradient_clip_val=lightning_gradient_clip_val,
         gradient_clip_algorithm=lightning_gradient_clip_algorithm,
+        deterministic=lightning_deterministic,
     )
     
     with profiler:
@@ -1227,7 +1267,7 @@ def run(**kwargs) -> dict:
                 **dict(logdir=logdir,  seed=seed,)
             }
             
-            # the ones added here don't go to the run_one()
+            # the ones added here don't go to the run_one()            
             wandb_config = {
                 **run_one_kwargs,
                 **dict(
@@ -1236,6 +1276,18 @@ def run(**kwargs) -> dict:
                     it=it,
                     cuda_visible_devices=cuda_visible_devices,
                     script_version=__version__,
+                    pid=os.getpid(),
+                    slurm_cluster_name=os.environ.get("SLURM_CLUSTER_NAME"),
+                    slurmd_nodename=os.environ.get("SLURMD_NODENAME"),
+                    slurm_job_partition=os.environ.get("SLURM_JOB_PARTITION"),
+                    slurm_submit_host=os.environ.get("SLURM_SUBMIT_HOST"),
+                    slurm_job_user=os.environ.get("SLURM_JOB_USER"),
+                    slurm_task_pid=os.environ.get("SLURM_TASK_PID"),
+                    slurm_job_name=os.environ.get("SLURM_JOB_NAME"),
+                    slurm_array_job_id=os.environ.get("SLURM_ARRAY_JOB_ID"),
+                    slurm_array_task_id=os.environ.get("SLURM_ARRAY_TASK_ID"),
+                    slurm_job_id=os.environ.get("SLURM_JOB_ID"),
+                    slurm_job_gpus=os.environ.get("SLURM_JOB_GPUS"),
                 ),
             }
             
@@ -1258,6 +1310,12 @@ def run(**kwargs) -> dict:
                     ),
                     confighash_dataset_class_supervise_loss_model=hashify_config(
                         wandb_config, keys=("datset", "normal_class", "supervise_mode", "loss", "model")
+                    ),
+                    confighash_slurm=hashify_config(
+                        # the info here should be very redundant but it's ok
+                        wandb_config, keys=(
+                            "slurm_job_id", "slurm_array_job_id", "slurm_array_task_id", "slurm_task_pid", "slurm_job_user", "slurm_job_name", "slurm_submit_host", "slurm_cluster_name", "slurmd_nodename", "slurm_job_partition",
+                        )
                     ),
                 )
             }
