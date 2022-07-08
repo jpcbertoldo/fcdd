@@ -143,7 +143,7 @@ MODEL_CLASSES = {
     model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.HyperSphereU2Net,
     model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.HyperSphereU2Net,
     model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.HyperSphereU2Net,
-    model_dev01.MODEL_U2NET_REPVGG_HEIGHT6_FULL: model_dev01.HyperSphereU2Net,
+    model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.HyperSphereU2Net,
 }
 MODEL_CHOICES = tuple(sorted(MODEL_CLASSES.keys()))
 print(f"MODEL_CHOICES={MODEL_CHOICES}")
@@ -165,7 +165,7 @@ def model_optimizer_choices(model_name: str) -> List[str]:
         model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.OPTIMIZER_CHOICES,
         model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.OPTIMIZER_CHOICES,
         model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT6_FULL: model_dev01.OPTIMIZER_CHOICES,
+        model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.OPTIMIZER_CHOICES,
     }[model_name]   
 
 
@@ -185,7 +185,7 @@ def model_scheduler_choices(model_name: str) -> List[str]:
         model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.SCHEDULER_CHOICES,
         model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.SCHEDULER_CHOICES,
         model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT6_FULL: model_dev01.SCHEDULER_CHOICES,
+        model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.SCHEDULER_CHOICES,
     }[model_name]
 
 
@@ -205,7 +205,7 @@ def model_loss_choices(model_name: str) -> List[str]:
         model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.LOSS_U2NET_CHOICES,
         model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.LOSS_U2NET_CHOICES,
         model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.LOSS_U2NET_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT6_FULL: model_dev01.LOSS_U2NET_CHOICES,
+        model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.LOSS_U2NET_CHOICES,
     }[model_name]
 
 
@@ -731,6 +731,7 @@ def run_one(
             optimizer_name=optimizer,
             lr=learning_rate,
             weight_decay=weight_decay,
+            model_name=model,
             # scheduler
             scheduler_name=scheduler,
             scheduler_parameters=scheduler_parameters,
