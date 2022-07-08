@@ -13,7 +13,7 @@
 # %A = SLURM_ARRAY_JOB_ID (same for all jobs in the same array)
 # %a = SLURM_ARRAY_TASK_ID (the job index in the array)
 # %j = SLURM_JOBID (unique for each job)
-#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/%x-%N-%A_%a-%j.log
+#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/debug/%x-%N-%A_%a-%j.log
  
 # tous les evenements pertinents seront envoyes par email a cette adresse
 #SBATCH --mail-type  ALL
@@ -36,7 +36,7 @@ CONDA_ENV_NAME="fcdd_rc21"
 SCRIPT_FNAME="test_jobid_env_var.py"
 
 # logging
-LOGDIR="${HOME}/log"
+LOGDIR="${HOME}/log/debug"
 JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}-${SLURM_JOB_ID}.python-print"
 JPATH_BASE=${LOGDIR}/$JNAME_BASE
 JPATH_00=${JPATH_BASE}.launch-00.log
@@ -76,6 +76,7 @@ echo "health checks"
 echo "pwd = $(pwd)"
 echo "which conda = $(which conda)"
 echo "\$CONDA_DEFAULT_ENV = $CONDA_DEFAULT_ENV"
+echo "\$SBATCH_OUTPUT = $SBATCH_OUTPUT"
 echo "which python = $(which python)"
 
 # ==============================================================================
@@ -88,6 +89,7 @@ echo "================ ARGS ================"
 echo ""
 echo ""
 echo "\$ARGS00 = ${ARGS00}"
+echo "\$* = $*"
 
 # ==============================================================================
 # ==================================== LAUNCH ==================================
