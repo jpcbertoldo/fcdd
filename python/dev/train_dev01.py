@@ -747,8 +747,9 @@ def run_one(
         scores = model(random_tensor)
         assert scores.shape[-2:] == inshape, f"{model.__class__.__name__} must return a tensor of shape (..., {inshape[0]}, {inshape[1]}), found {scores.shape}"
         assert tuple(scores.shape[0:2]) == (1, 1), f"{model.__class__.__name__} must return a tensor of shape (1, 1, ...), found {scores.shape}"
-    
-    test_input_output_dimensions(datamodule.net_shape)
+      
+    if model_class == model_dev01.HyperSphereU2Net:  
+        test_input_output_dimensions(datamodule.net_shape)
     
     def log_model_architecture(model_: torch.nn.Module):
         model_str = str(model_)
@@ -1223,6 +1224,22 @@ def run(**kwargs) -> dict:
     wandb_project = kwargs.pop("wandb_project", None)
     wandb_tags = kwargs.pop("wandb_tags", None) or []
     
+    def process_key_value_tags(tags: List[str]) -> List[str]:
+        monovalue_tags, kv_tags = [], {}
+        for tag in tags:
+            ncolons = tag.count(":")
+            if ncolons == 0:
+                monovalue_tags.append(tag)
+            elif ncolons == 1:
+                k, v = tag.split(":")
+                kv_tags[k] = v
+                monovalue_tags.append(k)
+            else:
+                raise ValueError(f"Tag `{tag}` has too many colons.")
+        return monovalue_tags, kv_tags
+
+    wandb_tags, key_value_tags = process_key_value_tags(wandb_tags)
+    
     wandb_checkpoint_mode = kwargs.pop("wandb_checkpoint_mode")
     
     # later the case of multiple saving modes will be handled
@@ -1289,6 +1306,7 @@ def run(**kwargs) -> dict:
                     slurm_job_id=os.environ.get("SLURM_JOB_ID"),
                     slurm_job_gpus=os.environ.get("SLURM_JOB_GPUS"),
                 ),
+                **key_value_tags,
             }
             
             # add a few hashes to the make it 
