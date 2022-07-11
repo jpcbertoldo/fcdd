@@ -7,7 +7,7 @@
 #SBATCH --gres       gpu:1
 #SBATCH --cpus-per-task 2
 
-##SBATCH --array=0-15:4%1   # Id of job start-end % number of simultaneous running job
+#SBATCH --array=0-5%1   # Id of job start-end % number of simultaneous running job
 
 # variable meanings
 # %x = job-name
@@ -16,12 +16,12 @@
 # %a = SLURM_ARRAY_TASK_ID (the job index in the array)
 # %j = SLURM_JOBID (unique for each job)
 
-# OUTPUT FOR ARRAY JOB
-##SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/run-n-parallel/%x-%N-%A_%a-%j.log
- 
 # !!!!! THIS ONE !!!!!! 
+# OUTPUT FOR ARRAY JOB
+#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/run-n-parallel/%x-%N-%A_%a-%j.log
+ 
 # OUTPUT FOR SINGLE JOB
-#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/run-n-parallel/%x-%N-%j.log
+##SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/run-n-parallel/%x-%N-%j.log
 
 # tous les evenements pertinents seront envoyes par email a cette adresse
 #SBATCH --mail-type  ALL
@@ -95,13 +95,13 @@ echo "ARGS='${ARGS}'"
 
 echo "setting common args in slurm job" 
 
+COMMON_ARGS=""
 COMMON_ARGS="${COMMON_ARGS} --nworkers 1"
 COMMON_ARGS="${COMMON_ARGS} --wandb-tags dev01 run-n-parallel-${NPARALLEL_RUNS}"
-
-ALL_COMMON_ARGS="${COMMON_ARGS} ${ARGS}"
-
 echo "COMMON_ARGS=${COMMON_ARGS}"
-echo "ALL_COMMON_ARGS=${ALL_COMMON_ARGS}"
+
+ARGS="${COMMON_ARGS} ${ARGS}"
+echo "ARGS=${ARGS}"
 
 
 # ==============================================================================
@@ -124,10 +124,10 @@ MYTMPDIR="/cluster/CMM/data1/jcasagrandebertoldo/tmp"
 LOGDIR="${HOME}/log/fcdd/mvtec/run-n-parallel"
 
 # OUTPUT FOR ARRAY JOB
-# JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}-${SLURM_JOB_ID}.python-"
+JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}-${SLURM_JOB_ID}.python-"
 
 # OUTPUT FOR SINGLE JOB
-JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_JOB_ID}.python-"
+# JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_JOB_ID}.python-"
 
 JPATH_BASE=${LOGDIR}/$JNAME_BASE
 JPATH_EXT=".log"
