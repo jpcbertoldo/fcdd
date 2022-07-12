@@ -3,6 +3,7 @@
 
 from argparse import ArgumentParser
 from pickletools import optimize
+from sched import scheduler
 
 import torch
 
@@ -21,19 +22,19 @@ parser = train_dev01.parser_add_arguments(ArgumentParser())
 parser.set_defaults(
     # >>>>>>>>>>>>>>>>>>>>> from u2net
     # [training]
-    epochs=500,
-    optimizer=model_dev01.OPTIMIZER_ADAM,
+    # epochs=500,
+    # optimizer=model_dev01.OPTIMIZER_ADAM,
     # optimizer parameters ----------------
     # also defaults in torch.optim.Adam
-    learning_rate=1e-3,
-    weight_decay=0,
+    # learning_rate=1e-3,
+    # weight_decay=0,
     # these two are hardcoded
     # betas=(0.9, 0.999),
     # eps=1e-8,
     # -------------------------------------
     # original: 12 with 320**2 images
     # equivalent: 12 * (288/224)**2 ~= 12 * 1.7 = 20 --> 24 
-    batch_size=24,
+    # batch_size=24,
     # lightning_accumulate_grad_batches=2,
     # ===========================================================================
     # >>>>>>>>>>>>>>>>>>>>> from fcdd DEFAULTS
@@ -48,13 +49,21 @@ parser.set_defaults(
     # batch_size=32,  
     # lightning_accumulate_grad_batches=4,
     # ===========================================================================
-    # >>>>>>>>>>>>>>>>>>>>> experimental
-    # learning_rate=1e-2,
-    # lightning_accumulate_grad_batches=5,  # half epoch for class 0
+    # >>>>>>>>>>>>>>>>>>>>> sweep default
+    epochs=400,
+    optimizer=model_dev01.OPTIMIZER_ADAM,
+    learning_rate=2e-3,
+    scheduler=model_dev01.SCHEDULER_LAMBDA,
+    scheduler_parameters=[0.998],
+    weight_decay=1e-4,
+    batch_size=3,
+    lightning_accumulate_grad_batches=8,  # half epoch for class 0
+    classes=[3],
     # ===========================================================================
     # >>>>>>>>>>>>>>>>>>>>> common 
     # [model]  
-    model=model_dev01.MODEL_U2NET_HEIGHT4_LITE,
+    model=model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE,
+    # model=model_dev01.MODEL_U2NET_HEIGHT4_LITE,
     # model=model_dev01.MODEL_U2NET_HEIGHT6_FULL,
     loss=model_dev01.LOSS_U2NET_ALLSIDES_PIXELWISE_BATCH_AVG,
     # [dataset]
@@ -71,7 +80,7 @@ parser.set_defaults(
     preview_nimages=0,
     # n_seeds=1,
     # seeds=None,
-    classes=None,
+    # classes=None,
     # [wandb]
     wandb_project="mvtec-debug",
     wandb_tags=["dev01", "u2net"],
@@ -80,28 +89,31 @@ parser.set_defaults(
     wandb_watch=None,
     wandb_watch_log_freq=100,  # wandb's default
     wandb_checkpoint_mode=train_dev01.WANDB_CHECKPOINT_MODE_LAST,
-    # [wandb(train/validation/test)]
-    wandb_log_roc=(False, False, True),
-    wandb_log_pr=(False, False, True),
+    # [roc(train/validation/test)]
+    wandb_log_roc=(False, True, True),
+    # [pr(train/validation/test)]
+    wandb_log_pr=(False, True, True),
+    # [image+heatmap]
+    wandb_log_image_heatmap_nsamples=(0, 5, 40),
+    wandb_log_image_heatmap_resolution=(None, 128, None),
     wandb_log_image_heatmap_contrast_percentiles=(3., 97.),  # (contrast_min, contrast_max)
-    wandb_log_image_heatmap_nsamples=(0, 0, 30),
-    wandb_log_image_heatmap_resolution=(None, None, None),
+    # [histogram]
     wandb_log_histogram_score=(None, None, None),
     wandb_log_histogram_loss=(None, None, None),
-    # wandb_log_percentiles_score_train=(0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
+    # [percentiles]
     wandb_log_percentiles_score_train=(),
-    # wandb_log_percentiles_score_validation=(0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
     wandb_log_percentiles_score_validation=(),
+    # [per-instance-mean]
     wandb_log_perinstance_mean_score = (False, False, False),
     wandb_log_perinstance_mean_loss = (False, False, False),
-    # [pytorch lightning] 
+    # [computation]
     lightning_accelerator=train_dev01.LIGHTNING_ACCELERATOR_GPU,
     lightning_ndevices=1,
     lightning_strategy=None,
     lightning_precision=train_dev01.LIGHTNING_PRECISION_32,
     lightning_model_summary_max_depth=1,
     lightning_check_val_every_n_epoch=10,
-    lightning_profiler=train_dev01.LIGHTNING_PROFILER_SIMPLE,
+    lightning_profiler=None,  # train_dev01.LIGHTNING_PROFILER_SIMPLE,
     lightning_gradient_clip_val=1.0,
     lightning_gradient_clip_algorithm=train_dev01.LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE,
     lightning_deterministic=False,
