@@ -18,3 +18,4 @@ echo "BATCH_SCRIPT_FPATH=${SBATCH_SCRIPT_FPATH}"
 
 sbatch ${SBATCH_SCRIPT_FPATH} --slurm-n-parallel-runs 2 ${ARGS} 
 sbatch ${SBATCH_SCRIPT_FPATH} --slurm-n-parallel-runs 3 ${ARGS} 
+sbatch ${SBATCH_SCRIPT_FPATH} --slurm-n-parallel-runs 4 ${ARGS} 
