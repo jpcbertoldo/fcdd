@@ -4,6 +4,7 @@
 
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
+import warnings
 
 import numpy as np
 import torch
@@ -14,8 +15,14 @@ from pytorch_lightning import LightningModule
 from pytorch_lightning.trainer.states import RunningStage
 from torch import Tensor
 from torch.hub import load_state_dict_from_url
+import torch
+from torch import Tensor
+from typing import Tuple, Optional
+import numpy as np
+
 
 from callbacks_dev01 import merge_steps_outputs
+from common_dev01 import AdaptiveClipError, find_scores_clip_values_from_empircal_cdf
 
 OPTIMIZER_SGD = 'sgd'
 OPTIMIZER_ADAM = 'adam'
@@ -29,7 +36,8 @@ print(f"SCHEDULER_CHOICES={SCHEDULER_CHOICES}")
 # fcdd losses, based on a single score map output
 LOSS_OLD_FCDD = 'old-fcdd'
 LOSS_PIXELWISE_BATCH_AVG = 'pixelwise-batch-avg'
-LOSS_FCDD_CHOICES = (LOSS_OLD_FCDD, LOSS_PIXELWISE_BATCH_AVG,)
+LOSS_PIXELWISE_BATCH_AVG_CLIP_SCORE_CDF_ADAPTIVE = 'pixelwise-batch-avg-clip-score-cdf-adaptive'
+LOSS_FCDD_CHOICES = (LOSS_OLD_FCDD, LOSS_PIXELWISE_BATCH_AVG, LOSS_PIXELWISE_BATCH_AVG_CLIP_SCORE_CDF_ADAPTIVE)
 
 # **u2net losses**
 # un2net outputs as many score maps as there are heights + 1, the fused score map
@@ -128,13 +136,30 @@ class PixelwiseHSCLossesMixin:
         
         elif loss_version == LOSS_PIXELWISE_BATCH_AVG:
             loss_map = self._pixel_wise_batch_avg(score_map, masks, extra_return)
+        
+        elif loss_version == LOSS_PIXELWISE_BATCH_AVG_CLIP_SCORE_CDF_ADAPTIVE:
+            loss_map = self._pixel_wise_batch_avg_clip_score_cdf_adaptive(score_map, masks)
             
         else:
             raise NotImplementedError(f"loss '{loss_version}' not implemented")
         
         return loss_map, loss_map.mean()
+    
+    def _pixel_wise_batch_avg_clip_score_cdf_adaptive(self, score_map, masks):
+        
+        try:
+            with torch.no_grad():
+                clipmin, clipmax = find_scores_clip_values_from_empircal_cdf(scores_normal=score_map[masks == 0], scores_anomalous=score_map[masks == 1])
 
-    def _pixel_wise_batch_avg(self, scores, masks, extra_return):
+        except AdaptiveClipError as ex:
+            warnings.warn(f"AdaptiveClipError: clipping could not be applied, using default values: {ex}", stacklevel=2)
+        
+        else:
+            score_map = score_map.clamp(min=clipmin, max=clipmax)
+            
+        return self._pixel_wise_batch_avg(score_map, masks)
+
+    def _pixel_wise_batch_avg(self, scores, masks, extra_return: Optional[dict] = None):
         
         # scores \in R+^{N x 1 x H x W}
         loss_maps = (scores + 1).sqrt() - 1
