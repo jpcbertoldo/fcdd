@@ -49,7 +49,7 @@ parser.set_defaults(
     # train/validation/test
     wandb_log_roc=(False, True, True),
     wandb_log_pr=(False, True, True),
-    wandb_log_image_heatmap_contrast_percentiles=(3., 97.),  # (contrast_min, contrast_max)
+    # wandb_log_image_heatmap_contrast_percentiles=(3., 97.),  # (contrast_min, contrast_max)
     wandb_log_image_heatmap_nsamples=(0, 0, 30),
     wandb_log_image_heatmap_resolution=(None, None, None),
     wandb_log_histogram_score=(None, None, LOG_HISTOGRAM_MODE_LOG),
@@ -78,3 +78,5 @@ train_dev01.args_validate_dataset_specific_choices(args)
 train_dev01.args_validate_model_specific_choices(args)
 args = train_dev01.args_post_parse(args)
 results = train_dev01.run(**vars(args))
+
+

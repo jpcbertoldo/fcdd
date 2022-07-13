@@ -5,6 +5,7 @@ import abc
 import functools
 import random
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+import warnings
 
 import numpy as np
 import pytorch_lightning as pl
@@ -14,6 +15,7 @@ from pytorch_lightning.trainer.states import RunningStage
 from sklearn.metrics import average_precision_score, roc_auc_score
 from torch import Tensor
 from torchvision.transforms import InterpolationMode
+from common_dev01 import AdaptiveClipError, find_scores_clip_values_from_empircal_cdf
 
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
 
@@ -589,10 +591,12 @@ class TorchTensorboardProfilerCallback(pl.Callback):
 HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH = "minmax-epoch"
 HEATMAP_NORMALIZATION_MINMAX_INSTANCE = "minmax-instance"
 HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH = "percentiles-epoch"
+HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH = "percentiles-adaptive-cdf-epoch"
 HEATMAP_NORMALIZATION_CHOICES = (
     HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
     HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH,
     HEATMAP_NORMALIZATION_MINMAX_INSTANCE,
+    HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
 )
 
 
@@ -725,16 +729,56 @@ class LogImageHeatmapTableCallback(
         # i need this variable to the decide if an exception is raised or not later in the other if-else
         normalized = True
         
+        # when something goes wrong, and another normalization is tried
+        # this variable is set so we can use the right value in the wandb table
+        fallback_heatmap_normalization = None
+        
+        @torch.no_grad()
+        def normalize_minmax(scores_):
+            min_ = scores_.min()
+            return (scores_ - min_) / (scores_.max() - min_)
+        
+        @torch.no_grad()
+        def normalize_inepoch_percentiles(scores_, minmax_percentiles):
+            min_, max_ = torch.quantile(scores_.view(-1), torch.tensor(minmax_percentiles) / 100)  # "/100" percentile -> quantile 
+            return (scores_ - min_) / (max_ - min_)
+        
+        @torch.no_grad()
+        def normalize_percentiles_adaptive(scores_, masks_):
+            
+            try:
+                clipmin, clipmax = find_scores_clip_values_from_empircal_cdf(
+                    scores_normal=scores_[masks_ == 0], 
+                    scores_anomalous=scores_[masks_ == 1]
+                )
+                return (scores_ - clipmin) / (clipmax - clipmin)
+
+            except AdaptiveClipError as ex:
+                
+                FALLBACK_PERCENTILES = (3, 97)
+                
+                warnings.warn(f"AdaptiveClipError: clipping could not be applied, using normalization '{HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH}' instead with in-epoch fallback percentiles {FALLBACK_PERCENTILES}, error: {ex}", stacklevel=2)
+                
+                nonlocal fallback_heatmap_normalization
+                fallback_heatmap_normalization = HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH
+                
+                return normalize_inepoch_percentiles(scores_, FALLBACK_PERCENTILES)
+        
+        @torch.no_grad()
+        def normalize_minmax_instance(scores_):
+            min_ = scores_.min(dim=(1, 2, 3), keepdim=True)
+            max_ = scores_.max(dim=(1, 2, 3), keepdim=True)
+            return (scores_ - min_) / (max_ - min_)
+        
         if self.heatmap_normalization == HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH:
-            with torch.no_grad():
-                min_ = scores.min()
-                scores = (scores - min_) / (scores.max() - min_)
+            scores = normalize_minmax(scores)
 
         elif self.heatmap_normalization == HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH:
-            with torch.no_grad():
-                min_, max_ = torch.quantile(scores.view(-1), torch.tensor(self.min_max_percentiles) / 100)  # "/100" percentile -> quantile
-                scores = (scores - min_) / (max_ - min_)
+            scores = normalize_inepoch_percentiles(scores, self.min_max_percentiles)
         
+        elif self.heatmap_normalization == HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH:
+            scores = normalize_percentiles_adaptive(scores, masks)
+                
         else:
             normalized = False
             # dont raise an error here because there is still the case below,
@@ -747,29 +791,24 @@ class LogImageHeatmapTableCallback(
         imgs, scores, masks, labels = imgs[selected_instances_indices], scores[selected_instances_indices], masks[selected_instances_indices], labels[selected_instances_indices]
         
         if self.heatmap_normalization == HEATMAP_NORMALIZATION_MINMAX_INSTANCE:
-            with torch.no_grad():
-                min_ = scores.min(dim=(1, 2, 3), keepdim=True)
-                max_ = scores.max(dim=(1, 2, 3), keepdim=True)
-                scores = (scores - min_) / (max_ - min_)
+            scores = normalize_minmax_instance(scores)
+                
         elif not normalized:
             raise NotImplementedError(f"heatmap_normalization={self.heatmap_normalization} is not implemented")
 
         # self.resolution == None means: "dont change the resolution"
         if self.resolution is not None:
-
             img_h, img_w = imgs.shape[-2:]
-
             if img_h != img_w:
                 raise NotImplementedError(f"imgs must be square, got {img_h}x{img_w}")
-
             if img_w != self.resolution:
                 imgs = TFT.resize(imgs, self.resolution, interpolation="bilinear",)
                 scores = TFT.resize(scores, self.resolution,interpolation="bilinear",)
                 masks = TFT.resize(masks, self.resolution,interpolation="nearest",)
 
-        imgs = imgs.numpy().transpose(0, 2, 3, 1)  # [instances, height, width, channels]
-        scores = scores.numpy().transpose(0, 2, 3, 1)  # [instances, height, width, channels]
-        masks = masks.squeeze(1).numpy()
+        imgs = imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)  # [instances, height, width, channels]
+        scores = scores.detach().cpu().numpy().transpose(0, 2, 3, 1)  # [instances, height, width, channels]
+        masks = masks.detach().cpu().squeeze(1).numpy()
 
         class_labels_dict = {NOMINAL_TARGET: "normal", ANOMALY_TARGET: "anomalous",}
 
@@ -789,8 +828,8 @@ class LogImageHeatmapTableCallback(
                 score_map,
                 masks=dict(ground_truth=dict(mask_data=mask, class_labels=class_labels_dict,))
             )
-            table.add_data(idx, idx_in_epoch, label, wandb_img, wandb_heatmap, self.heatmap_normalization)
-
+            normalization_used = fallback_heatmap_normalization if fallback_heatmap_normalization is not None else self.heatmap_normalization
+            table.add_data(idx, idx_in_epoch, label, wandb_img, wandb_heatmap, normalization_used)
 
         current_stage = trainer.state.stage
         logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
