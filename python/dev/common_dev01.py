@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from pathlib import Path
 import random
 from typing import Optional, Tuple
 import warnings
@@ -12,6 +13,8 @@ from torch import Tensor
 import warnings
 from functools import partial
 from scipy import signal 
+import os
+from argparse import ArgumentParser, Namespace
 
 
 def seed_str2int(seed: str):
@@ -77,6 +80,101 @@ def hashify_config(config_dict: dict, keys=None) -> str:
     tobehashed = sorted(tobehashed.items(), key=lambda kv: kv[0])
     tobehashed = json.dumps(tobehashed).encode("utf-8")
     return  hashlib.blake2b(tobehashed, digest_size = HEXDIGEST_N_CHARACTERS // 2).hexdigest()
+
+
+class CudaVisibleDevices:
+    
+    @staticmethod
+    def add_arguments(parser: ArgumentParser):
+        parser.add_argument(
+            "--cuda_visible_devices", 
+            type=int, 
+            nargs='*', 
+            default=None,
+        )
+        
+    @staticmethod
+    def consume_arguments(args: Namespace):
+        
+        if os.environ.get("CUDA_VISIBLE_DEVICES") is not None:
+            
+            assert args.cuda_visible_devices is None, "cannot specify both --cuda_visible_devices (cli argument) and CUDA_VISIBLE_DEVICES (enviroment variable)"
+        
+        if args.cuda_visible_devices is not None:
+            
+            print(f"cli argument --cuda_visible_devices: {args.cuda_visible_devices}")
+            
+            env_var_str = ",".join(map(str, args.cuda_visible_devices))
+            
+            print(f"cli option '--cuda_visible_devices' specified, setting CUDA_VISIBLE_DEVICES to '{env_var_str}'")
+
+            os.environ["CUDA_VISIBLE_DEVICES"] = env_var_str
+        
+        del vars(args)['cuda_visible_devices']
+
+
+
+class LogdirBaserundir:
+    """
+    `logdir` depends on arguments, `base_rundir` is subfolder of `logdir` and contains the start time of script. 
+    `rundir` is subfolder of `base_rundir` and is the directory where the log files will be stored for a single run.
+    """
+    
+    @staticmethod
+    def add_arguments(parser):
+        parser.add_argument(
+            '--logdir', type=Path, default=Path("../../data/results"),
+            help='Where log data is to be stored. The runs will be in subfolders and the names will be {base_rundir_prefix}run_{starttime}{base_rundir_suffix}. Default: ../../data/results.'
+        )
+        parser.add_argument('--base_rundir_suffix', type=str, default='',)
+        parser.add_argument('--base_rundir_prefix', type=str, default='',)
+        
+    @staticmethod
+    def consume_arguments(
+        args: Namespace, 
+        start_time: int,
+        subfolder_args: tuple = (),
+    ) -> Path:
+        
+        logdir: Path = args.logdir
+        del vars(args)['logdir']
+        
+        print(f"logdir: cli arg: {logdir}")
+        logdir = logdir.resolve().absolute()
+        
+        print(f"logdir: resolved: {logdir}")
+                
+        # this allows you to subfolder by dataset, wandb project, etc
+        for argname in subfolder_args:
+            
+            argvalue = getattr(args, argname)
+            assert argvalue is not None, f"{argname} is not set"
+            assert isinstance(argvalue, str), f"{argname} is not a string"
+            assert argvalue, f"{argname} is empty"
+            
+            logdir = logdir / argvalue
+            
+        print(f"logdir: subfolder-ed: {logdir}")
+        
+        base_rundir_prefix: str = args.base_rundir_prefix
+        del vars(args)['base_rundir_prefix']
+        
+        base_rundir_suffix: str = args.base_rundir_suffix
+        del vars(args)['base_rundir_suffix']
+        
+        # add '_' before/after the suffix/prefix
+        base_rundir_prefix += '_' if base_rundir_prefix else ''
+        base_rundir_suffix = f"_{base_rundir_suffix}" if base_rundir_suffix else ''
+        
+        base_rundir_name = f"{base_rundir_prefix}run_{start_time}{base_rundir_suffix}"
+        
+        print(f"logdir: base_rundir_name: {base_rundir_name}")
+        
+        base_rundir = logdir / base_rundir_name
+        
+        print(f"logdir: base_rundir: {base_rundir}")
+        
+        return base_rundir
 
 
 class AdaptiveClipError(Exception):
