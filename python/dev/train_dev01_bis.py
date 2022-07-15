@@ -682,13 +682,10 @@ def run_one(
     if trainer_profiler is not None:
         wandb.save(str(Path(trainer_profiler.dirpath) / trainer_profiler.filename), policy="now") 
 
-    if not test:
-        print(f"experiment folder: {Path(wandb_logger.save_dir).resolve().absolute()}")
-        return 
-    
     # ================================ TEST ================================
+    if not test:
+        return 
     trainer.test(model=model, datamodule=datamodule)    
-    print(f"experiment folder: {Path(wandb_logger.save_dir).resolve().absolute()}")
         
 # ==========================================================================================
 # ==========================================================================================
@@ -856,7 +853,11 @@ def run(
             
             print(f"run_one_kwargs={run_one_kwargs}")
             try:
+                print(f"wandb_logger.save_dir: {Path(wandb_logger.save_dir).resolve().absolute()}")
+            
                 run_one(wandb_logger=wandb_logger, **run_one_kwargs,)
+            
+                print(f"wandb_logger.save_dir: {Path(wandb_logger.save_dir).resolve().absolute()}")
             
             except TypeError as ex:
                 msg = ex.args[0]
