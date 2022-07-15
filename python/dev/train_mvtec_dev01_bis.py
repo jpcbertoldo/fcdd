@@ -32,14 +32,13 @@ print(f"start_time: {start_time}")
 argv = sys.argv[1:]
 print(f"argv: {argv}")
 
-# ========================================================================= PARSER run()
+# ========================================================================= BUILD PARSER run()
 
 parser_run = train_dev01_bis.parser_add_arguments_run(ArgumentParser())
 parser_run.set_defaults(
     wandb_entity="mines-paristech-cmm",
     wandb_project="mvtec-debug",
     wandb_offline=False,
-    wandb_checkpoint_mode=train_dev01_bis.WANDB_CHECKPOINT_MODE_LAST,
     classes=None,
 )
 
@@ -55,6 +54,45 @@ parser_run.set_defaults(wandb_tags=["dev01_bis",])
 Seeds.add_arguments(parser_run)
 CliConfigHash.add_arguments(parser_run)
 
+# ========================================================================= BUILD PARSER run_one()
+
+parser_run_one = train_dev01_bis.parser_add_arguments_run_one(ArgumentParser())
+parser_run_one.set_defaults(
+    # training
+    epochs=500,  # before each epoch was doing 10 cycles over the data 
+    learning_rate=1e-3,
+    weight_decay=1e-4, 
+    test=True,
+    # model 
+    model=model_dev01.MODEL_FCDD_CNN224_VGG_F,
+    loss=model_dev01.LOSS_PIXELWISE_BATCH_AVG,
+    optimizer=model_dev01.OPTIMIZER_SGD,
+    scheduler=model_dev01.SCHEDULER_LAMBDA,
+    scheduler_parameters=[0.985],
+    # dataset
+    dataset=mvtec_dataset_dev01.DATASET_NAME,
+    raw_shape=(240, 240),
+    net_shape=(224, 224),
+    batch_size=64,  # it was 128, i'm accumulating batches to simulate the same size
+    nworkers=1,
+    pin_memory=False,
+    preprocessing=mvtec_dataset_dev01.PREPROCESSING_LCNAUG1,
+    supervise_mode=mvtec_dataset_dev01.SUPERVISE_MODE_REAL_ANOMALY,
+    real_anomaly_limit=1,
+    datadir=Path("../../data/datasets"),
+    # pytorch lightning 
+    lightning_accelerator=train_dev01_bis.LIGHTNING_ACCELERATOR_GPU,
+    lightning_ndevices=1,
+    lightning_strategy=None,
+    lightning_precision=train_dev01_bis.LIGHTNING_PRECISION_32,
+    lightning_model_summary_max_depth=4,
+    lightning_check_val_every_n_epoch=10,
+    lightning_accumulate_grad_batches=2,
+    lightning_profiler=train_dev01_bis.LIGHTNING_PROFILER_SIMPLE,
+    lightning_gradient_clip_val=0,
+    lightning_gradient_clip_algorithm=train_dev01_bis.LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM,
+    lightning_deterministic=False,
+)
 
 # >>>>>>>>>>>>>>>>>>> parse <<<<<<<<<<<<<<<<<<<<<<
 args_run, argv = parser_run.parse_known_args(argv)
@@ -62,10 +100,19 @@ print('after parser_run')
 print(f"args_run: {args_run}")
 print(f"argv: {argv}")
 
+args_run_one = parser_run_one.parse_args(argv)
+print(f"args_run_one: parsed from cli: {args_run_one}")
+
+# >>>>>>>>>>>>>>>>>>> process args <<<<<<<<<<<<<<<<<<<<<<
+
 CudaVisibleDevices.consume_arguments(args_run)
 WandbOffline.consume_arguments(args_run)
 
-base_rundir = LogdirBaserundir.consume_arguments(args_run, start_time, subfolder_args=['wandb_project', 'dataset',])
+base_rundir = LogdirBaserundir.consume_arguments(
+    args_run, 
+    start_time, 
+    subfolders=(args_run.wandb_project, args_run_one.dataset)
+)
 print(f"base_rundir: {base_rundir}")
 base_rundir.mkdir(parents=True, exist_ok=True)
 
@@ -126,51 +173,10 @@ setattr(args_run, "wandb_init_config_extra", wandb_init_config_extra)
 setattr(args_run, "confighashes_keys", confighashes_keys)
 
 
-# ========================================================================= PARSER run_one()
-
-parser_run_one = train_dev01_bis.parser_add_arguments_run_one(ArgumentParser())
-parser_run_one.set_defaults(
-    # training
-    epochs=500,  # before each epoch was doing 10 cycles over the data 
-    learning_rate=1e-3,
-    weight_decay=1e-4, 
-    test=True,
-    # model 
-    model=model_dev01.MODEL_FCDD_CNN224_VGG_F,
-    loss=model_dev01.LOSS_PIXELWISE_BATCH_AVG,
-    optimizer=model_dev01.OPTIMIZER_SGD,
-    scheduler=model_dev01.SCHEDULER_LAMBDA,
-    scheduler_parameters=[0.985],
-    # dataset
-    dataset=mvtec_dataset_dev01.DATASET_NAME,
-    raw_shape=(240, 240),
-    net_shape=(224, 224),
-    batch_size=64,  # it was 128, i'm accumulating batches to simulate the same size
-    nworkers=1,
-    pin_memory=False,
-    preprocessing=mvtec_dataset_dev01.PREPROCESSING_LCNAUG1,
-    supervise_mode=mvtec_dataset_dev01.SUPERVISE_MODE_REAL_ANOMALY,
-    real_anomaly_limit=1,
-    datadir=Path("../../data/datasets"),
-    # pytorch lightning 
-    lightning_accelerator=train_dev01_bis.LIGHTNING_ACCELERATOR_GPU,
-    lightning_ndevices=1,
-    lightning_strategy=None,
-    lightning_precision=train_dev01_bis.LIGHTNING_PRECISION_32,
-    lightning_model_summary_max_depth=4,
-    lightning_check_val_every_n_epoch=10,
-    lightning_accumulate_grad_batches=2,
-    lightning_profiler=train_dev01_bis.LIGHTNING_PROFILER_SIMPLE,
-    lightning_gradient_clip_val=0,
-    lightning_gradient_clip_algorithm=train_dev01_bis.LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM,
-    lightning_deterministic=False,
-)
-
-args_run_one = parser_run_one.parse_args(argv)
-print(f"args_run_one: parsed from cli: {args_run_one}")
-
 train_dev01_bis.args_validate_dataset_specific_choices(args_run_one)
 train_dev01_bis.args_validate_model_specific_choices(args_run_one)
+
+# ========================================================================= PARSER run_one()
 
 # ========================================================================= CALLBACKS
 
@@ -734,3 +740,12 @@ print('end')
 
     # wandb_watch=None,
     # wandb_watch_log_freq=100,  # wandb's default
+    
+    
+    
+    
+    # checkpoint model weights
+    # parser.add_argument(        
+    #     "--wandb_checkpoint_mode", type=none_or_str, choices=WANDB_CHECKPOINT_MODES,
+    # )
+    # wandb_checkpoint_mode=train_dev01_bis.WANDB_CHECKPOINT_MODE_LAST,

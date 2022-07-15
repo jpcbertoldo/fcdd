@@ -271,13 +271,11 @@ def none_or_int(value: str):
 def parser_add_arguments_run(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument("--wandb_entity", type=str,)
     parser.add_argument("--wandb_project", type=str,)
-    parser.add_argument(        
-        "--wandb_checkpoint_mode", type=none_or_str, choices=WANDB_CHECKPOINT_MODES,
-    )
     parser.add_argument(
         '--classes', type=int, nargs='+', default=None,
         help='Run only training sessions for some of the classes being nominal. If not give (default) then all classes are trained.'
     )
+    return parser
 
 
 def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:

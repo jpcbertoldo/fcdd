@@ -135,7 +135,7 @@ class LogdirBaserundir:
     def consume_arguments(
         args: Namespace, 
         start_time: int,
-        subfolder_args: tuple = (),
+        subfolders: tuple = (),
     ) -> Path:
         
         logdir: Path = args.logdir
@@ -147,14 +147,11 @@ class LogdirBaserundir:
         print(f"logdir: resolved: {logdir}")
                 
         # this allows you to subfolder by dataset, wandb project, etc
-        for argname in subfolder_args:
-            
-            argvalue = getattr(args, argname)
-            assert argvalue is not None, f"{argname} is not set"
-            assert isinstance(argvalue, str), f"{argname} is not a string"
-            assert argvalue, f"{argname} is empty"
-            
-            logdir = logdir / argvalue
+        for value in subfolders:
+            assert value is not None, f"{value} is not set"
+            assert isinstance(value, str), f"{value} is not a string"
+            assert value, f"{value} is empty"
+            logdir = logdir / value
             
         print(f"logdir: subfolder-ed: {logdir}")
         
