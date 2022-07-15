@@ -15,15 +15,11 @@ import torch
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profiler import (AdvancedProfiler, PyTorchProfiler,
                                         SimpleProfiler)
-from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
-from callbacks_dev01 import (LOG_HISTOGRAM_MODES, LearningRateLoggerCallback,
-                             TorchTensorboardProfilerCallback)
-from common_dev01 import (create_seed, hashify_config, seed_int2str,
-                          seed_str2int)
-
+from callbacks_dev01 import LearningRateLoggerCallback
+from common_dev01 import (hashify_config, seed_int2str,)
 
 # ======================================== exceptions ========================================
 
@@ -599,22 +595,7 @@ def run_one(
     ] + callbacks
     
     # ================================ PROFILING ================================
-    
-    if not wandb_profile:
-        profiler = contextlib.nullcontext()
-    
-    else:
-        # Set up profiler
-        wait, warmup, active, repeat = 1, 1, 2, 1
-        schedule =  torch.profiler.schedule(wait=wait, warmup=warmup, active=active, repeat=repeat,)
-        profile_dir = Path(f"{wandb_logger.save_dir}/latest-run/tbprofile").absolute()
-        profiler = torch.profiler.profile(
-            schedule=schedule, 
-            on_trace_ready=tensorboard_trace_handler(str(profile_dir)), 
-            with_stack=True,
-        )
-        callbacks.append(TorchTensorboardProfilerCallback(profiler))
-    
+        
     def get_lightning_profiler(profiler_choice):
         
         if profiler_choice is None:
@@ -644,7 +625,7 @@ def run_one(
         else:
             raise NotImplementedError(f"Profiler {profiler_choice} not implemented.")
 
-    trainer_profiler = get_lightning_profiler(lightning_profiler)
+    lightning_profiler = get_lightning_profiler(lightning_profiler)
     
     # ================================ FIT ================================
     trainer = pl.Trainer(
@@ -661,26 +642,19 @@ def run_one(
         num_sanity_val_steps=0,
         check_val_every_n_epoch=lightning_check_val_every_n_epoch,
         accumulate_grad_batches=lightning_accumulate_grad_batches,
-        profiler=trainer_profiler,
+        profiler=lightning_profiler,
         gradient_clip_val=lightning_gradient_clip_val,
         gradient_clip_algorithm=lightning_gradient_clip_algorithm,
         deterministic=lightning_deterministic,
     )
     
-    with profiler:
-        # datamodule.setup("fit")
-        trainer.fit(model=model, datamodule=datamodule)
+    trainer.fit(model=model, datamodule=datamodule)
     
     if wandb_watch is not None:
         wandb_logger.experiment.unwatch(model)
-
-    if wandb_profile:
-        profile_art = wandb.Artifact(f"trace-{wandb.run.id}", type="profile")
-        profile_art.add_file(str(next(profile_dir.glob("*.pt.trace.json"))), "trace.pt.trace.json")
-        wandb_logger.experiment.log_artifact(profile_art)
     
-    if trainer_profiler is not None:
-        wandb.save(str(Path(trainer_profiler.dirpath) / trainer_profiler.filename), policy="now") 
+    if lightning_profiler is not None:
+        wandb.save(str(Path(lightning_profiler.dirpath) / lightning_profiler.filename), policy="now") 
 
     # ================================ TEST ================================
     if not test:
