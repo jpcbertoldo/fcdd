@@ -2,13 +2,14 @@
 # coding: utf-8
 import contextlib
 import functools
+import itertools
 import os
 import time
 from argparse import ArgumentParser
 from datetime import datetime
 from pathlib import Path
 from re import A
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple, Dict
 
 import pytorch_lightning as pl
 import torch
@@ -235,17 +236,6 @@ LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES = (
 
 # ======================================== wandb ========================================
 
-WANDB_WATCH_GRADIENTS = "gradients"
-WANDB_WATCH_ALL = "all"
-WANDB_WATCH_PARAMETERS = "parameters"
-WANDB_WATCH_CHOICES = (
-    None,
-    WANDB_WATCH_GRADIENTS,
-    WANDB_WATCH_ALL,
-    WANDB_WATCH_PARAMETERS,
-)
-print(f"WANDB_WATCH_CHOICES={WANDB_WATCH_CHOICES}")
-
 
 WANDB_CHECKPOINT_MODE_LAST = "last"
 # WANDB_CHECKPOINT_MODE_BEST = "best"
@@ -278,16 +268,27 @@ def none_or_int(value: str):
     return int(value)
 
 
-def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
-    """
-    Defines all the arguments for running an FCDD experiment.
-    :param parser: instance of an ArgumentParser.
-    :return: the parser with added arguments
-    """
+def parser_add_arguments_run(parser: ArgumentParser) -> ArgumentParser:
+    parser.add_argument("--wandb_entity", type=str,)
+    parser.add_argument("--wandb_project", type=str,)
+    parser.add_argument(        
+        "--wandb_checkpoint_mode", type=none_or_str, choices=WANDB_CHECKPOINT_MODES,
+    )
+    parser.add_argument(
+        '--classes', type=int, nargs='+', default=None,
+        help='Run only training sessions for some of the classes being nominal. If not give (default) then all classes are trained.'
+    )
+
+
+def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
     # ===================================== training =====================================
     parser.add_argument('--epochs', type=int)
     parser.add_argument('--learning_rate', type=float)
     parser.add_argument('--weight_decay', type=float)
+    parser.add_argument(
+        '--no_test', dest="test", action="store_false",
+        help='If set then the model will not be tested at the end of the training. It will by default.'
+    )
     # ====================================== model =======================================
     parser.add_argument('--model', type=str, choices=MODEL_CHOICES,)
     parser.add_argument("--loss", type=str, choices=LOSS_CHOICES,)
@@ -322,40 +323,9 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
         help='Determines the number of real anomalous images used in the case of real anomaly supervision. '
              'Has no impact on synthetic anomalies.'
     )
-    # ====================================== script ======================================
     parser.add_argument(
-        '--no_test', dest="test", action="store_false",
-        help='If set then the model will not be tested at the end of the training. It will by default.'
-    )
-    parser.add_argument(
-        '--classes', type=int, nargs='+', default=None,
-        help='Run only training sessions for some of the classes being nominal. If not give (default) then all classes are trained.'
-    )
-    # ====================================== files =======================================
-    parser.add_argument(
-        '--datadir', type=Path, default=Path("../../data/datasets"),
+        '--datadir', type=Path,
         help='Where datasets are found or to be downloaded to. Default: ../../data/datasets.',
-    )
-    # ====================================== wandb =======================================
-    parser.add_argument("--wandb_project", type=str,)
-    parser.add_argument("--wandb_tags", type=str, nargs='*', action='extend',)
-    parser.add_argument(
-        "--wandb_profile", action="store_true",
-        help="If set, the run will be profiled and sent to wandb."
-    )
-    parser.add_argument("--wandb_offline", action="store_true", help="If set, will not sync with the webserver.",)
-    parser.add_argument(
-        # choices taken from wandb/sdk/wandb_watch.py => watch()
-        "--wandb_watch", type=none_or_str, choices=WANDB_WATCH_CHOICES, 
-        help="Argument for wandb_logger.watch(..., log=WANDB_WATCH).",
-    )
-    parser.add_argument(
-        "--wandb_watch_log_freq", type=int, default=100,
-        help="Log frequency of gradients and parameters. Argument for wandb_logger.watch(..., log_freq=WANDB_WATCH_LOG_FREQ). ",
-    )
-    parser.add_argument(        
-        "--wandb_checkpoint_mode", type=none_or_str, choices=WANDB_CHECKPOINT_MODES,
-        help="How to save checkpoints."
     )
     # ================================ pytorch lightning =================================
     parser.add_argument(
@@ -432,6 +402,7 @@ def run_one(
     epochs: int,
     learning_rate: float, 
     weight_decay: float, 
+    test: bool,
     # model
     model: str, 
     loss: str,
@@ -448,23 +419,7 @@ def run_one(
     preprocessing: str,
     supervise_mode: str,
     real_anomaly_limit: int,
-    # dataset (run-specific)
-    normal_class: int,
-    # script
-    test: bool,
-    # script (run-specific)
-    seed: int,
-    # files
-    rundir: Path,
     datadir: Path,
-    # wandb
-    wandb_logger: WandbLogger,
-    wandb_profile: bool,
-    wandb_watch: Optional[str],
-    wandb_watch_log_freq: int,
-    # wandb (train/validation/test)
-    # each one below is a tuple of 3 things
-    # which respectively configure the train/validation/test phases
     # pytorch lightning
     lightning_accelerator: str,
     lightning_ndevices: int,
@@ -477,6 +432,11 @@ def run_one(
     lightning_gradient_clip_val: float,
     lightning_gradient_clip_algorithm: str,
     lightning_deterministic: bool, 
+    # from run()
+    rundir: Path,
+    normal_class: int,
+    seed: int,
+    wandb_logger: WandbLogger,
     callbacks: list,
 ):
     
@@ -584,8 +544,6 @@ def run_one(
     
     log_model_architecture(model)
     
-    if wandb_watch is not None:
-        wandb_logger.watch(model, log=wandb_watch, log_freq=wandb_watch_log_freq)
 
     # ================================ CALLBACKS ================================
 
@@ -651,16 +609,14 @@ def run_one(
     
     trainer.fit(model=model, datamodule=datamodule)
     
-    if wandb_watch is not None:
-        wandb_logger.experiment.unwatch(model)
-    
     if lightning_profiler is not None:
         wandb.save(str(Path(lightning_profiler.dirpath) / lightning_profiler.filename), policy="now") 
 
     # ================================ TEST ================================
-    if not test:
-        return 
-    trainer.test(model=model, datamodule=datamodule)    
+    if test:
+        trainer.test(model=model, datamodule=datamodule)    
+        
+        
         
 # ==========================================================================================
 # ==========================================================================================
@@ -669,188 +625,132 @@ def run_one(
 # ==========================================================================================
 
     
-# def run(callbacks=[], **kwargs) -> dict:
 def run(
+    wandb_entity: str,
+    wandb_project: str,
+    wandb_offline: bool,
+    wandb_tags: List[str],
     start_time: int,
     base_rundir: Path,
     seeds: List[int],
-    **kwargs
+    classes: List[str],
+    confighashes_keys: Dict[str, Tuple[str, ...]] = {},
+    wandb_init_config_extra: dict = {},
+    **run_one_common_kwargs
 ) -> dict:
-    """see the arguments in run_one()"""
-    
-    dataset = kwargs['dataset']
-    base_rundir = base_rundir / dataset
-    wandb_offline = kwargs.pop("wandb_offline", False)
-    wandb_project = kwargs.pop("wandb_project", None)
-    wandb_tags = kwargs.pop("wandb_tags", None) or []
-    
-    def process_key_value_tags(tags: List[str]) -> List[str]:
-        monovalue_tags, kv_tags = [], {}
-        for tag in tags:
-            ncolons = tag.count(":")
-            if ncolons == 0:
-                monovalue_tags.append(tag)
-            elif ncolons == 1:
-                k, v = tag.split(":")
-                kv_tags[k] = v
-                monovalue_tags.append(k)
-            else:
-                raise ValueError(f"Tag `{tag}` has too many colons.")
-        return monovalue_tags, kv_tags
-
-    wandb_tags, key_value_tags = process_key_value_tags(wandb_tags)
-    
-    wandb_checkpoint_mode = kwargs.pop("wandb_checkpoint_mode")
-    
-    # later the case of multiple saving modes will be handled
-    # for now the 'else' is just True, which means 'last'
-    log_model = False if wandb_checkpoint_mode is None else True
-        
-    if log_model:
-        assert not wandb_offline, f"wandb_offline={wandb_offline} is incompatible with log_model={log_model} (from wandb_checkpoint_mode={wandb_checkpoint_mode})"
-
-    if wandb_offline:
-        print(f"wandb_offline={wandb_offline} --> setting enviroment variable WANDB_MODE=offline")
-        os.environ["WANDB_MODE"] = "offline"
     
     # if none then do all the classes
-    classes = kwargs.pop("classes", None) or tuple(range(dataset_nclasses(dataset)))
-
+    classes = classes or tuple(range(dataset_nclasses(run_one_common_kwargs['dataset'])))
     its = tuple(range(len(seeds)))
     
-    for c in classes:
-        
+    for c, (it, seed) in itertools.product(classes, zip(its, seeds)):
         print(f"class {c:02d}")
-        class_dir = base_rundir / f'normal_{c}'
-        kwargs.update(dict(normal_class=c,))
+        print(f"it {it:02d} seed {seed_int2str(seed)}")    
+
+        rundir = base_rundir / f'normal_{c:02d}' / f'it_{it:02}_seed{seed_int2str(seed)}'
+        rundir = rundir.resolve().absolute()
+        print(f"rundir: {rundir}")
         
-        for it, seed in zip(its, seeds):
-            
-            print(f"it {it:02d} seed {seed_int2str(seed)}")    
-            kwargs.update(dict(seed=seed,))
-            
-            rundir = (class_dir / f'it_{it:02}_seed{seed_int2str(seed)}').resolve().absolute()
-            print(f"rundir: {rundir}")
-            
-            # it's super important that the dir must already exist for wandb logging           
-            rundir.mkdir(parents=True, exist_ok=True)
-            
-            # wandb_name = f"{dataset}.{base_rundir.name}.cls{c:02}.it{it:02}.seed:{seed_int2str(seed)}"
-            # print(f"wandb_name={wandb_name}")
-            
-            run_one_kwargs = {
-                **kwargs, 
-                **dict(rundir=rundir,  seed=seed,)
-            }
-            
-            # the ones added here don't go to the run_one()            
-            wandb_config = {
-                **run_one_kwargs,
-                **dict(
-                    seeds_str=seed_int2str(seed),
-                    script_start_time=start_time,
-                    it=it,
-                    cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"),
-                    pid=os.getpid(),
-                    slurm_cluster_name=os.environ.get("SLURM_CLUSTER_NAME"),
-                    slurmd_nodename=os.environ.get("SLURMD_NODENAME"),
-                    slurm_job_partition=os.environ.get("SLURM_JOB_PARTITION"),
-                    slurm_submit_host=os.environ.get("SLURM_SUBMIT_HOST"),
-                    slurm_job_user=os.environ.get("SLURM_JOB_USER"),
-                    slurm_task_pid=os.environ.get("SLURM_TASK_PID"),
-                    slurm_job_name=os.environ.get("SLURM_JOB_NAME"),
-                    slurm_array_job_id=os.environ.get("SLURM_ARRAY_JOB_ID"),
-                    slurm_array_task_id=os.environ.get("SLURM_ARRAY_TASK_ID"),
-                    slurm_job_id=os.environ.get("SLURM_JOB_ID"),
-                    slurm_job_gpus=os.environ.get("SLURM_JOB_GPUS"),
-                ),
-                **key_value_tags,
-            }
-            
-            # add a few hashes to the make it 
-            # easier to group things in wandb
-            wandb_config = {
+        # it's super important that the dir must already exist for wandb logging           
+        rundir.mkdir(parents=True, exist_ok=True)
+        
+        # wandb_name = f"{dataset}.{base_rundir.name}.cls{c:02}.it{it:02}.seed:{seed_int2str(seed)}"
+        # print(f"wandb_name={wandb_name}")
+        
+        run_one_kwargs = {
+            **run_one_common_kwargs, 
+            **dict(
+                rundir=rundir,  
+                seed=seed,
+                normal_class=c,
+            )
+        }
+        print(f"run_one_kwargs: {run_one_kwargs}")
+        
+        # the ones added here don't go to the run_one()            
+        wandb_config = {
+            **run_one_kwargs,
+            **dict(
+                seeds_str=seed_int2str(seed),
+                script_start_time=start_time,
+                it=it,
+            ),
+            **wandb_init_config_extra,
+        }
+        print(f"wandb_config: {wandb_config}")
+        
+        # add hashes to the make it easier to group things in wandb
+        confighashes = {
+            name: dict(
+                desc=f"hash of: ({', '.join(configkeys)})",
+                value=hashify_config(config_dict=wandb_config, keys=configkeys, ),
+            )
+            for name, configkeys in confighashes_keys.items()  
+        }
+        print(f"confighashes: {confighashes}")
+        
+        wandb_init_kwargs_noconfig = dict(                
+            entity=wandb_entity,
+            project=wandb_project, 
+            # name=wandb_name,
+            tags=wandb_tags,
+            save_code=True,
+            reinit=True,
+        )
+        print(f"wandb_init_kwargs_noconfig: {wandb_init_kwargs_noconfig}")
+        
+        wandb_init_kwargs = dict(
+            **wandb_init_kwargs_noconfig,
+            config=dict(
                 **wandb_config,
-                **dict(
-                    confighash_full=hashify_config(wandb_config, keys=[
-                        "epochs", "learning_rate", "weight_decay", "model", "loss", "optimizer", "scheduler", "scheduler_parameters", "dataset", "raw_shape", "net_shape", "batch_size", "preprocessing", "supervise_mode", "real_anomaly_limit", "normal_class",                         
-                    ]),
-                    confighash_dataset_class_supervise=hashify_config(
-                        wandb_config, keys=("datset", "normal_class", "supervise_mode")
-                    ),
-                    confighash_dataset_class_supervise_loss=hashify_config(
-                        wandb_config, keys=("datset", "normal_class", "supervise_mode", "loss")
-                    ),
-                    confighash_dataset_class_supervise_model=hashify_config(
-                        wandb_config, keys=("datset", "normal_class", "supervise_mode", "model")
-                    ),
-                    confighash_dataset_class_supervise_loss_model=hashify_config(
-                        wandb_config, keys=("datset", "normal_class", "supervise_mode", "loss", "model")
-                    ),
-                    confighash_slurm=hashify_config(
-                        # the info here should be very redundant but it's ok
-                        wandb_config, keys=(
-                            "slurm_job_id", "slurm_array_job_id", "slurm_array_task_id", "slurm_task_pid", "slurm_job_user", "slurm_job_name", "slurm_submit_host", "slurm_cluster_name", "slurmd_nodename", "slurm_job_partition",
-                        )
-                    ),
-                )
-            }
+                **confighashes
+            ),
+        )
+        
+        wandb_logger = WandbLogger(
+            save_dir=str(rundir),
+            offline=wandb_offline,
+            log_model=not wandb_offline,  # save only the last weights
+            **wandb_init_kwargs,
+        )   
+        
+        wandb_logger_save_dir = Path(wandb_logger.save_dir).resolve().absolute()
+        print(f"wandb_logger_save_dir: {wandb_logger_save_dir}")
             
-            wandb_init_kwargs = dict(
-                project=wandb_project, 
-                # name=wandb_name,
-                entity="mines-paristech-cmm",
-                tags=wandb_tags,
-                config=wandb_config,
-                save_code=True,
-                reinit=True,
-            )
-            print(f"wandb_init_kwargs={wandb_init_kwargs}")
-            wandb_logger = WandbLogger(
-                save_dir=str(rundir),
-                offline=wandb_offline,
-                # for now only the last checkpoint is available, but later the others can be integrated
-                # (more stuff have to be done in the run_one())
-                log_model=log_model,
-                **wandb_init_kwargs,
-            )   
-             
-            # image logging is not working properly with the logger
-            # so i also use the default wandb interface for that
-            wandb.init(
-                dir=str(rundir),  # equivalent of savedir in the logger
-                **{
-                  **wandb_init_kwargs,
-                  # make sure both have the same run_idimg_batch.clone()
-                  **dict(id=wandb_logger.experiment._run_id),  
-                },
-            )
+        # image logging is not working properly with the logger
+        # so i also use the default wandb interface for that
+        wandb.init(
+            # make sure both have the same run_id
+            id=wandb_logger.experiment._run_id,
+            dir=str(rundir),  # equivalent of savedir in the logger
+            **wandb_init_kwargs,
+        )
+        
+        try:            
+            run_one(wandb_logger=wandb_logger, **run_one_kwargs,)
+        
+        except TypeError as ex:
             
-            print(f"run_one_kwargs={run_one_kwargs}")
-            try:
-                print(f"wandb_logger.save_dir: {Path(wandb_logger.save_dir).resolve().absolute()}")
+            wandb_logger.finalize("crashed")
+            wandb.finish(1)
             
-                run_one(wandb_logger=wandb_logger, **run_one_kwargs,)
+            msg = ex.args[0]
             
-                print(f"wandb_logger.save_dir: {Path(wandb_logger.save_dir).resolve().absolute()}")
+            if "run_one() got an unexpected keyword argument" in msg:
+                raise ScriptError(f"run_one() got an unexpected keyword argument: {msg}, did you forget to kwargs.pop() something?") from ex
             
-            except TypeError as ex:
-                wandb_logger.finalize("crashed")
-                wandb.finish(1)
-                
-                msg = ex.args[0]
-                
-                if "run_one() got an unexpected keyword argument" in msg:
-                    raise ScriptError(f"run_one() got an unexpected keyword argument: {msg}, did you forget to kwargs.pop() something?") from ex
-                
-                raise ex
+            raise ex
+        
+        except Exception as ex:
+            wandb_logger.finalize("crashed")
+            wandb.finish(1)
             
-            except Exception as ex:
-                wandb_logger.finalize("crashed")
-                wandb.finish(1)
-                raise ex
+            raise ex
+        
+        else:
+            wandb_logger.finalize("success")
+            wandb.finish(0)
             
-            else:
-                wandb_logger.finalize("success")
-                wandb.finish(0)
-                
+        finally:
+            print(f"wandb_logger_save_dir: {wandb_logger_save_dir}")
+            

@@ -2,6 +2,7 @@
 # coding: utf-8
 
 from argparse import ArgumentParser, Namespace
+import os
 from pathlib import Path
 import time
 
@@ -20,18 +21,120 @@ from callbacks_dev01 import (
     LogHistogramsSuperposedPerClassCallback, LogImageHeatmapTableCallback,
     LogPercentilesPerClassCallback, LogPerInstanceValueCallback,
     LogRocCallback, TorchTensorboardProfilerCallback)
-from common_dev01 import (LogdirBaserundir, Seeds, create_python_random_generator, create_seed,
-                          hashify_config, seed_int2str, seed_str2int, CudaVisibleDevices)
+from common_dev01 import (LogdirBaserundir, Seeds, WandbOffline, WandbTags, CudaVisibleDevices, CliConfigHash)
 
 
-# ========================================================================= BUILD PARSER
+import sys
 
-parser = train_dev01_bis.parser_add_arguments(ArgumentParser())
-parser.set_defaults(
+start_time = int(time.time())
+print(f"start_time: {start_time}")
+
+argv = sys.argv[1:]
+print(f"argv: {argv}")
+
+# ========================================================================= PARSER run()
+
+parser_run = train_dev01_bis.parser_add_arguments_run(ArgumentParser())
+parser_run.set_defaults(
+    wandb_entity="mines-paristech-cmm",
+    wandb_project="mvtec-debug",
+    wandb_offline=False,
+    wandb_checkpoint_mode=train_dev01_bis.WANDB_CHECKPOINT_MODE_LAST,
+    classes=None,
+)
+
+CudaVisibleDevices.add_arguments(parser_run)
+WandbOffline.add_arguments(parser_run)
+
+LogdirBaserundir.add_arguments(parser_run)
+parser_run.set_defaults(logdir=Path("../../data/results"))
+
+WandbTags.add_arguments(parser_run)
+parser_run.set_defaults(wandb_tags=["dev01_bis",])
+
+Seeds.add_arguments(parser_run)
+CliConfigHash.add_arguments(parser_run)
+
+
+# >>>>>>>>>>>>>>>>>>> parse <<<<<<<<<<<<<<<<<<<<<<
+args_run, argv = parser_run.parse_known_args(argv)
+print('after parser_run')
+print(f"args_run: {args_run}")
+print(f"argv: {argv}")
+
+CudaVisibleDevices.consume_arguments(args_run)
+WandbOffline.consume_arguments(args_run)
+
+base_rundir = LogdirBaserundir.consume_arguments(args_run, start_time, subfolder_args=['wandb_project', 'dataset',])
+print(f"base_rundir: {base_rundir}")
+base_rundir.mkdir(parents=True, exist_ok=True)
+
+wandb_tags, key_value_tags = WandbTags.consume_arguments(args_run)
+print(f"wandb_tags: {wandb_tags}")
+print(f"key_value_tags: {key_value_tags}")
+
+seeds = Seeds.consume_arguments(args_run)
+print(f"seeds: {seeds}")
+
+cli_config_hashes = CliConfigHash.consume_arguments(args_run)
+print(f"cli_config_hashes: {cli_config_hashes}")
+
+# this one must come before confighashes so the hashes can use these values
+# these are added to wandb.init config arg but not passed to run_one()
+# while the kwargs at the end ar passed
+wandb_init_config_extra=dict(
+    pid=os.getpid(),
+    cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"),
+    slurm_cluster_name=os.environ.get("SLURM_CLUSTER_NAME"),
+    slurmd_nodename=os.environ.get("SLURMD_NODENAME"),
+    slurm_job_partition=os.environ.get("SLURM_JOB_PARTITION"),
+    slurm_submit_host=os.environ.get("SLURM_SUBMIT_HOST"),
+    slurm_job_user=os.environ.get("SLURM_JOB_USER"),
+    slurm_task_pid=os.environ.get("SLURM_TASK_PID"),
+    slurm_job_name=os.environ.get("SLURM_JOB_NAME"),
+    slurm_array_job_id=os.environ.get("SLURM_ARRAY_JOB_ID"),
+    slurm_array_task_id=os.environ.get("SLURM_ARRAY_TASK_ID"),
+    slurm_job_id=os.environ.get("SLURM_JOB_ID"),
+    slurm_job_gpus=os.environ.get("SLURM_JOB_GPUS"),
+    **key_value_tags,
+)
+print(f"wandb_init_config_extra: {wandb_init_config_extra}")
+
+# a collection of things from wandb's config that will be hashed together
+# and the value is appended to the the config
+confighashes_keys=dict(
+    confighash_full=(
+        "epochs", "learning_rate", "weight_decay", "model", "loss", "optimizer", "scheduler", "scheduler_parameters", "dataset", "raw_shape", "net_shape", "batch_size", "preprocessing", "supervise_mode", "real_anomaly_limit", "normal_class",                         
+    ),
+    confighash_dcs=("datset", "normal_class", "supervise_mode"),
+    confighash_dcsl=("datset", "normal_class", "supervise_mode", "loss"),
+    confighash_slurm=(
+        # the info here should be very redundant but it's ok
+        "slurm_job_id", "slurm_array_job_id", "slurm_array_task_id", "slurm_task_pid", 
+        "slurm_job_user", "slurm_job_name", "slurm_submit_host", "slurm_cluster_name", 
+        "slurmd_nodename", "slurm_job_partition",
+    ),
+    **cli_config_hashes,
+)
+print(f"confighashes_keys: {confighashes_keys}")
+
+setattr(args_run, "start_time", start_time)
+setattr(args_run, "base_rundir", base_rundir)
+setattr(args_run, "seeds", seeds)
+setattr(args_run, "wandb_tags", wandb_tags)
+setattr(args_run, "wandb_init_config_extra", wandb_init_config_extra)
+setattr(args_run, "confighashes_keys", confighashes_keys)
+
+
+# ========================================================================= PARSER run_one()
+
+parser_run_one = train_dev01_bis.parser_add_arguments_run_one(ArgumentParser())
+parser_run_one.set_defaults(
     # training
     epochs=500,  # before each epoch was doing 10 cycles over the data 
     learning_rate=1e-3,
     weight_decay=1e-4, 
+    test=True,
     # model 
     model=model_dev01.MODEL_FCDD_CNN224_VGG_F,
     loss=model_dev01.LOSS_PIXELWISE_BATCH_AVG,
@@ -48,20 +151,7 @@ parser.set_defaults(
     preprocessing=mvtec_dataset_dev01.PREPROCESSING_LCNAUG1,
     supervise_mode=mvtec_dataset_dev01.SUPERVISE_MODE_REAL_ANOMALY,
     real_anomaly_limit=1,
-    # script
-    test=True,
-    # n_seeds=1,
-    # seeds=None,
-    classes=None,
-    # files
-    # wandb
-    wandb_project="mvtec-debug",
-    wandb_tags=["dev01_bis",],
-    wandb_profile=False,
-    wandb_offline=False,
-    wandb_watch=None,
-    wandb_watch_log_freq=100,  # wandb's default
-    wandb_checkpoint_mode=train_dev01_bis.WANDB_CHECKPOINT_MODE_LAST,
+    datadir=Path("../../data/datasets"),
     # pytorch lightning 
     lightning_accelerator=train_dev01_bis.LIGHTNING_ACCELERATOR_GPU,
     lightning_ndevices=1,
@@ -76,47 +166,25 @@ parser.set_defaults(
     lightning_deterministic=False,
 )
 
+args_run_one = parser_run_one.parse_args(argv)
+print(f"args_run_one: parsed from cli: {args_run_one}")
 
-CudaVisibleDevices.add_arguments(parser)
-LogdirBaserundir.add_arguments(parser)
-Seeds.add_arguments(parser)
-parser.set_defaults(logdir=Path("../../data/results"))
-
-# ========================================================================= PARSE ARGUMENTS + POST-PROCESS
-
-args = parser.parse_args()
-print(f"args: parsed from cli: {args}")
-
-train_dev01_bis.args_validate_dataset_specific_choices(args)
-train_dev01_bis.args_validate_model_specific_choices(args)
-
-CudaVisibleDevices.consume_arguments(args)
-
-start_time = int(time.time())
-print(f"start_time: {start_time}")
-
-base_rundir = LogdirBaserundir.consume_arguments(args, start_time, subfolder_args=['wandb_project', 'dataset',])
-base_rundir.mkdir(parents=True, exist_ok=True)
-
-print(f"args: post processed: {args}")
-
-seeds = Seeds.consume_arguments(args)
+train_dev01_bis.args_validate_dataset_specific_choices(args_run_one)
+train_dev01_bis.args_validate_model_specific_choices(args_run_one)
 
 # ========================================================================= CALLBACKS
 
 callbacks = []
 
+# ========================================================================= LAUNCH
+
 results = train_dev01_bis.run(
-    start_time=start_time,
-    base_rundir=base_rundir,
-    seeds=seeds,
-    **dict(
-        **vars(args),
-        **dict(callbacks=callbacks),
-    )
+    **vars(args_run),
+    **vars(args_run_one),
+    callbacks=callbacks,
 )
 
-
+print('end')
 
 # # when computing ROC on the pixels, extract a sample of this many pixels
 # # used in the ROC callbacks for train and validation
@@ -626,3 +694,43 @@ results = train_dev01_bis.run(
 # wandb_log_perinstance_mean_loss: Tuple[bool, bool, bool], 
 # add_callbacks_log_perinstance_mean_score(*wandb_log_perinstance_mean_score)
 # add_callbacks_log_perinstance_mean_loss(*wandb_log_perinstance_mean_loss)
+
+
+
+
+
+
+# WANDB_WATCH_GRADIENTS = "gradients"
+# WANDB_WATCH_ALL = "all"
+# WANDB_WATCH_PARAMETERS = "parameters"
+# WANDB_WATCH_CHOICES = (
+#     None,
+#     WANDB_WATCH_GRADIENTS,
+#     WANDB_WATCH_ALL,
+#     WANDB_WATCH_PARAMETERS,
+# )
+# print(f"WANDB_WATCH_CHOICES={WANDB_WATCH_CHOICES}")
+
+# parser.add_argument(
+#     # choices taken from wandb/sdk/wandb_watch.py => watch()
+#     "--wandb_watch", type=none_or_str, choices=WANDB_WATCH_CHOICES, 
+#     help="Argument for wandb_logger.watch(..., log=WANDB_WATCH).",
+# )
+# parser.add_argument(
+#     "--wandb_watch_log_freq", type=int, default=100,
+#     help="Log frequency of gradients and parameters. Argument for wandb_logger.watch(..., log_freq=WANDB_WATCH_LOG_FREQ). ",
+# )
+    
+# wandb_watch: Optional[str],
+# wandb_watch_log_freq: int,
+
+# begin of train hook
+# if wandb_watch is not None:
+#     wandb_logger.watch(model, log=wandb_watch, log_freq=wandb_watch_log_freq)
+        
+# end of train hook
+# if wandb_watch is not None:
+#     wandb_logger.experiment.unwatch(model)
+
+    # wandb_watch=None,
+    # wandb_watch_log_freq=100,  # wandb's default

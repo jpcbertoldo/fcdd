@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import random
 import time
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 import warnings
 
 import numpy as np
@@ -16,6 +16,7 @@ from functools import partial
 from scipy import signal 
 import os
 from argparse import ArgumentParser, Namespace
+import functools
 
 
 def seed_str2int(seed: str):
@@ -223,7 +224,93 @@ class Seeds:
         del vars(args)['seeds']
 
         return seeds
+    
+
+class WandbOffline:
+    
+    @staticmethod
+    def add_arguments(parser: ArgumentParser):
+        parser.add_argument("--wandb_offline", action="store_true", help="If set, will not sync with the webserver.",)
+    
+    @staticmethod
+    def consume_arguments(args: Namespace):
+        wandb_offline = args.wandb_offline
+                
+        if wandb_offline:
+            print(f"wandb_offline={wandb_offline} --> setting enviroment variable WANDB_MODE=offline")
+            os.environ["WANDB_MODE"] = "offline"
+
+    
+class WandbTags:
+    
+    @staticmethod
+    def add_arguments(parser: ArgumentParser):
+        parser.add_argument("--wandb_tags", type=str, nargs='*', action='extend',)
         
+    @staticmethod
+    def consume_arguments(args: Namespace):
+
+        tags = args.wandb_tags
+        del vars(args)['wandb_tags']
+        
+        monovalue_tags, kv_tags = [], {}
+        
+        for tag in tags:
+        
+            ncolons = tag.count(":")
+        
+            if ncolons == 0:
+                monovalue_tags.append(tag)
+        
+            elif ncolons == 1:
+                key, value = tag.split(":")
+                kv_tags[key] = value
+                monovalue_tags.append(key)
+        
+            else:
+                raise ValueError(f"Tag `{tag}` has too many colons.")
+        
+        return monovalue_tags, kv_tags
+    
+    
+class CliConfigHash:
+    
+    @staticmethod
+    def add_arguments(parser: ArgumentParser):
+        parser.add_argument("--cli_config_hash", type=str, nargs=2, action="append", default=None,)
+        
+    @staticmethod
+    def consume_arguments(args: Namespace):
+        
+        cli_config_hashes = args.cli_config_hash
+        del vars(args)['cli_config_hash']
+        
+        if cli_config_hashes is None:
+            return dict()
+        
+        def validate(name_keys_pairs: List[List[str, str]]):
+            for name_keys in name_keys_pairs:
+                
+                assert len(name_keys) == 2, f"cli_config_hash must be a list of 2-tuples, got {name_keys}"
+                
+                name, keys = name_keys
+                assert isinstance(name, str), f"cli_config_hash name must be a string, got {name}"
+                assert isinstance(keys, str), f"cli_config_hash key must be a string, got {keys}"
+                assert name, f"cli_config_hash name must not be empty, got {name}"
+                assert keys, f"cli_config_hash key must not be empty, got {keys}"
+                
+                keys = keys.split(",")
+                assert len(keys) > 0, f"cli_config_hash key must not be empty, got {keys}"
+                
+                for k in keys:
+                    assert k, f"cli_config_hash key must not be empty, got {k}"
+            
+            return name_keys_pairs
+        
+        validate(cli_config_hashes)
+        
+        return dict((name, tuple(keys.split(","))) for name, keys in cli_config_hashes)
+
 
 class AdaptiveClipError(Exception):
     pass
