@@ -149,7 +149,17 @@ class PixelwiseHSCLossesMixin:
         
         try:
             with torch.no_grad():
-                clipmin, clipmax = find_scores_clip_values_from_empircal_cdf(scores_normal=score_map[masks == 0], scores_anomalous=score_map[masks == 1])
+                # temporary hack to not modify the cli
+                import wandb
+                import os
+                loss_empirical_cdf_clip_threshold = float(os.environ.get('loss_empirical_cdf_clip_threshold', 0.05))
+                wandb.run.summary.update(dict(loss_empirical_cdf_clip_threshold=loss_empirical_cdf_clip_threshold))
+                clipmin, clipmax = find_scores_clip_values_from_empircal_cdf(
+                    scores_normal=score_map[masks == 0], 
+                    scores_anomalous=score_map[masks == 1],
+                    cutfunc_threshold=loss_empirical_cdf_clip_threshold,
+                    # cutfunc_threshold=0.05,
+                )
 
         except AdaptiveClipError as ex:
             warnings.warn(f"AdaptiveClipError: clipping could not be applied, using default values: {ex}", stacklevel=2)
