@@ -27,10 +27,6 @@ class ScriptError(Exception):
     pass
 
 
-class DatasetError(Exception):
-    pass
-
-
 class ModelError(Exception):
     pass
 
@@ -424,7 +420,6 @@ def args_validate_model_specific_choices(args):
     assert args.scheduler in model_scheduler_choices(args.model), f"args.model={args.model}: {args.scheduler} not in {model_scheduler_choices(args.model)}"
 
 
-
 # ==========================================================================================
 # ==========================================================================================
 # ========================================== run one =======================================
@@ -487,11 +482,17 @@ def run_one(
     
     # minimal validation for early mistakes
     assert dataset in DATASET_CHOICES, f"Invalid dataset: {dataset}, chose from {DATASET_CHOICES}"
+    
+    # dataset-specific validation
     assert supervise_mode in dataset_supervise_mode_choices(dataset), f"Invalid supervise_mode: {supervise_mode} for dataset {dataset}, chose from {dataset_supervise_mode_choices(dataset)}"
     assert preprocessing in dataset_preprocessing_choices(dataset), f"Invalid preproc: {preprocessing} for dataset {dataset}, chose from {dataset_preprocessing_choices(dataset)}"
+    
+    # model-specific validation
     assert loss in model_loss_choices(model), f"Invalid loss: {loss} for model {model}, chose from {model_loss_choices(model)}"
     assert optimizer in model_optimizer_choices(model), f"Invalid optimizer: {optimizer} for model {model}, chose from {model_optimizer_choices(model)}"
     assert scheduler in model_scheduler_choices(model), f"Invalid scheduler: {scheduler} for model {model}, chose from {model_scheduler_choices(model)}"
+    
+    # lightning-stuff validation
     assert lightning_accelerator in LIGHTNING_ACCELERATOR_CHOICES, f"Invalid lightning_accelerator: {lightning_accelerator}, chose from {LIGHTNING_ACCELERATOR_CHOICES}"
     if lightning_strategy is not None:
         assert lightning_strategy in LIGHTNING_STRATEGY_CHOICES, f"Invalid lightning_strategy: {lightning_strategy}, chose from {LIGHTNING_STRATEGY_CHOICES}"
@@ -596,7 +597,7 @@ def run_one(
     
     # ================================ PROFILING ================================
         
-    def get_lightning_profiler(profiler_choice):
+    def get_lightning_profiler(profiler_choice: Optional[str]):
         
         if profiler_choice is None:
             return None
@@ -834,15 +835,22 @@ def run(
                 print(f"wandb_logger.save_dir: {Path(wandb_logger.save_dir).resolve().absolute()}")
             
             except TypeError as ex:
+                wandb_logger.finalize("crashed")
+                wandb.finish(1)
+                
                 msg = ex.args[0]
+                
                 if "run_one() got an unexpected keyword argument" in msg:
                     raise ScriptError(f"run_one() got an unexpected keyword argument: {msg}, did you forget to kwargs.pop() something?") from ex
+                
                 raise ex
+            
             except Exception as ex:
-                # wandb_logger.finalize("failed")
+                wandb_logger.finalize("crashed")
                 wandb.finish(1)
                 raise ex
+            
             else:
-                # wandb_logger.finalize("success")
+                wandb_logger.finalize("success")
                 wandb.finish(0)
                 
