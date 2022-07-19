@@ -272,7 +272,7 @@ def parser_add_arguments_run(parser: ArgumentParser) -> ArgumentParser:
     parser.add_argument("--wandb_entity", type=str,)
     parser.add_argument("--wandb_project", type=str,)
     parser.add_argument(
-        '--classes', type=int, nargs='+', default=None,
+        '--classes', type=int, nargs='+', 
         help='Run only training sessions for some of the classes being nominal. If not give (default) then all classes are trained.'
     )
     return parser
@@ -280,9 +280,9 @@ def parser_add_arguments_run(parser: ArgumentParser) -> ArgumentParser:
 
 def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
     # ===================================== training =====================================
-    parser.add_argument('--epochs', type=int)
-    parser.add_argument('--learning_rate', type=float)
-    parser.add_argument('--weight_decay', type=float)
+    parser.add_argument('--epochs', type=int,)
+    parser.add_argument('--learning_rate', type=float,)
+    parser.add_argument('--weight_decay', type=float,)
     parser.add_argument(
         '--no_test', dest="test", action="store_false",
         help='If set then the model will not be tested at the end of the training. It will by default.'
@@ -302,12 +302,15 @@ def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
              '"lambda": one parameter is allowed, the factor the learning rate is reduced per epoch. '
     )
     # ====================================== dataset =====================================
-    parser.add_argument('--dataset', type=str, choices=DATASET_CHOICES)
+    parser.add_argument('--dataset', type=str, choices=DATASET_CHOICES,)
     parser.add_argument("--raw_shape", type=int, nargs=2,)
     parser.add_argument("--net_shape", type=int, nargs=2,)
     parser.add_argument('--batch_size', type=int,)
-    parser.add_argument('--nworkers', type=int, help='Number of workers for data loading (DataLoader parameter).')
-    parser.add_argument('--pin_memory', action='store_true')
+    parser.add_argument(
+        '--nworkers', type=int, 
+        help='Number of workers for data loading (DataLoader parameter).'
+    )
+    parser.add_argument('--pin_memory', action='store_true', )
     parser.add_argument(
         '--preprocessing', type=str, choices=ALL_PREPROCESSING_CHOICES,
         help='Preprocessing pipeline (augmentations and such). Defined inside each dataset module.'
@@ -327,16 +330,15 @@ def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
     )
     # ================================ pytorch lightning =================================
     parser.add_argument(
-        "--lightning_accelerator", type=str, 
-        default=LIGHTNING_ACCELERATOR_GPU, 
-        choices=LIGHTNING_ACCELERATOR_CHOICES,
+        "--lightning_accelerator", type=str, choices=LIGHTNING_ACCELERATOR_CHOICES,
         help=f"https://pytorch-lightning.readthedocs.io/en/latest/extensions/accelerator.html"
     )
-    parser.add_argument("--lightning_ndevices", type=int, default=1, help="Number of devices (gpus) to use for training.")
     parser.add_argument(
-        "--lightning_strategy", type=none_or_str, 
-        default=None, 
-        choices=LIGHTNING_STRATEGY_CHOICES,
+        "--lightning_ndevices", type=int, 
+        help="Number of devices (gpus) to use for training."
+    )
+    parser.add_argument(
+        "--lightning_strategy", type=none_or_str, choices=LIGHTNING_STRATEGY_CHOICES,
         help="See https://pytorch-lightning.readthedocs.io/en/latest/extensions/strategy.html"
     )
     parser.add_argument(
@@ -344,7 +346,7 @@ def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
         help="https://pytorch-lightning.readthedocs.io/en/latest/guides/speed.html#mixed-precision-16-bit-training"
     )
     parser.add_argument(
-        "--lightning_model_summary_max_depth", type=int, 
+        "--lightning_model_summary_max_depth", type=int,
         help="https://pytorch-lightning.readthedocs.io/en/latest/api/pytorch_lightning.callbacks.ModelSummary.html#pytorch_lightning.callbacks.ModelSummary",
     )
     parser.add_argument(
@@ -371,7 +373,7 @@ def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
         help=f"https://pytorch-lightning.readthedocs.io/en/latest/advanced/training_tricks.html#gradient-clipping",
     )
     parser.add_argument(
-        "--lightning_deterministic", type=bool,
+        "--lightning_deterministic", type=bool, 
         help="https://pytorch-lightning.readthedocs.io/en/stable/common/trainer.html#reproducibility",
     )
     return parser

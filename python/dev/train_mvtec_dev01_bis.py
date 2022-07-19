@@ -2,6 +2,7 @@
 # coding: utf-8
 
 from argparse import ArgumentParser, Namespace
+from functools import partialmethod
 import os
 from pathlib import Path
 import time
@@ -21,16 +22,13 @@ from callbacks_dev01 import (
     LogHistogramsSuperposedPerClassCallback, LogImageHeatmapTableCallback,
     LogPercentilesPerClassCallback, LogPerInstanceValueCallback,
     LogRocCallback, TorchTensorboardProfilerCallback)
-from common_dev01 import (LogdirBaserundir, Seeds, WandbOffline, WandbTags, CudaVisibleDevices, CliConfigHash)
+from common_dev01 import (LogdirBaserundir, Seeds, WandbOffline, WandbTags, CudaVisibleDevices, CliConfigHash, create_python_random_generator)
 
 
 import sys
 
 start_time = int(time.time())
 print(f"start_time: {start_time}")
-
-argv = sys.argv[1:]
-print(f"argv: {argv}")
 
 # ========================================================================= BUILD PARSER run()
 
@@ -59,7 +57,8 @@ CliConfigHash.add_arguments(parser_run)
 parser_run_one = train_dev01_bis.parser_add_arguments_run_one(ArgumentParser())
 parser_run_one.set_defaults(
     # training
-    epochs=500,  # before each epoch was doing 10 cycles over the data 
+    # epochs=500,  # before each epoch was doing 10 cycles over the data 
+    epochs=3,
     learning_rate=1e-3,
     weight_decay=1e-4, 
     test=True,
@@ -94,8 +93,60 @@ parser_run_one.set_defaults(
     lightning_deterministic=False,
 )
 
-# >>>>>>>>>>>>>>>>>>> parse <<<<<<<<<<<<<<<<<<<<<<
+# ========================================================================= BUILD PARSERS of callbacks[]
+
+callbacks_class_parser_pairs = []
+
+parser = LogRocCallback.add_arguments(ArgumentParser(), stage="validate")
+parser.set_defaults(
+    scores_key="score_maps",
+    gt_key="gtmaps",
+    log_curve=False,
+    limit_points=9000,  # 9k
+)
+callbacks_class_parser_pairs.append((LogRocCallback, parser))
+
+parser = LogRocCallback.add_arguments(ArgumentParser(), stage="test")
+parser.set_defaults(
+    scores_key="score_maps",
+    gt_key="gtmaps",
+    log_curve=True,
+    limit_points=None,  # 9k
+)
+callbacks_class_parser_pairs.append((LogRocCallback, parser))
+
+
+# >>>>>>>>>>>>>>>>>>> argv <<<<<<<<<<<<<<<<<<<<<<
+
+argv = sys.argv[1:]
+print(f"argv: {argv}")
+
+# >>>>>>>>>>>>>>>>>>> parse and process args of callbacks[] <<<<<<<<<<<<<<<<<<<<<<
+
+# start by parsing callback stuff because they last parser must do parse_args() instead of parse_known_args()
+callbacks = []
+
+for klass, parser in callbacks_class_parser_pairs:
+    
+    print(f"callback: {klass.__name__}")
+    print(f"parser: {parser.description}")
+    
+    args, argv = parser.parse_known_args(argv)
+    
+    print(f"args: {args}")
+    print(f"remaining argv: {argv}")
+    
+    callback = klass(**vars(args))
+    
+    print(f"callback: {callback}")
+    
+    callbacks.append(callback)
+
+
+# >>>>>>>>>>>>>>>>>>> parse run() and run_one() <<<<<<<<<<<<<<<<<<<<<<
+
 args_run, argv = parser_run.parse_known_args(argv)
+
 print('after parser_run')
 print(f"args_run: {args_run}")
 print(f"argv: {argv}")
@@ -103,7 +154,7 @@ print(f"argv: {argv}")
 args_run_one = parser_run_one.parse_args(argv)
 print(f"args_run_one: parsed from cli: {args_run_one}")
 
-# >>>>>>>>>>>>>>>>>>> process args <<<<<<<<<<<<<<<<<<<<<<
+# >>>>>>>>>>>>>>>>>>> process args of run() <<<<<<<<<<<<<<<<<<<<<<
 
 CudaVisibleDevices.consume_arguments(args_run)
 WandbOffline.consume_arguments(args_run)
@@ -172,15 +223,10 @@ setattr(args_run, "wandb_tags", wandb_tags)
 setattr(args_run, "wandb_init_config_extra", wandb_init_config_extra)
 setattr(args_run, "confighashes_keys", confighashes_keys)
 
+# >>>>>>>>>>>>>>>>>>> process args of run_one() <<<<<<<<<<<<<<<<<<<<<<
 
 train_dev01_bis.args_validate_dataset_specific_choices(args_run_one)
 train_dev01_bis.args_validate_model_specific_choices(args_run_one)
-
-# ========================================================================= PARSER run_one()
-
-# ========================================================================= CALLBACKS
-
-callbacks = []
 
 # ========================================================================= LAUNCH
 
@@ -191,72 +237,6 @@ results = train_dev01_bis.run(
 )
 
 print('end')
-
-# # when computing ROC on the pixels, extract a sample of this many pixels
-# # used in the ROC callbacks for train and validation
-# PIXELWISE_ROC_LIMIT_POINTS = 3000  # 3k
-
-# # when computing precision-recall curve (and avg precision) on the pixels, extract a sample of this many pixels
-# # used in the ROC callbacks for train and validation
-# PIXELWISE_PR_LIMIT_POINTS = 3000  # 3k
-
-# # when logging histograms, log the histograms of this many random values (not all in the array/tensor)
-# PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TRAIN = 3000  # 3k
-# PIXELWISE_HISTOGRAMS_LIMIT_POINTS_VALIDATION = 3000  # 3k
-# PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TEST = 30000  # 30k 
-
-
-# def add_callbacks_log_roc(train: bool, validation: bool, test: bool):
-
-#     if train:
-#         callbacks.append(
-#             LogRocCallback(
-#                 stage=RunningStage.TRAINING,
-#                 scores_key="score_maps",
-#                 gt_key="gtmaps",
-#                 log_curve=False,
-#                 limit_points=PIXELWISE_ROC_LIMIT_POINTS,
-#                 python_generator=create_python_random_generator(seed),
-#             )
-#         )
-        
-#     if validation:
-#         callbacks.append(
-#             LogRocCallback(
-#                 stage=RunningStage.VALIDATING,
-#                 scores_key="score_maps",
-#                 gt_key="gtmaps",
-#                 log_curve=False,
-#                 limit_points=PIXELWISE_ROC_LIMIT_POINTS, 
-#                 python_generator=create_python_random_generator(seed),
-#             )
-#         )
-        
-#     if test:
-#         callbacks.append(
-#             LogRocCallback(
-#                 stage=RunningStage.TESTING,
-#                 scores_key="score_maps",
-#                 gt_key="gtmaps",
-#                 log_curve=True,
-#                 limit_points=None,
-#                 python_generator=create_python_random_generator(seed),
-#             )
-#         )
-        
-
-# wandb_log_roc=(False, True, True),
-# parser.add_argument(
-#     "--wandb_log_roc", type=bool, nargs=3,
-#     help="If set, the ROC AUC curve will be logged, respectively, for train/validation/test. On test the curve is also logged."
-# )
-# wandb_log_roc: Tuple[bool, bool, bool],
-# assert len(wandb_log_roc) == 3, f"wandb_log_roc should have 3 bools, for train/validation/test, but got {wandb_log_roc}" 
-# assert all(isinstance(obj, bool) for obj in wandb_log_roc), f"wandb_log_roc should only have bool, got {wandb_log_roc}"
-# add_callbacks_log_roc(*args.wandb_log_roc)
-
-        
-
 
 
 # # ========================================================================= PR
