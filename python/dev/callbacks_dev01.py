@@ -66,7 +66,7 @@ class RandomCallbackMixin:
     Mixin that will get random generators from the init kwargs and make sure it is valid.
     """
 
-    def init_python_generator(__init__):
+    def __init__python_generator(__init__):
         """Make sure that an arge `python_generator` is given as a kwarg at the init function."""
 
         @functools.wraps(__init__)
@@ -80,7 +80,7 @@ class RandomCallbackMixin:
 
         return wrapper
 
-    def init_torch_generator(__init__):
+    def __init__torch_generator(__init__):
         """Make sure that an arge `torch_generator` is given as a kwarg at the init function."""
 
         @functools.wraps(__init__)
@@ -174,7 +174,6 @@ class LogRocCallback(
 ):
 
     @MultiStageEpochEndCallbackMixin.init_stage
-    @RandomCallbackMixin.init_python_generator
     def __init__(
         self,
         scores_key: str,
@@ -265,7 +264,7 @@ class LogAveragePrecisionCallback(
 ):
 
     @MultiStageEpochEndCallbackMixin.init_stage
-    @RandomCallbackMixin.init_python_generator
+    @RandomCallbackMixin.__init__python_generator
     def __init__(
         self,
         scores_key: str,
@@ -418,7 +417,7 @@ class LogHistogramsSuperposedPerClassCallback(
 ):
 
     @MultiStageEpochEndCallbackMixin.init_stage
-    @RandomCallbackMixin.init_python_generator
+    @RandomCallbackMixin.__init__python_generator
     def __init__(self, values_key: str, gt_key: str, mode: str, limit_points: int = 3000,):
         """
         Args:
@@ -608,7 +607,7 @@ class LogImageHeatmapTableCallback(
 ):
 
     @MultiStageEpochEndCallbackMixin.init_stage
-    @RandomCallbackMixin.init_python_generator
+    @RandomCallbackMixin.__init__python_generator
     def __init__(
         self,
         imgs_key: str,
