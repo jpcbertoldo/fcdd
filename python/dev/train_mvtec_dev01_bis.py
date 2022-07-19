@@ -13,12 +13,12 @@ import model_dev01
 import mvtec_dataset_dev01
 import train_dev01_bis
 import wandb
-from callbacks_dev01 import (
+from callbacks_dev01_bis import (
     HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH,
     HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
     HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH, LOG_HISTOGRAM_MODE_LOG,
     LOG_HISTOGRAM_MODES, DataloaderPreviewCallback, LearningRateLoggerCallback,
-    LogAveragePrecisionCallback, LogHistogramCallback,
+    LogPrcurveCallback, LogHistogramCallback,
     LogHistogramsSuperposedPerClassCallback, LogImageHeatmapTableCallback,
     LogPercentilesPerClassCallback, LogPerInstanceValueCallback,
     LogRocCallback, TorchTensorboardProfilerCallback)
@@ -114,6 +114,25 @@ parser.set_defaults(
     limit_points=None,  # 9k
 )
 callbacks_class_parser_pairs.append((LogRocCallback, parser))
+
+
+parser = LogPrcurveCallback.add_arguments(ArgumentParser(), stage="validate")
+parser.set_defaults(
+    scores_key="score_maps",
+    gt_key="gtmaps",
+    log_curve=False,
+    limit_points=9000,  # 9k
+)
+callbacks_class_parser_pairs.append((LogPrcurveCallback, parser))
+
+parser = LogPrcurveCallback.add_arguments(ArgumentParser(), stage="test")
+parser.set_defaults(
+    scores_key="score_maps",
+    gt_key="gtmaps",
+    log_curve=True,
+    limit_points=None,  # 9k
+)
+callbacks_class_parser_pairs.append((LogPrcurveCallback, parser))
 
 
 # >>>>>>>>>>>>>>>>>>> argv <<<<<<<<<<<<<<<<<<<<<<
@@ -237,68 +256,6 @@ results = train_dev01_bis.run(
 )
 
 print('end')
-
-
-# # ========================================================================= PR
-
-# def add_callbacks_log_pr(train: bool, validation: bool, test: bool):
-
-#     if train:
-#         callbacks.append(
-#             LogAveragePrecisionCallback(
-#                 stage=RunningStage.TRAINING,
-#                 scores_key="score_maps",
-#                 gt_key="gtmaps",
-#                 log_curve=False,
-#                 limit_points=PIXELWISE_PR_LIMIT_POINTS, 
-#                 python_generator=create_python_random_generator(seed),
-#             )
-#         )
-#     if validation:
-#         callbacks.append(
-#             LogAveragePrecisionCallback(
-#                 stage=RunningStage.VALIDATING,
-#                 scores_key="score_maps",
-#                 gt_key="gtmaps",
-#                 log_curve=False,
-#                 limit_points=PIXELWISE_PR_LIMIT_POINTS,  
-#                 python_generator=create_python_random_generator(seed),
-#             )
-#         )
-#     if test:
-#         callbacks.append(
-#             LogAveragePrecisionCallback(
-#                 stage=RunningStage.TESTING,
-#                 scores_key="score_maps",
-#                 gt_key="gtmaps",
-#                 log_curve=True,
-#                 limit_points=None,
-#                 python_generator=create_python_random_generator(seed),
-#             )
-#         )
-        
-            
-
-# wandb_log_pr=(False, True, True),
-# parser.add_argument(
-#     "--wandb_log_pr", type=bool, nargs=3,
-#     help="If set, the average precision curve will be logged, respectively, for train/validation/test. On test the PR curve is also logged."
-# )
-# wandb_log_pr: Tuple[bool, bool, bool],
-# assert len(wandb_log_pr) == 3, f"wandb_log_pr should have 3 bools, for train/validation/test, but got {wandb_log_pr}" 
-# assert all(isinstance(obj, bool) for obj in wandb_log_pr), f"wandb_log_pr should only have bool, got {wandb_log_pr}"
-# add_callbacks_log_pr(*wandb_log_pr)        
-
-
-
-
-
-
-
-
-
-
-
 
 
 

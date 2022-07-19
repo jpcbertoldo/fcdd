@@ -293,7 +293,6 @@ class LogRocCallback(
         self.python_generator = python_generator
         self.stage = stage
         
-
     @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
         pass  # just let the mixin do its job
@@ -349,21 +348,68 @@ class LogRocCallback(
         trainer.model.log(auc_logkey, roc_auc_score(binary_gt, scores))
 
 
-class LogAveragePrecisionCallback(
+class LogPrcurveCallback(
     MultiStageEpochEndCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
     RandomCallbackMixin,
     pl.Callback,
 ):
-
-    @MultiStageEpochEndCallbackMixin.init__stage
-    @RandomCallbackMixin.init__python_generator
+  
+    @staticmethod
+    def add_arguments(parser: ArgumentParser, stage: str) -> ArgumentParser:
+        
+        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        
+        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
+        
+        assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
+        
+        parser.description = f"Log PR curve for stage={stage}."
+        
+        argname = "scores_key"
+        parser.add_argument(
+            f"--callback_prcurve_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "gt_key"
+        parser.add_argument(
+            f"--callback_prcurve_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "log_curve"
+        parser.add_argument(
+            f"--callback_prcurve_{stage}_{argname}", dest=argname,
+            type=bool, 
+        )
+        
+        argname = "limit_points"
+        parser.add_argument(
+            f"--callback_prcurve_{stage}_{argname}", dest=argname,
+            type=int, 
+        )
+        
+        parser.set_defaults(
+            stage=stage,
+            # the seed here can be fixed, no need to follow the seed of the other
+            # random stuff because in anycase the training is already random, and 
+            # this randomness is just for the sampling of points used to estimate the PR curve
+            # it's not a big deal if all trainings use the same seed
+            python_generator=create_python_random_generator(0),
+        )
+        
+        return parser
+        
     def __init__(
         self,
         scores_key: str,
         gt_key: str,
-        log_curve: bool = False,
-        limit_points: int = 3000,
+        log_curve: bool,
+        limit_points: int,
+        # mixin args
+        python_generator: random.Random,
+        stage: RunningStage,
     ):
         """
         Log the average precision and (optionally) its curve (precision-recall curve) at the end of an epoch.
@@ -385,6 +431,10 @@ class LogAveragePrecisionCallback(
         self.gt_key = gt_key
         self.log_curve = log_curve
         self.limit_points = limit_points
+        
+        # mixin args
+        self.python_generator = python_generator
+        self.stage = stage
 
     @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):

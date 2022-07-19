@@ -436,6 +436,7 @@ def run_one(
     rundir: Path,
     normal_class: int,
     seed: int,
+    #
     wandb_logger: WandbLogger,
     callbacks: list,
 ):
@@ -636,6 +637,7 @@ def run(
     classes: List[str],
     confighashes_keys: Dict[str, Tuple[str, ...]] = {},
     wandb_init_config_extra: dict = {},
+    callbacks: List[pl.Callback] = [],
     **run_one_common_kwargs
 ) -> dict:
     
@@ -727,7 +729,7 @@ def run(
         )
         
         try:            
-            run_one(wandb_logger=wandb_logger, **run_one_kwargs,)
+            run_one(wandb_logger=wandb_logger, callbacks=callbacks, **run_one_kwargs,)
         
         except TypeError as ex:
             
