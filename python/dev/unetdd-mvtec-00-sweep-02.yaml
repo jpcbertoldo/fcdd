@@ -1,0 +1,35 @@
+program: unetdd_mvtec_00_sweep_02_train.py
+method: grid
+metric:
+  goal: maximize
+  name: test/avg-precision
+parameters:
+  supervise_mode:
+    values: 
+      - "synthetic-anomaly-confetti"
+      - "real-anomaly"
+  classes: 
+    values:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      - 13
+      - 14
+  seeds:
+    # i got these seed values from a random list of runs
+    values:
+      - "0x526f289f74732498"
+      - "0x40452d6f87068d81"
+      - "0x2395859d21efbbd6"
+      - "0x22cd096d5f8a9c21"
+      - "0xeb33f3d140c7b5f4"
