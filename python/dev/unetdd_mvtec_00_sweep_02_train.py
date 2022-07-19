@@ -1481,7 +1481,7 @@ parser.set_defaults(
     lightning_model_summary_max_depth=1,
     lightning_check_val_every_n_epoch=10,
     lightning_profiler=None,  # LIGHTNING_PROFILER_SIMPLE,
-    # lightning_gradient_clip_val=1.0,
+    lightning_gradient_clip_val=2e-1,
     lightning_gradient_clip_algorithm=LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE,
     lightning_deterministic=False,
 )

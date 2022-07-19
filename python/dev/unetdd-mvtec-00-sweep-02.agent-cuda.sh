@@ -15,7 +15,4 @@ then
 fi
 
 
-# OLD (IGNORED)
-# wandb agent mines-paristech-cmm/unetdd-mvtec-00/8g7n2cc5
-
-wandb agent mines-paristech-cmm/unetdd-mvtec-00/p1d4p8iq
+wandb agent mines-paristech-cmm/unetdd-mvtec-00/73omzk4h
