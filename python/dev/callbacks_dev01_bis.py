@@ -1134,11 +1134,6 @@ class LogPercentilesPerClassCallback(
         
         parser.set_defaults(
             stage=stage,
-            # the seed here can be fixed, no need to follow the seed of the other
-            # random stuff because in anycase the training is already random, and 
-            # this randomness is just for the sampling of points used to estimate the PR curve
-            # it's not a big deal if all trainings use the same seed
-            python_generator=create_python_random_generator(0),
         )
         
         return parser
@@ -1203,11 +1198,40 @@ class LogPercentilesPerClassCallback(
         wandb.log({logkey: table})
 
 
-class LogPerInstanceValueCallback(
+class LogPerInstanceMeanCallback(
     MultiStageEpochEndCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
     pl.Callback,
 ):
+
+    @staticmethod
+    def add_arguments(parser: ArgumentParser, mean_of: str, stage: str) -> ArgumentParser:
+        
+        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        
+        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
+        
+        assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
+        assert isinstance(mean_of, str), f"percentiles_of must be a str, got {type(mean_of)}"
+        assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, mean_of), f"percentiles_of must be a valid variable name, got {mean_of}"
+        
+        parser.description = f"Log per instance mean of {mean_of} for stage={stage}."
+        
+        argname = "values_key"
+        parser.add_argument(
+            f"--callback_perinstance_mean_{mean_of}_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "labels_key"
+        parser.add_argument(
+            f"--callback_perinstance_mean_{mean_of}_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        parser.set_defaults(stage=stage,)
+        
+        return parser
 
     def __init__(self, values_key: str, labels_key: str, stage: RunningStageOrStr,):
         """
@@ -1216,8 +1240,9 @@ class LogPerInstanceValueCallback(
         """
         super().__init__()
         assert values_key != "", f"values_key must not be empty"
-        assert labels_key != "", f"gt_key must not be empty"
-        assert values_key != labels_key, f"values_key and gt_key must be different, got {values_key} and {labels_key}"
+        assert labels_key != "", f"labels_key must not be empty"
+        assert values_key != labels_key, f"values_key and labels_key must be different, got {values_key} and {labels_key}"
+        
         self.values_key = values_key
         self.labels_key = labels_key
         
@@ -1267,7 +1292,7 @@ class LogPerInstanceValueCallback(
 
         current_stage = trainer.state.stage
         logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
-        logkey = f"{logkey_prefix}per-instance-value-of-{self.values_key}"
+        logkey = f"{logkey_prefix}perinstance-mean-{self.values_key}"
 
         wandb.log({logkey: table})
 

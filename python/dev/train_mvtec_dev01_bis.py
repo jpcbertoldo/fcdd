@@ -7,20 +7,14 @@ import os
 from pathlib import Path
 import time
 
-from pytorch_lightning.trainer.states import RunningStage
-
 import model_dev01
 import mvtec_dataset_dev01
 import train_dev01_bis
 import wandb
 from callbacks_dev01_bis import (
-    HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH,
-    HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
-    HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH, LOG_HISTOGRAM_MODE_LOG,
-    LOG_HISTOGRAM_MODES, DataloaderPreviewCallback, LearningRateLoggerCallback,
+    HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH, LOG_HISTOGRAM_MODE_LOG,
     LogPrcurveCallback, LogHistogramCallback,
-    LogHistogramsSuperposedCallback, LogImageHeatmapTableCallback,
-    LogPercentilesPerClassCallback, LogPerInstanceValueCallback,
+    LogHistogramsSuperposedCallback, LogImageHeatmapTableCallback, LogPerInstanceMeanCallback,
     LogRocCallback,)
 from common_dev01 import (LogdirBaserundir, Seeds, WandbOffline, WandbTags, CudaVisibleDevices, CliConfigHash, create_python_random_generator)
 
@@ -196,7 +190,21 @@ parser.set_defaults(
 )
 callbacks_class_parser_pairs.append((LogImageHeatmapTableCallback, parser))
 
+# PER-INSTANCE MEAN - score
+parser = LogPerInstanceMeanCallback.add_arguments(ArgumentParser(), mean_of="score", stage="test")
+parser.set_defaults(
+    values_key="score_maps",
+    labels_key="labels",
+)
+callbacks_class_parser_pairs.append((LogPerInstanceMeanCallback, parser))
 
+# PER-INSTANCE MEAN - loss
+parser = LogPerInstanceMeanCallback.add_arguments(ArgumentParser(), mean_of="loss", stage="test")
+parser.set_defaults(
+    values_key="loss_maps",
+    labels_key="labels",
+)
+callbacks_class_parser_pairs.append((LogPerInstanceMeanCallback, parser))
 
 # >>>>>>>>>>>>>>>>>>> argv <<<<<<<<<<<<<<<<<<<<<<
 
@@ -322,84 +330,6 @@ print('end')
 
 
 
-# # ================================ PER-INSTANCE ================================
-
-# # score
-# def add_callbacks_log_perinstance_mean_score(train: bool, validation: bool, test: bool):
-
-#     if train:
-#         callbacks.append(
-#             LogPerInstanceValueCallback(
-#                 stage=RunningStage.TRAINING,
-#                 values_key="score_maps",
-#                 labels_key="labels",
-#             )
-#         )
-                    
-#     if validation:
-#         callbacks.append(
-#             LogPerInstanceValueCallback(
-#                 stage=RunningStage.VALIDATING,
-#                 values_key="score_maps",
-#                 labels_key="labels",
-#             )
-#         )    
-    
-#     if test:
-#         callbacks.append(
-#             LogPerInstanceValueCallback(
-#                 stage=RunningStage.TESTING,
-#                 values_key="score_maps",
-#                 labels_key="labels",
-#             )
-#         )
-# # loss            
-# def add_callbacks_log_perinstance_mean_loss(train: bool, validation: bool, test: bool):
-
-#     if train:
-#         callbacks.append(
-#             LogPerInstanceValueCallback(
-#                 stage=RunningStage.TRAINING,
-#                 values_key="loss_maps",
-#                 labels_key="labels",
-#             )
-#         )
-                    
-#     if validation:
-#         callbacks.append(
-#             LogPerInstanceValueCallback(
-#                 stage=RunningStage.VALIDATING,
-#                 values_key="loss_maps",
-#                 labels_key="labels",
-#             )
-#         )    
-    
-#     if test:
-#         callbacks.append(
-#             LogPerInstanceValueCallback(
-#                 stage=RunningStage.TESTING,
-#                 values_key="loss_maps",
-#                 labels_key="labels",
-#             )
-#         )
-            
-
-# wandb_log_perinstance_mean_score = (False, False, True),
-# wandb_log_perinstance_mean_loss = (False, False, True),
-
-# parser.add_argument(
-#     "--wandb_log_perinstance_mean_score", type=bool, nargs=3,
-#     help="if true then the pixel score will be averaged per instance and logged in a table"
-# )
-# parser.add_argument(
-#     "--wandb_log_perinstance_mean_loss", type=bool, nargs=3,
-#     help="if true then the loss will be averaged per instance and logged in a table; you should give 3 values, respectively for the train/validation/test hooks"
-# )
-
-# wandb_log_perinstance_mean_score: Tuple[bool, bool, bool],
-# wandb_log_perinstance_mean_loss: Tuple[bool, bool, bool], 
-# add_callbacks_log_perinstance_mean_score(*wandb_log_perinstance_mean_score)
-# add_callbacks_log_perinstance_mean_loss(*wandb_log_perinstance_mean_loss)
 
 
 
@@ -440,9 +370,6 @@ print('end')
 
     # wandb_watch=None,
     # wandb_watch_log_freq=100,  # wandb's default
-    
-    
-    
     
     # checkpoint model weights
     # parser.add_argument(        
