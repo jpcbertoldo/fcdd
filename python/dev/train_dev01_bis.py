@@ -1,37 +1,83 @@
 #!/usr/bin/env python
 # coding: utf-8
-import contextlib
 import functools
 import itertools
-import os
-import time
-from datetime import datetime
 from pathlib import Path
 from re import A
-from typing import Any, Callable, List, Optional, Tuple, Dict, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profiler import (AdvancedProfiler, PyTorchProfiler,
                                         SimpleProfiler)
-from callbacks_dev01_bis import DataloaderPreviewCallback
 
+import model_dev01
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
-from callbacks_dev01_bis import LearningRateLoggerCallback
-from common_dev01_bis import (ArgumentParserOrArgumentGroup, hashify_config, none_or_str, seed_int2str,)
-import model_dev01
+from callbacks_dev01_bis import (LearningRateLoggerCallback)
+from common_dev01_bis import (ArgumentParserOrArgumentGroup, hashify_config,
+                              none_or_str, seed_int2str)
 
-# ======================================== exceptions ========================================
+# ======================================== lightning ========================================
 
-class ScriptError(Exception):
-    pass
+LIGHTNING_ACCELERATOR_CPU = "cpu"
+LIGHTNING_ACCELERATOR_GPU = "gpu"
+LIGHTNING_ACCELERATOR_CHOICES = (
+    LIGHTNING_ACCELERATOR_CPU, 
+    LIGHTNING_ACCELERATOR_GPU,
+)
+print(f"LIGHTNING_ACCELERATOR_CHOICES={LIGHTNING_ACCELERATOR_CHOICES}")
+
+# src: https://pytorch-lightning.readthedocs.io/en/latest/extensions/strategy.html
+LIGHTNING_STRATEGY_DDP = "ddp"
+LIGHTNING_STRATEGY_CHOICES = (
+    None,
+    LIGHTNING_STRATEGY_DDP,
+)
+print(f"LIGHTNING_STRATEGY_CHOICES={LIGHTNING_STRATEGY_CHOICES}")
 
 
-class ModelError(Exception):
-    pass
+LIGHTNING_PRECISION_32 = 32
+LIGHTNING_PRECISION_16 = 16
+LIGHTNING_PRECISION_CHOICES = (
+    LIGHTNING_PRECISION_32,
+    LIGHTNING_PRECISION_16,
+)
+print(f"LIGHTNING_PRECISION_CHOICES={LIGHTNING_PRECISION_CHOICES}")
 
+
+LIGHTNING_PROFILER_SIMPLE = "simple"
+LIGHTNING_PROFILER_ADVANCED = "advanced"
+LIGHTNING_PROFILER_PYTORCH = "pytorch"
+LIGHTNING_PROFILER_CHOICES = (
+    None,
+    LIGHTNING_PROFILER_SIMPLE,
+    LIGHTNING_PROFILER_ADVANCED,
+    LIGHTNING_PROFILER_PYTORCH,
+)
+print(f"LIGHTNING_PROFILER_CHOICES={LIGHTNING_PROFILER_CHOICES}")
+
+
+LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE = "value"  # pytorch lightning's default
+LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM = "norm"
+LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES = (
+    LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM,
+    LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE, 
+)
+
+# ======================================== wandb ========================================
+
+WANDB_CHECKPOINT_MODE_LAST = "last"
+# WANDB_CHECKPOINT_MODE_BEST = "best"
+# WANDB_CHECKPOINT_MODE_ALL = "all"
+WANDB_CHECKPOINT_MODES = (
+    None,
+    WANDB_CHECKPOINT_MODE_LAST,
+    # WANDB_CHECKPOINT_MODE_BEST,
+    # WANDB_CHECKPOINT_MODE_ALL, 
+)
+print(f"WANDB_CHECKPOINT_MODES={WANDB_CHECKPOINT_MODES}")
 
 # ======================================== dataset ========================================
 
@@ -71,7 +117,6 @@ def dataset_nclasses(dataset_name: str) -> int:
 def dataset_class_index(dataset_name: str, class_name: str) -> int:
     return dataset_class_labels(dataset_name).index(class_name)
 
-
 # ======================================== preprocessing ========================================
 
 @unknown_dataset
@@ -86,7 +131,6 @@ ALL_PREPROCESSING_CHOICES = tuple(set.union(*[
     for dataset_name in DATASET_CHOICES
 ]))
 print(f"PREPROCESSING_CHOICES={ALL_PREPROCESSING_CHOICES}")
-
 
 # ======================================== supervise mode ========================================
 
@@ -103,9 +147,7 @@ ALL_SUPERVISE_MODE_CHOICES = tuple(set.union(*[
 ]))
 print(f"SUPERVISE_MODE_CHOICES={ALL_SUPERVISE_MODE_CHOICES}")
 
-
 # ======================================== models ========================================
-
 
 MODEL_CLASSES = {
     model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.FCDD,
@@ -185,68 +227,14 @@ LOSS_CHOICES = tuple(set.union(*[
 ]))
 print(f"LOSS_CHOICES={LOSS_CHOICES}")
 
+# ======================================== exceptions ========================================
 
-# ======================================== pytorch lightning ========================================
-
-LIGHTNING_ACCELERATOR_CPU = "cpu"
-LIGHTNING_ACCELERATOR_GPU = "gpu"
-LIGHTNING_ACCELERATOR_CHOICES = (
-    LIGHTNING_ACCELERATOR_CPU, 
-    LIGHTNING_ACCELERATOR_GPU,
-)
-print(f"LIGHTNING_ACCELERATOR_CHOICES={LIGHTNING_ACCELERATOR_CHOICES}")
-
-# src: https://pytorch-lightning.readthedocs.io/en/latest/extensions/strategy.html
-LIGHTNING_STRATEGY_DDP = "ddp"
-LIGHTNING_STRATEGY_CHOICES = (
-    None,
-    LIGHTNING_STRATEGY_DDP,
-)
-print(f"LIGHTNING_STRATEGY_CHOICES={LIGHTNING_STRATEGY_CHOICES}")
+class ScriptError(Exception):
+    pass
 
 
-LIGHTNING_PRECISION_32 = 32
-LIGHTNING_PRECISION_16 = 16
-LIGHTNING_PRECISION_CHOICES = (
-    LIGHTNING_PRECISION_32,
-    LIGHTNING_PRECISION_16,
-)
-print(f"LIGHTNING_PRECISION_CHOICES={LIGHTNING_PRECISION_CHOICES}")
-
-
-LIGHTNING_PROFILER_SIMPLE = "simple"
-LIGHTNING_PROFILER_ADVANCED = "advanced"
-LIGHTNING_PROFILER_PYTORCH = "pytorch"
-LIGHTNING_PROFILER_CHOICES = (
-    None,
-    LIGHTNING_PROFILER_SIMPLE,
-    LIGHTNING_PROFILER_ADVANCED,
-    LIGHTNING_PROFILER_PYTORCH,
-)
-print(f"LIGHTNING_PROFILER_CHOICES={LIGHTNING_PROFILER_CHOICES}")
-
-
-LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE = "value"  # pytorch lightning's default
-LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM = "norm"
-LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES = (
-    LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM,
-    LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE, 
-)
-
-
-# ======================================== wandb ========================================
-
-
-WANDB_CHECKPOINT_MODE_LAST = "last"
-# WANDB_CHECKPOINT_MODE_BEST = "best"
-# WANDB_CHECKPOINT_MODE_ALL = "all"
-WANDB_CHECKPOINT_MODES = (
-    None,
-    WANDB_CHECKPOINT_MODE_LAST,
-    # WANDB_CHECKPOINT_MODE_BEST,
-    # WANDB_CHECKPOINT_MODE_ALL, 
-)
-print(f"WANDB_CHECKPOINT_MODES={WANDB_CHECKPOINT_MODES}")
+class ModelError(Exception):
+    pass
 
 
 # ==========================================================================================

@@ -1,27 +1,22 @@
 #!/usr/bin/env python
 
+import functools
 import hashlib
 import json
-from pathlib import Path
+import os
 import random
 import time
-from typing import List, Optional, Tuple
 import warnings
+from argparse import ArgumentParser, Namespace, _ArgumentGroup
+from functools import partial
+from pathlib import Path
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from torch import Tensor
-import warnings
-from functools import partial
-from scipy import signal 
-import os
-from argparse import ArgumentParser, Namespace
-import functools
-
-from argparse import _ArgumentGroup, ArgumentParser
-
-from typing import Any, Callable, List, Optional, Tuple, Dict, Union
 from pytorch_lightning.trainer.states import RunningStage
+from scipy import signal
+from torch import Tensor
 
 ArgumentParserOrArgumentGroup = Union[ArgumentParser, _ArgumentGroup]
 RunningStageOrStr = Union[RunningStage, str]
@@ -37,7 +32,6 @@ def none_or_int(value: str):
     if value.lower() == 'none':
         return None
     return int(value)
-
 
 
 def seed_str2int(seed: str):
@@ -134,7 +128,6 @@ class CudaVisibleDevices:
             os.environ["CUDA_VISIBLE_DEVICES"] = env_var_str
         
         del vars(args)['cuda_visible_devices']
-
 
 
 class LogdirBaserundir:

@@ -1,38 +1,22 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-from argparse import ArgumentParser, Namespace
-from functools import partialmethod
 import os
-from pathlib import Path
+import sys
 import time
+from argparse import ArgumentParser, Namespace
+from pathlib import Path
 
 import model_dev01
 import mvtec_dataset_dev01
 import train_dev01_bis
-import wandb
 from callbacks_dev01_bis import (
     HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
-    LOG_HISTOGRAM_MODE_LOG,
-    LogPrcurveCallback,
-    LogHistogramCallback,
-    LogHistogramsSuperposedCallback,
-    LogImageHeatmapTableCallback,
-    LogPerInstanceMeanCallback,
-    LogRocCallback,
-)
-from common_dev01_bis import (
-    LogdirBaserundir,
-    Seeds,
-    WandbOffline,
-    WandbTags,
-    CudaVisibleDevices,
-    CliConfigHash,
-    create_python_random_generator,
-)
-
-
-import sys
+    LOG_HISTOGRAM_MODE_LOG, LogHistogramCallback,
+    LogHistogramsSuperposedCallback, LogImageHeatmapTableCallback,
+    LogPerInstanceMeanCallback, LogPrcurveCallback, LogRocCallback)
+from common_dev01_bis import (CliConfigHash, CudaVisibleDevices,
+                              LogdirBaserundir, Seeds, WandbOffline, WandbTags,)
 
 start_time = int(time.time())
 print(f"start_time: {start_time}")
@@ -309,7 +293,7 @@ callbacks_class_and_namempa_by_argsgroup[group.title] = (
     cli_arg_name_map,
 )
 
-del group  # avoid bugs
+del group, cli_arg_name_map  # avoid bugs
 
 # >>>>>>>>>>>>>>>>>>> parse <<<<<<<<<<<<<<<<<<<<<<
 

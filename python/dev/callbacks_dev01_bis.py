@@ -2,11 +2,12 @@
 # coding: utf-8
 
 import abc
-from argparse import ArgumentParser, Namespace
 import functools
 import random
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+import re
 import warnings
+from argparse import ArgumentParser
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
@@ -15,18 +16,37 @@ import torchvision.transforms.functional_tensor as TFT
 from pytorch_lightning.trainer.states import RunningStage
 from sklearn.metrics import average_precision_score, roc_auc_score
 from torch import Tensor
-from torchvision.transforms import InterpolationMode
-from common_dev01_bis import AdaptiveClipError, ArgumentParserOrArgumentGroup, RunningStageOrStr, find_scores_clip_values_from_empircal_cdf
-from common_dev01_bis import (LogdirBaserundir, Seeds, WandbOffline, WandbTags, CudaVisibleDevices, CliConfigHash, create_python_random_generator, none_or_str, none_or_int)
+
 import data_dev01
-from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
-import re
 import hacked_dev01
 import wandb
+from common_dev01_bis import (AdaptiveClipError, ArgumentParserOrArgumentGroup,
+                              RunningStageOrStr,
+                              create_python_random_generator,
+                              find_scores_clip_values_from_empircal_cdf,
+                              none_or_int)
+from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
 
 
 CliArgNameMap = Dict[str, str]
 
+
+LOG_HISTOGRAM_MODE_LOG = "log"
+LOG_HISTOGRAM_MODE_SUMMARY = "summary"
+LOG_HISTOGRAM_MODES = (None, LOG_HISTOGRAM_MODE_LOG, LOG_HISTOGRAM_MODE_SUMMARY)
+
+HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH = "minmax-epoch"
+HEATMAP_NORMALIZATION_MINMAX_INSTANCE = "minmax-instance"
+HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH = "percentiles-epoch"
+HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH = "percentiles-adaptive-cdf-epoch"
+HEATMAP_NORMALIZATION_CHOICES = (
+    HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
+    HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH,
+    HEATMAP_NORMALIZATION_MINMAX_INSTANCE,
+    HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
+)
+
+REGEXSTR_ASSERT_VARIABLE_NAME = "^[a-zA-Z_][a-zA-Z0-9_]*$"
 
 def merge_steps_outputs(steps_outputs: List[Dict[str, Tensor]]):
     """
@@ -450,12 +470,6 @@ class LogPrcurveCallback(
         trainer.model.log(avg_precision_logkey, average_precision_score(binary_gt, scores))
 
 
-LOG_HISTOGRAM_MODE_LOG = "log"
-LOG_HISTOGRAM_MODE_SUMMARY = "summary"
-LOG_HISTOGRAM_MODES = (None, LOG_HISTOGRAM_MODE_LOG, LOG_HISTOGRAM_MODE_SUMMARY)
-
-REGEXSTR_ASSERT_VARIABLE_NAME = "^[a-zA-Z_][a-zA-Z0-9_]*$"
-
 class LogHistogramCallback(
     MultiStageEpochEndCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
@@ -760,18 +774,6 @@ class DataloaderPreviewCallback(pl.Callback):
                 for idx, (img, mask) in enumerate(zip(anom_imgs, anom_gtmaps))
             ],
         })
-
-
-HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH = "minmax-epoch"
-HEATMAP_NORMALIZATION_MINMAX_INSTANCE = "minmax-instance"
-HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH = "percentiles-epoch"
-HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH = "percentiles-adaptive-cdf-epoch"
-HEATMAP_NORMALIZATION_CHOICES = (
-    HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
-    HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH,
-    HEATMAP_NORMALIZATION_MINMAX_INSTANCE,
-    HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
-)
 
 
 class LogImageHeatmapTableCallback(
