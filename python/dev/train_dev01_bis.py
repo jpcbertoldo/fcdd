@@ -22,6 +22,7 @@ import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
 from callbacks_dev01 import LearningRateLoggerCallback
 from common_dev01 import (hashify_config, seed_int2str,)
+import model_dev01
 
 # ======================================== exceptions ========================================
 
@@ -106,7 +107,6 @@ print(f"SUPERVISE_MODE_CHOICES={ALL_SUPERVISE_MODE_CHOICES}")
 
 # ======================================== models ========================================
 
-import model_dev01
 
 MODEL_CLASSES = {
     model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.FCDD,

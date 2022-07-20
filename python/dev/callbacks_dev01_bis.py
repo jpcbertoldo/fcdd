@@ -20,6 +20,11 @@ from common_dev01 import AdaptiveClipError, find_scores_clip_values_from_empirca
 from common_dev01 import (LogdirBaserundir, Seeds, WandbOffline, WandbTags, CudaVisibleDevices, CliConfigHash, create_python_random_generator)
 import data_dev01
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
+from train_dev01_bis import none_or_str, none_or_int
+import re
+import hacked_dev01
+import wandb
+
 
 RunningStageOrStr = Union[RunningStage, str]
 
@@ -300,8 +305,6 @@ class LogRocCallback(
 
         if self.log_curve:
             # i copied and adapted wandb.plot.roc_curve.roc_curve()
-            import hacked_dev01
-            import wandb
             wandb.log({curve_logkey: hacked_dev01.roc_curve(binary_gt, scores, labels=["anomalous"])})
 
         trainer.model.log(auc_logkey, roc_auc_score(binary_gt, scores))
@@ -442,8 +445,6 @@ class LogPrcurveCallback(
 
         if self.log_curve:
             # i copied and adapted wandb.plot.pr_curve.pr_curve()
-            import hacked_dev01
-            import wandb
             wandb.log({curve_logkey: hacked_dev01.pr_curve(binary_gt, scores, labels=["anomalous"])})
 
         trainer.model.log(avg_precision_logkey, average_precision_score(binary_gt, scores))
@@ -452,6 +453,8 @@ class LogPrcurveCallback(
 LOG_HISTOGRAM_MODE_LOG = "log"
 LOG_HISTOGRAM_MODE_SUMMARY = "summary"
 LOG_HISTOGRAM_MODES = (None, LOG_HISTOGRAM_MODE_LOG, LOG_HISTOGRAM_MODE_SUMMARY)
+
+REGEXSTR_ASSERT_VARIABLE_NAME = "^[a-zA-Z_][a-zA-Z0-9_]*$"
 
 class LogHistogramCallback(
     MultiStageEpochEndCallbackMixin,
@@ -468,7 +471,7 @@ class LogHistogramCallback(
         
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         assert isinstance(histogram_of, str), f"histogram_of must be a str, got {type(histogram_of)}"
-        
+        assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, histogram_of), f"histogram_of must be a valid variable name, got {histogram_of}"
         
         parser.description = f"Log histogram of {histogram_of} for stage={stage}."
         
@@ -530,8 +533,6 @@ class LogHistogramCallback(
         # requirement from wandb.Histogram()
         values = values.detach().numpy() if values.requires_grad else values
 
-        import wandb
-
         if self.mode == LOG_HISTOGRAM_MODE_LOG:
             wandb.log({logkey: wandb.Histogram(values)})
 
@@ -557,8 +558,11 @@ class LogHistogramsSuperposedCallback(
         assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
         
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
+        assert isinstance(histogram_of, str), f"histogram_of must be a str, got {type(histogram_of)}"
+        assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, histogram_of), f"histogram_of must be a valid variable name, got {histogram_of}"
         
-        parser.description = f"Log histograms superposed per class for stage={stage}."
+        
+        parser.description = f"Log histograms superposed per class OF {histogram_of} for stage={stage}."
         
         argname = "values_key"
         parser.add_argument(
@@ -693,8 +697,6 @@ class LogHistogramsSuperposedCallback(
         logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
         logkey = f"{logkey_prefix}histogram-superposed-per-class-of-{self.values_key}"
 
-        import wandb
-
         table = wandb.Table(data=table, columns=[self.values_key, "gt"])
 
         if self.mode == LOG_HISTOGRAM_MODE_LOG:
@@ -746,7 +748,6 @@ class DataloaderPreviewCallback(pl.Callback):
             norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps
         ) = data_dev01.generate_dataloader_images(self.dataloader, nimages_perclass=self.n_samples)
 
-        import wandb
         wandb.log({
             f"{self.stage}/preview_normal": [
                 wandb.Image(img, caption=[f"normal {idx:03d}"], masks=self._get_mask_dict(mask))
@@ -778,16 +779,96 @@ class LogImageHeatmapTableCallback(
     pl.Callback,
 ):
 
+    @staticmethod
+    def add_arguments(parser: ArgumentParser, stage: str) -> ArgumentParser:
+        
+        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        
+        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
+        
+        assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
+        
+        parser.description = f"Log image/heatmap table for stage={stage}."
+        
+        argname = "imgs_key"
+        parser.add_argument(
+            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "scores_key"
+        parser.add_argument(
+            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "masks_key"
+        parser.add_argument(
+            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "labels_key"
+        parser.add_argument(
+            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "labels_key"
+        parser.add_argument(
+            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "nsamples"
+        parser.add_argument(
+            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            type=int, 
+            help="How many images per class to log",
+        )
+        
+        argname = "resolution"
+        parser.add_argument(
+            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            type=none_or_int, 
+            help="If None, the original resolution is used. Otherwise, the resolution is scaled to this value.",
+        )
+        
+        argname = "heatmap_normalization"
+        parser.add_argument(
+            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            type=str, choices=HEATMAP_NORMALIZATION_CHOICES,
+        )
+        
+        argname = "min_max_percentiles"
+        parser.add_argument(
+            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            type=float, nargs=2, 
+            help="Percentile values for the contrast of the heatmap: min/max", 
+        )
+        
+        parser.set_defaults(
+            stage=stage,
+            # the seed here can be fixed, no need to follow the seed of the other
+            # random stuff because in anycase the training is already random, and 
+            # this randomness is just for the sampling of points used to estimate the PR curve
+            # it's not a big deal if all trainings use the same seed
+            python_generator=create_python_random_generator(0),
+        )
+        
+        return parser
+    
     def __init__(
         self,
         imgs_key: str,
         scores_key: str,
         masks_key: str,
         labels_key: str,
-        nsamples_each_class: int,
+        nsamples: int,
         resolution: Optional[int],
         heatmap_normalization: str,
         min_max_percentiles: Optional[Tuple[float, float]],
+        # mixin args
         stage: RunningStageOrStr,
         python_generator: random.Random,
     ):
@@ -805,13 +886,16 @@ class LogImageHeatmapTableCallback(
         keys = [imgs_key, scores_key, masks_key, labels_key]
         assert len(keys) == len(set(keys)), f"keys must be unique, got {keys}"
 
-        assert nsamples_each_class > 0, f"nsamples must be > 0, got {nsamples_each_class}"
+        assert nsamples >= 0, f"nsamples must be >= 0, got {nsamples}"
+        if nsamples == 0:
+            warnings.warn(f"nsamples={nsamples} is 0, no images will be logged for stage={stage}")
 
         assert heatmap_normalization in HEATMAP_NORMALIZATION_CHOICES, f"heatmap_normalization must be one of {HEATMAP_NORMALIZATION_CHOICES}, got {heatmap_normalization}"
 
         if heatmap_normalization == HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH:
             assert min_max_percentiles is not None, f"min_max_percentiles must be provided when heatmap_normalization is {HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH}"
             assert len(min_max_percentiles) == 2, f"min_max_percentiles must be a tuple of length 2, got {min_max_percentiles}"
+            min_max_percentiles = tuple(min_max_percentiles)
             min_percentile, max_percentile = min_max_percentiles
             assert 0 <= min_percentile < max_percentile <= 100, f"min_max_percentiles must be between 0 and 100 and min must be < max, got {min_max_percentiles}"
 
@@ -822,7 +906,7 @@ class LogImageHeatmapTableCallback(
         self.scores_key = scores_key
         self.masks_key = masks_key
         self.labels_key = labels_key
-        self.nsamples_each_class = nsamples_each_class
+        self.nsamples = nsamples
         self.heatmap_normalization = heatmap_normalization
         self.resolution = resolution
         self.min_max_percentiles = min_max_percentiles
@@ -862,13 +946,13 @@ class LogImageHeatmapTableCallback(
             normals_indices = np.where(labels == NOMINAL_TARGET)[0]
             anomalies_indices = np.where(labels == ANOMALY_TARGET)[0]
 
-            if len(normals_indices) > self.nsamples_each_class:
+            if len(normals_indices) > self.nsamples:
                 # python_generator.sample() is without replacement
-                normals_indices: List[int] = self.python_generator.sample(normals_indices.tolist(), self.nsamples_each_class)
+                normals_indices: List[int] = self.python_generator.sample(normals_indices.tolist(), self.nsamples)
 
-            if len(anomalies_indices) > self.nsamples_each_class:
+            if len(anomalies_indices) > self.nsamples:
                 # python_generator.sample() is without replacement
-                anomalies_indices: List[int] = self.python_generator.sample(anomalies_indices.tolist(), self.nsamples_each_class)
+                anomalies_indices: List[int] = self.python_generator.sample(anomalies_indices.tolist(), self.nsamples)
 
             self.selected_instances_indices = [*normals_indices, *anomalies_indices]
 
@@ -987,7 +1071,6 @@ class LogImageHeatmapTableCallback(
 
         class_labels_dict = {NOMINAL_TARGET: "normal", ANOMALY_TARGET: "anomalous",}
 
-        import wandb
         table = wandb.Table(columns=["idx", "idx-in-epoch", "label", "image", "heatmap", "normalization"])
 
         for idx, idx_in_epoch in enumerate(selected_instances_indices):
@@ -1017,6 +1100,48 @@ class LogPercentilesPerClassCallback(
     LastEpochOutputsDependentCallbackMixin,
     pl.Callback,
 ):
+  
+    @staticmethod
+    def add_arguments(parser: ArgumentParser, percentiles_of: str, stage: str) -> ArgumentParser:
+        
+        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        
+        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
+        
+        assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
+        assert isinstance(percentiles_of, str), f"percentiles_of must be a str, got {type(percentiles_of)}"
+        assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, percentiles_of), f"percentiles_of must be a valid variable name, got {percentiles_of}"
+        
+        parser.description = f"Log percentiles per class of {percentiles_of} for stage={stage}."
+        
+        argname = "values_key"
+        parser.add_argument(
+            f"--callback_percentiles_{percentiles_of}_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "gt_key"
+        parser.add_argument(
+            f"--callback_percentiles_{percentiles_of}_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "percentiles"
+        parser.add_argument(
+            f"--callback_percentiles_{percentiles_of}_{stage}_{argname}", dest=argname,
+            type=bool, 
+        )
+        
+        parser.set_defaults(
+            stage=stage,
+            # the seed here can be fixed, no need to follow the seed of the other
+            # random stuff because in anycase the training is already random, and 
+            # this randomness is just for the sampling of points used to estimate the PR curve
+            # it's not a big deal if all trainings use the same seed
+            python_generator=create_python_random_generator(0),
+        )
+        
+        return parser
 
     def __init__(self, values_key: str, gt_key: str, percentiles: Tuple[float, ...], stage: RunningStageOrStr,):
         """
@@ -1069,8 +1194,6 @@ class LogPercentilesPerClassCallback(
         current_stage = trainer.state.stage
         logkey_prefix = f"{current_stage}/" if current_stage is not None else ""
         logkey = f"{logkey_prefix}percentiles-per-class-of-{self.values_key}"
-
-        import wandb
 
         table = wandb.Table(columns=["percentile", "normal", "anomalous"])
 
@@ -1137,7 +1260,6 @@ class LogPerInstanceValueCallback(
             dim=1,
         )
 
-        import wandb
         table = wandb.Table(
             data=table.numpy(),
             columns=["idx", f"image-mean", "image-label"]

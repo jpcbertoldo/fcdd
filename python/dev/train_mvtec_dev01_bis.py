@@ -169,6 +169,34 @@ parser.set_defaults(
 )
 callbacks_class_parser_pairs.append((LogHistogramsSuperposedCallback, parser))
 
+# IMAGE/HEATMAP TABLE
+parser = LogImageHeatmapTableCallback.add_arguments(ArgumentParser(), stage="validate")
+parser.set_defaults(
+    imgs_key="inputs",
+    scores_key="score_maps",
+    masks_key="gtmaps",
+    labels_key="labels",
+    nsamples=0,
+    resolution=None,
+    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
+    min_max_percentiles=None,
+)
+callbacks_class_parser_pairs.append((LogImageHeatmapTableCallback, parser))
+
+parser = LogImageHeatmapTableCallback.add_arguments(ArgumentParser(), stage="test")
+parser.set_defaults(
+    imgs_key="inputs",
+    scores_key="score_maps",
+    masks_key="gtmaps",
+    labels_key="labels",
+    nsamples=30,
+    resolution=None,
+    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
+    min_max_percentiles=None,
+)
+callbacks_class_parser_pairs.append((LogImageHeatmapTableCallback, parser))
+
+
 
 # >>>>>>>>>>>>>>>>>>> argv <<<<<<<<<<<<<<<<<<<<<<
 
@@ -291,185 +319,6 @@ results = train_dev01_bis.run(
 )
 
 print('end')
-
-
-
-# # ========================================================================= heatmaps
-
-# def add_callbacks_log_image_heatmap(
-#     nsamples_train: int, nsamples_validation: int, nsamples_test: int, 
-#     resolution_train: Optional[int], resolution_validation: Optional[int], resolution_test: Optional[int],
-# ):
-
-#     if nsamples_train > 0:
-#         callbacks.extend([     
-#             LogImageHeatmapTableCallback(
-#                 stage=RunningStage.TRAINING,
-#                 imgs_key="inputs",
-#                 scores_key="score_maps",
-#                 masks_key="gtmaps",
-#                 labels_key="labels",
-#                 nsamples_each_class=nsamples_train,
-#                 resolution=resolution_train,
-#                 # heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
-#                 # min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
-#                 heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
-#                 python_generator=create_python_random_generator(seed),
-#             ),
-#         ])
-    
-#     if nsamples_validation > 0:
-#         callbacks.extend([     
-#             LogImageHeatmapTableCallback(
-#                 stage=RunningStage.VALIDATING,
-#                 imgs_key="inputs",
-#                 scores_key="score_maps",
-#                 masks_key="gtmaps",
-#                 labels_key="labels",
-#                 nsamples_each_class=nsamples_validation,
-#                 resolution=resolution_validation,
-#                 # heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
-#                 # min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
-#                 heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
-#                 python_generator=create_python_random_generator(seed),
-#             ),
-#         ])
-    
-#     if nsamples_test > 0:
-#         callbacks.extend([     
-#             LogImageHeatmapTableCallback(
-#                 stage=RunningStage.TESTING,
-#                 imgs_key="inputs",
-#                 scores_key="score_maps",
-#                 masks_key="gtmaps",
-#                 labels_key="labels",
-#                 nsamples_each_class=nsamples_test,
-#                 resolution=resolution_test,
-#                 # heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
-#                 # min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
-#                 heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
-#                 python_generator=create_python_random_generator(seed),
-#             ),
-#         ])
-
-# # wandb_log_image_heatmap_contrast_percentiles=(3., 97.),  # (contrast_min, contrast_max)
-# wandb_log_image_heatmap_nsamples=(0, 0, 30),
-# wandb_log_image_heatmap_resolution=(None, None, None),
-
-# group_log_image_heatmap = parser.add_argument_group("log-image-heatmap")
-# # group_log_image_heatmap.add_argument(
-# #     "--wandb_log_image_heatmap_contrast_percentiles", type=float, nargs=2,
-# #     help="Percentile values for the contrast of the heatmap: min/max"
-# # )
-# group_log_image_heatmap.add_argument(
-#     "--wandb_log_image_heatmap_nsamples", nargs=3, type=int,
-#     help="how many of each class (normal/anomalous) per epoch?"
-#          "alwyas log the same ones assuming the order of images doesnt' change"
-# )
-# group_log_image_heatmap.add_argument(
-#     "--wandb_log_image_heatmap_resolution", nargs=3, type=none_or_int,
-#     help="size of the image (width=height), and if 'None' then keep the original size"
-# )
-
-# # wandb_log_image_heatmap_contrast_percentiles: Tuple[float, float],
-# # wandb_log_image_heatmap_nsamples: Tuple[int, int, int],
-# # wandb_log_image_heatmap_resolution: Tuple[int, int, int],
-
-# # add_callbacks_log_image_heatmap(
-# #     *wandb_log_image_heatmap_nsamples, *wandb_log_image_heatmap_resolution,
-# # )
-
-
-
-
-
-
-
-
-
-
-# preview_nimages=0,
-
-# parser.add_argument(
-#     "--preview_nimages", type=int, help="Number of images to preview per class (normal/anomalous)."
-# )
-# preview_nimages: int,
-
-
-# if preview_nimages > 0:
-#     datamodule.setup("fit")
-#     callbacks.append(
-#         DataloaderPreviewCallback(
-#             dataloader=datamodule.train_dataloader(embed_preprocessing=True), 
-#             n_samples=preview_nimages, logkey_prefix="train/preview",
-#         )
-#     )
-
-
-
-
-
-
-
-
-
-
-
-
-# # ================================ PERCENTILES ================================
-
-# def add_callbacks_log_percentiles_score(train: Tuple[float, ...], validation: Tuple[float, ...]):
-
-#     if len(train) > 0:
-#         callbacks.append(
-#             LogPercentilesPerClassCallback(
-#                 stage=RunningStage.TRAINING, 
-#                 values_key="score_maps",
-#                 gt_key="gtmaps", 
-#                 percentiles=train,
-#             )
-#         )
-                    
-#     if len(validation) > 0:
-#         callbacks.append(
-#             LogPercentilesPerClassCallback(
-#                 stage=RunningStage.VALIDATING, 
-#                 values_key="score_maps",
-#                 gt_key="gtmaps", 
-#                 percentiles=validation,
-#             )
-#         )           
-
-# # wandb_log_percentiles_score_train=(0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
-# wandb_log_percentiles_score_train=(),
-# # wandb_log_percentiles_score_validation=(0., 1., 2., 5., 10., 90., 95., 98., 99., 100.,),
-# wandb_log_percentiles_score_validation=(),
-
-# parser.add_argument(
-#     "--wandb_log_percentiles_score_train", type=float, nargs="*",
-#     help="If set, the score will be logged at the given percentiles for train (normal and anomalous scores separatedly)."
-# )
-# parser.add_argument(
-#     "--wandb_log_percentiles_score_validation", type=float, nargs="*",
-#     help="If set, the score will be logged at the given percentiles for train (normal and anomalous scores separatedly)."
-# )
-# args_.wandb_log_percentiles_score = (
-#     args_.wandb_log_percentiles_score_train,
-#     args_.wandb_log_percentiles_score_validation,
-# ) 
-# del vars(args_)['wandb_log_percentiles_score_train']
-# del vars(args_)['wandb_log_percentiles_score_validation']
-    
-# wandb_log_percentiles_score: Tuple[Tuple[float, ...], Tuple[float, ...]],
-# add_callbacks_log_percentiles_score(*wandb_log_percentiles_score)
-
-
-
-
-
-
-
-
 
 
 
