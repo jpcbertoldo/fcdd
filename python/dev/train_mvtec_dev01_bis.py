@@ -12,7 +12,8 @@ import mvtec_dataset_dev01
 import train_dev01_bis
 from callbacks_dev01_bis import (
     HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
-    LOG_HISTOGRAM_MODE_LOG, LogHistogramCallback,
+    LOG_HISTOGRAM_MODE_LOG,
+    LogHistAvgAtEpochEnd, LogHistogramCallback,
     LogHistogramsSuperposedCallback, LogImageHeatmapTableCallback,
     LogPerInstanceMeanCallback, LogPrcurveCallback, LogRocCallback)
 from common_dev01_bis import (CliConfigHash, CudaVisibleDevices,
@@ -290,6 +291,18 @@ cli_arg_name_map = LogPerInstanceMeanCallback.cli_add_arguments(
 )
 callbacks_class_and_namempa_by_argsgroup[group.title] = (
     LogPerInstanceMeanCallback,
+    cli_arg_name_map,
+)
+
+# LOG HIST AVERAGE END 
+group = parser.add_argument_group("log_histavg_validate")
+cli_arg_name_map = LogHistAvgAtEpochEnd.cli_add_arguments(
+    group, stage="validate",
+    # defaults
+    metric_names=["validate/avg-precision", "validate/roc-auc"],
+)
+callbacks_class_and_namempa_by_argsgroup[group.title] = (
+    LogHistAvgAtEpochEnd,
     cli_arg_name_map,
 )
 

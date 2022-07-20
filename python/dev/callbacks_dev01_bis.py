@@ -5,11 +5,13 @@ import abc
 import functools
 import random
 import re
+from this import d
 import warnings
 from argparse import ArgumentParser
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torchvision.transforms.functional_tensor as TFT
@@ -27,6 +29,7 @@ from common_dev01_bis import (AdaptiveClipError, ArgumentParserOrArgumentGroup,
                               none_or_int)
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
 
+from pytorch_lightning.loggers import WandbLogger
 
 CliArgNameMap = Dict[str, str]
 
@@ -89,11 +92,15 @@ class LastEpochOutputsDependentCallbackMixin:
         assert pl_module.last_epoch_outputs is None, f"pl_module.last_epoch_outputs must be None at the beginning of stage (={stage}), did you forget to clean up in the teardown()?  got {pl_module.last_epoch_outputs}"
         
 
-class MultiStageEpochEndCallbackMixin(abc.ABC):
+class MultiStageCallbackMixin(abc.ABC):
     """
-    use this mixin to call a callback on multiple stages
-    you must decorate __init__ with init_stage_arg()
-    when using this mixin, you should define the function _multi_stage_epoch_end_do() in your module
+    stage multiplexer for callbacks that use on_{stage}_epoch_end 
+    use this mixin to call a callback on one out of the accepted stages so you can use the same callback for multiple stages with different instances
+    you must set the property `stage` to the stage at the __init__ of the callback
+    when using this mixin, you should define the function one of the functions 
+     - _multi_stage_epoch_end_do()
+     - _multi_stage_end_do() 
+    in your callback
     """
 
     ACCEPTED_STAGES = [
@@ -102,8 +109,10 @@ class MultiStageEpochEndCallbackMixin(abc.ABC):
         RunningStage.TESTING,
     ]
 
-    @abc.abstractmethod
     def _multi_stage_epoch_end_do(self, *args, **kwargs):
+        pass
+    
+    def _multi_stage_end_do(self, *args, **kwargs):
         pass
     
     @property
@@ -141,9 +150,21 @@ class MultiStageEpochEndCallbackMixin(abc.ABC):
         if self.should_log(RunningStage.TESTING, self.stage, trainer.state.stage) and pl_module.last_epoch_outputs is not None:
             self._multi_stage_epoch_end_do(trainer, pl_module)
 
+    def on_train_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        if self.should_log(RunningStage.TRAINING, self.stage, trainer.state.stage) and pl_module.last_epoch_outputs is not None:
+            self._multi_stage_end_do(trainer, pl_module)
+
+    def on_validation_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        if self.should_log(RunningStage.VALIDATING, self.stage, trainer.state.stage) and pl_module.last_epoch_outputs is not None:
+            self._multi_stage_end_do(trainer, pl_module)
+
+    def on_test_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        if self.should_log(RunningStage.TESTING, self.stage, trainer.state.stage) and pl_module.last_epoch_outputs is not None:
+            self._multi_stage_end_do(trainer, pl_module)
+
 
 class LogRocCallback(
-    MultiStageEpochEndCallbackMixin,
+    MultiStageCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
     RandomCallbackMixin,
     pl.Callback,
@@ -152,7 +173,7 @@ class LogRocCallback(
     @staticmethod
     def cli_add_arguments(parser: ArgumentParserOrArgumentGroup, stage: str, **defaults) -> CliArgNameMap:
         
-        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        assert stage in MultiStageCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageCallbackMixin.ACCEPTED_STAGES}, got {stage}"
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         
         parser.description = f"Log ROC and ROC-AUC score for stage={stage}."
@@ -282,7 +303,7 @@ class LogRocCallback(
 
 
 class LogPrcurveCallback(
-    MultiStageEpochEndCallbackMixin,
+    MultiStageCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
     RandomCallbackMixin,
     pl.Callback,
@@ -291,7 +312,7 @@ class LogPrcurveCallback(
     @staticmethod
     def cli_add_arguments(parser: ArgumentParser, stage: str, **defaults) -> CliArgNameMap:
         
-        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        assert stage in MultiStageCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageCallbackMixin.ACCEPTED_STAGES}, got {stage}"
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         
         parser.description = f"Log PR curve for stage={stage}."
@@ -421,7 +442,7 @@ class LogPrcurveCallback(
 
 
 class LogHistogramCallback(
-    MultiStageEpochEndCallbackMixin,
+    MultiStageCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
     pl.Callback,
 ):
@@ -429,7 +450,7 @@ class LogHistogramCallback(
     @staticmethod
     def cli_add_arguments(parser: ArgumentParser, histogram_of: str, stage: str, **defaults) -> CliArgNameMap:
         
-        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        assert stage in MultiStageCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageCallbackMixin.ACCEPTED_STAGES}, got {stage}"
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         assert isinstance(histogram_of, str), f"histogram_of must be a str, got {type(histogram_of)}"
         assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, histogram_of), f"histogram_of must be a valid variable name, got {histogram_of}"
@@ -511,7 +532,7 @@ class LogHistogramCallback(
 
 
 class LogHistogramsSuperposedCallback(
-    MultiStageEpochEndCallbackMixin,
+    MultiStageCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
     RandomCallbackMixin,
     pl.Callback,
@@ -520,7 +541,7 @@ class LogHistogramsSuperposedCallback(
     @staticmethod
     def cli_add_arguments(parser: ArgumentParser, histogram_of: str, stage: str, **defaults) -> CliArgNameMap:
         
-        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        assert stage in MultiStageCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageCallbackMixin.ACCEPTED_STAGES}, got {stage}"
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         assert isinstance(histogram_of, str), f"histogram_of must be a str, got {type(histogram_of)}"
         assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, histogram_of), f"histogram_of must be a valid variable name, got {histogram_of}"
@@ -725,7 +746,7 @@ class DataloaderPreviewCallback(pl.Callback):
 
 
 class LogImageHeatmapTableCallback(
-    MultiStageEpochEndCallbackMixin,
+    MultiStageCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
     RandomCallbackMixin,
     pl.Callback,
@@ -734,7 +755,7 @@ class LogImageHeatmapTableCallback(
     @staticmethod
     def cli_add_arguments(parser: ArgumentParser, stage: str, **defaults) -> CliArgNameMap:
         
-        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        assert stage in MultiStageCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageCallbackMixin.ACCEPTED_STAGES}, got {stage}"
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         
         parser.description = f"Log image/heatmap table for stage={stage}."
@@ -1037,7 +1058,7 @@ class LogImageHeatmapTableCallback(
 
 
 class LogPercentilesPerClassCallback(
-    MultiStageEpochEndCallbackMixin,
+    MultiStageCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
     pl.Callback,
 ):
@@ -1045,7 +1066,7 @@ class LogPercentilesPerClassCallback(
     @staticmethod
     def cli_add_arguments(parser: ArgumentParser, percentiles_of: str, stage: str, **defaults) -> CliArgNameMap:
         
-        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        assert stage in MultiStageCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageCallbackMixin.ACCEPTED_STAGES}, got {stage}"
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         assert isinstance(percentiles_of, str), f"percentiles_of must be a str, got {type(percentiles_of)}"
         assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, percentiles_of), f"percentiles_of must be a valid variable name, got {percentiles_of}"
@@ -1145,7 +1166,7 @@ class LogPercentilesPerClassCallback(
 
 
 class LogPerInstanceMeanCallback(
-    MultiStageEpochEndCallbackMixin,
+    MultiStageCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
     pl.Callback,
 ):
@@ -1153,7 +1174,7 @@ class LogPerInstanceMeanCallback(
     @staticmethod
     def cli_add_arguments(parser: ArgumentParser, mean_of: str, stage: str, **defaults) -> CliArgNameMap:
         
-        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        assert stage in MultiStageCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageCallbackMixin.ACCEPTED_STAGES}, got {stage}"
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         assert isinstance(mean_of, str), f"percentiles_of must be a str, got {type(mean_of)}"
         assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, mean_of), f"percentiles_of must be a valid variable name, got {mean_of}"
@@ -1256,3 +1277,99 @@ class LearningRateLoggerCallback(pl.Callback):
             # joao: idk why this [0] is necessary
             current_lr = scheduler['scheduler'].get_last_lr()[0]
             trainer.model.log(f"train/learning_rate_scheduler_idx={idx}", current_lr)
+
+
+class LogHistAvgAtEpochEnd(
+    MultiStageCallbackMixin,
+    pl.Callback,
+):
+    """
+    At the end of an epoch, fetch the history of the given metrics and log their average over the history.
+    BUG: it is always missing the current epoch and will log the average of the history up to the last epoch.
+    """
+    
+    @staticmethod
+    def cli_add_arguments(parser: ArgumentParserOrArgumentGroup, stage: str, **defaults) -> CliArgNameMap:
+        
+        assert stage in MultiStageCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
+        
+        parser.description = f"At the end of an epoch, fetch the history of the given metrics and log their average over the history for stage={stage}."
+        
+        cli_arg_name_map = dict()
+                
+        def cliname(argname):
+            cliname = f"log_histavg_{stage}_{argname}"
+            cli_arg_name_map[cliname] = argname
+            return cliname
+        
+        parser.add_argument(
+            f'--{cliname("metric_names")}', 
+            type=str, action='extend', nargs='+',
+        )
+           
+        # these shouldnt be changed
+        parser.add_argument(f'--{cliname("stage")}', type=str, default=stage,)
+        parser.set_defaults(**{cliname(argname): argval for argname, argval in defaults.items()})
+        
+        return cli_arg_name_map
+        
+    def __init__(
+        self,
+        metric_names: Tuple[str, ...],
+        # mixin args
+        stage: RunningStageOrStr,
+    ):
+        super().__init__()
+        
+        if len(metric_names) == 0:
+            warnings.warn(f"no metrics were passed to LogHistAvgAtEndOfEpoch, this is probably not what you want, nothing will be logged from here!", stacklevel=2)
+
+        for mn in metric_names:
+            assert isinstance(mn, str), f"metric_names must be a tuple of str, got {type(mn)}"
+            assert mn != "", f"metric_names must not be empty"
+            assert mn.startswith(f"{stage}/"), f"metric_names must start with {stage}/, got {mn}"
+        
+        self.metric_names = metric_names    
+        self._apirun = None
+
+        # from mixins (validations already done in the mixin)
+        self.stage = stage
+        
+    def _multi_stage_epoch_end_do(self, trainer, pl_module):
+        self._log_histavg_metrics(trainer)
+        
+    def _log_histavg_metrics(self, trainer):
+        
+        nloggers = len(trainer.model.loggers)
+        
+        if nloggers == 0:
+            warnings.warn(f"no loggers found in LogHistAvgAtEndOfEpoch (in trainer.model.loggers), nothing will be logged from here!", stacklevel=1)
+            return  
+        
+        elif nloggers > 1:
+            
+            wandb_loggers = [l for l in trainer.model.loggers if isinstance(l, WandbLogger)]
+            
+            if len(wandb_loggers) > 1:
+                raise ValueError(f"there must be only one WandbLogger in the model, got {len(wandb_loggers)}")
+        
+            wandb_logger = wandb_loggers[0] 
+        
+        else:
+            wandb_logger = trainer.model.loggers[0]
+
+        def get_run_fullid(run_) -> str:
+            return f"{run_.entity}/{run_.project}/{run_.id}"
+        
+        records = wandb.Api().run(get_run_fullid(wandb_logger.experiment)).scan_history(keys=self.metric_names)
+        
+        if records is None or len(records := list(records)) == 0:
+            warnings.warn(f"no records found in wandb.run.scan_history", stacklevel=1)
+            return 
+        
+        histavg_metrics = pd.DataFrame.from_records(data=records).mean(axis=0).to_dict()    
+        histavg_metrics = {f"{k}-histavg": v for k, v in histavg_metrics.items()}
+        
+        for k, v in histavg_metrics.items():
+            trainer.model.log(k, v)
