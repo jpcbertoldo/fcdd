@@ -5,11 +5,10 @@ import functools
 import itertools
 import os
 import time
-from argparse import ArgumentParser
 from datetime import datetime
 from pathlib import Path
 from re import A
-from typing import Any, Callable, List, Optional, Tuple, Dict
+from typing import Any, Callable, List, Optional, Tuple, Dict, Union
 
 import pytorch_lightning as pl
 import torch
@@ -20,8 +19,8 @@ from callbacks_dev01_bis import DataloaderPreviewCallback
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
-from callbacks_dev01 import LearningRateLoggerCallback
-from common_dev01 import (hashify_config, seed_int2str,)
+from callbacks_dev01_bis import LearningRateLoggerCallback
+from common_dev01_bis import (ArgumentParserOrArgumentGroup, hashify_config, none_or_str, seed_int2str,)
 import model_dev01
 
 # ======================================== exceptions ========================================
@@ -256,30 +255,16 @@ print(f"WANDB_CHECKPOINT_MODES={WANDB_CHECKPOINT_MODES}")
 # ==========================================================================================
 # ==========================================================================================
 
-
-def none_or_str(value: str):
-    if value.lower() == 'none':
-        return None
-    return value
-
-
-def none_or_int(value: str):
-    if value.lower() == 'none':
-        return None
-    return int(value)
-
-
-def parser_add_arguments_run(parser: ArgumentParser) -> ArgumentParser:
+def cli_add_arguments_run(parser: ArgumentParserOrArgumentGroup):
     parser.add_argument("--wandb_entity", type=str,)
     parser.add_argument("--wandb_project", type=str,)
     parser.add_argument(
         '--classes', type=int, nargs='+', 
         help='Run only training sessions for some of the classes being nominal. If not give (default) then all classes are trained.'
     )
-    return parser
 
 
-def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
+def cli_add_arguments_run_one(parser: ArgumentParserOrArgumentGroup):
     # ===================================== training =====================================
     parser.add_argument('--epochs', type=int,)
     parser.add_argument('--learning_rate', type=float,)
@@ -377,7 +362,6 @@ def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
         "--lightning_deterministic", type=bool, 
         help="https://pytorch-lightning.readthedocs.io/en/stable/common/trainer.html#reproducibility",
     )
-    return parser
 
 
 def args_validate_dataset_specific_choices(args):
@@ -646,14 +630,14 @@ def run(
     base_rundir: Path,
     seeds: List[int],
     classes: List[str],
+    runone_common_kwargs: dict = {},
     confighashes_keys: Dict[str, Tuple[str, ...]] = {},
     wandb_init_config_extra: dict = {},
     callbacks: List[pl.Callback] = [],
-    **run_one_common_kwargs
 ) -> dict:
     
     # if none then do all the classes
-    classes = classes or tuple(range(dataset_nclasses(run_one_common_kwargs['dataset'])))
+    classes = classes or tuple(range(dataset_nclasses(runone_common_kwargs['dataset'])))
     its = tuple(range(len(seeds)))
     
     for c, (it, seed) in itertools.product(classes, zip(its, seeds)):
@@ -671,7 +655,7 @@ def run(
         # print(f"wandb_name={wandb_name}")
         
         run_one_kwargs = {
-            **run_one_common_kwargs, 
+            **runone_common_kwargs, 
             **dict(
                 rundir=rundir,  
                 seed=seed,

@@ -16,17 +16,17 @@ from pytorch_lightning.trainer.states import RunningStage
 from sklearn.metrics import average_precision_score, roc_auc_score
 from torch import Tensor
 from torchvision.transforms import InterpolationMode
-from common_dev01 import AdaptiveClipError, find_scores_clip_values_from_empircal_cdf
-from common_dev01 import (LogdirBaserundir, Seeds, WandbOffline, WandbTags, CudaVisibleDevices, CliConfigHash, create_python_random_generator)
+from common_dev01_bis import AdaptiveClipError, ArgumentParserOrArgumentGroup, RunningStageOrStr, find_scores_clip_values_from_empircal_cdf
+from common_dev01_bis import (LogdirBaserundir, Seeds, WandbOffline, WandbTags, CudaVisibleDevices, CliConfigHash, create_python_random_generator, none_or_str, none_or_int)
 import data_dev01
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
-from train_dev01_bis import none_or_str, none_or_int
 import re
 import hacked_dev01
 import wandb
 
 
-RunningStageOrStr = Union[RunningStage, str]
+CliArgNameMap = Dict[str, str]
+
 
 def merge_steps_outputs(steps_outputs: List[Dict[str, Tensor]]):
     """
@@ -178,50 +178,50 @@ class LogRocCallback(
 ):
         
     @staticmethod
-    def add_arguments(parser: ArgumentParser, stage: str) -> ArgumentParser:
+    def cli_add_arguments(parser: ArgumentParserOrArgumentGroup, stage: str, **defaults) -> CliArgNameMap:
         
         assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
-        
-        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
-        
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         
-        parser.description = f"Log ROC curve for stage={stage}."
+        parser.description = f"Log ROC and ROC-AUC score for stage={stage}."
         
-        argname = "scores_key"
+        cli_arg_name_map = dict()
+                
+        def cliname(argname):
+            cliname = f"logroc_{stage}_{argname}"
+            cli_arg_name_map[cliname] = argname
+            return cliname
+        
         parser.add_argument(
-            f"--callback_logroc_{stage}_{argname}", dest=argname,
+            f'--{cliname("scores_key")}', 
             type=str, 
         )
         
-        argname = "gt_key"
         parser.add_argument(
-            f"--callback_logroc_{stage}_{argname}", dest=argname,
+            f'--{cliname("gt_key")}', 
             type=str, 
         )
         
-        argname = "log_curve"
         parser.add_argument(
-            f"--callback_logroc_{stage}_{argname}", dest=argname,
+            f'--{cliname("log_curve")}', 
             type=bool, 
         )
         
-        argname = "limit_points"
         parser.add_argument(
-            f"--callback_logroc_{stage}_{argname}", dest=argname,
+            f'--{cliname("limit_points")}', 
             type=int, 
         )
+                
+        # these shouldnt be changed
+        parser.add_argument(f'--{cliname("stage")}', type=str, default=stage,)
+        # the seed here can be fixed, no need to follow the seed of the other
+        # random stuff because in anycase the training is already random, and 
+        # this randomness is just for the sampling of points used to estimate the ROC
+        # it's not a big deal if all trainings use the same seed
+        parser.add_argument(f'--{cliname("python_generator")}', type=create_python_random_generator, default=create_python_random_generator(0),)
+        parser.set_defaults(**{cliname(argname): argval for argname, argval in defaults.items()})
         
-        parser.set_defaults(
-            stage=stage,
-            # the seed here can be fixed, no need to follow the seed of the other
-            # random stuff because in anycase the training is already random, and 
-            # this randomness is just for the sampling of points used to estimate the ROC
-            # it's not a big deal if all trainings use the same seed
-            python_generator=create_python_random_generator(0),
-        )
-        
-        return parser
+        return cli_arg_name_map
         
     def __init__(
         self,
@@ -318,50 +318,50 @@ class LogPrcurveCallback(
 ):
   
     @staticmethod
-    def add_arguments(parser: ArgumentParser, stage: str) -> ArgumentParser:
+    def cli_add_arguments(parser: ArgumentParser, stage: str, **defaults) -> CliArgNameMap:
         
         assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
-        
-        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
-        
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         
         parser.description = f"Log PR curve for stage={stage}."
         
-        argname = "scores_key"
+        cli_arg_name_map = dict()
+                
+        def cliname(argname):
+            cliname = f"prcurve_{stage}_{argname}"
+            cli_arg_name_map[cliname] = argname
+            return cliname
+        
         parser.add_argument(
-            f"--callback_prcurve_{stage}_{argname}", dest=argname,
+            f'--{cliname("scores_key")}', 
             type=str, 
         )
         
-        argname = "gt_key"
         parser.add_argument(
-            f"--callback_prcurve_{stage}_{argname}", dest=argname,
+            f'--{cliname("gt_key")}', 
             type=str, 
         )
         
-        argname = "log_curve"
         parser.add_argument(
-            f"--callback_prcurve_{stage}_{argname}", dest=argname,
+            f'--{cliname("log_curve")}', 
             type=bool, 
         )
         
-        argname = "limit_points"
         parser.add_argument(
-            f"--callback_prcurve_{stage}_{argname}", dest=argname,
+            f'--{cliname("limit_points")}', 
             type=int, 
         )
+                
+        # these shouldnt be changed
+        parser.add_argument(f'--{cliname("stage")}', type=str, default=stage,)
+        # the seed here can be fixed, no need to follow the seed of the other
+        # random stuff because in anycase the training is already random, and 
+        # this randomness is just for the sampling of points used to estimate the ROC
+        # it's not a big deal if all trainings use the same seed
+        parser.add_argument(f'--{cliname("python_generator")}', type=create_python_random_generator, default=create_python_random_generator(0),)
+        parser.set_defaults(**{cliname(argname): argval for argname, argval in defaults.items()})
         
-        parser.set_defaults(
-            stage=stage,
-            # the seed here can be fixed, no need to follow the seed of the other
-            # random stuff because in anycase the training is already random, and 
-            # this randomness is just for the sampling of points used to estimate the PR curve
-            # it's not a big deal if all trainings use the same seed
-            python_generator=create_python_random_generator(0),
-        )
-        
-        return parser
+        return cli_arg_name_map
         
     def __init__(
         self,
@@ -463,33 +463,37 @@ class LogHistogramCallback(
 ):
 
     @staticmethod
-    def add_arguments(parser: ArgumentParser, histogram_of: str, stage: str) -> ArgumentParser:
+    def cli_add_arguments(parser: ArgumentParser, histogram_of: str, stage: str, **defaults) -> CliArgNameMap:
         
         assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
-        
-        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
-        
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         assert isinstance(histogram_of, str), f"histogram_of must be a str, got {type(histogram_of)}"
         assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, histogram_of), f"histogram_of must be a valid variable name, got {histogram_of}"
         
         parser.description = f"Log histogram of {histogram_of} for stage={stage}."
         
-        argname = "key"
+        cli_arg_name_map = dict()
+                
+        def cliname(argname):
+            cliname = f"log_histogram_{histogram_of}_{stage}_{argname}"
+            cli_arg_name_map[cliname] = argname
+            return cliname
+        
         parser.add_argument(
-            f"--callback_log_histogram_{histogram_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("key")}', 
             type=str, 
         )
         
-        argname = "mode"
         parser.add_argument(
-            f"--callback_log_histogram_{histogram_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("mode")}', 
             type=str, choices=LOG_HISTOGRAM_MODES,
         )
+                
+        # these shouldnt be changed
+        parser.add_argument(f'--{cliname("stage")}', type=str, default=stage,)
+        parser.set_defaults(**{cliname(argname): argval for argname, argval in defaults.items()})
         
-        parser.set_defaults(stage=stage,)
-        
-        return parser
+        return cli_arg_name_map
        
     def __init__(self, key: str, mode: str, stage: RunningStageOrStr,):
         """
@@ -551,53 +555,52 @@ class LogHistogramsSuperposedCallback(
 ):
 
     @staticmethod
-    def add_arguments(parser: ArgumentParser, histogram_of: str, stage: str) -> ArgumentParser:
+    def cli_add_arguments(parser: ArgumentParser, histogram_of: str, stage: str, **defaults) -> CliArgNameMap:
         
         assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
-        
-        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
-        
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         assert isinstance(histogram_of, str), f"histogram_of must be a str, got {type(histogram_of)}"
         assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, histogram_of), f"histogram_of must be a valid variable name, got {histogram_of}"
         
+        parser.description = f"Log histograms superposed per class of {histogram_of} for stage={stage}."
         
-        parser.description = f"Log histograms superposed per class OF {histogram_of} for stage={stage}."
+        cli_arg_name_map = dict()
+                
+        def cliname(argname):
+            cliname = f"histograms_supperposed_{histogram_of}_{stage}_{argname}"
+            cli_arg_name_map[cliname] = argname
+            return cliname
         
-        argname = "values_key"
         parser.add_argument(
-            f"--callback_histograms_supperposed_{histogram_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("values_key")}', 
             type=str, 
         )
         
-        argname = "gt_key"
         parser.add_argument(
-            f"--callback_histograms_supperposed_{histogram_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("gt_key")}', 
             type=str, 
         )
         
-        argname = "mode"
         parser.add_argument(
-            f"--callback_histograms_supperposed_{histogram_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("mode")}', 
             type=str, choices=LOG_HISTOGRAM_MODES,
         )
         
-        argname = "limit_points"
         parser.add_argument(
-            f"--callback_histograms_supperposed_{histogram_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("limit_points")}', 
             type=int, 
         )
         
-        parser.set_defaults(
-            stage=stage,
-            # the seed here can be fixed, no need to follow the seed of the other
-            # random stuff because in anycase the training is already random, and 
-            # this randomness is just for the sampling of points used to estimate the PR curve
-            # it's not a big deal if all trainings use the same seed
-            python_generator=create_python_random_generator(0),
-        )
+        # these shouldnt be changed
+        parser.add_argument(f'--{cliname("stage")}', type=str, default=stage,)
+        # the seed here can be fixed, no need to follow the seed of the other
+        # random stuff because in anycase the training is already random, and 
+        # this randomness is just for the sampling of points used to estimate the ROC
+        # it's not a big deal if all trainings use the same seed
+        parser.add_argument(f'--{cliname("python_generator")}', type=create_python_random_generator, default=create_python_random_generator(0),)
+        parser.set_defaults(**{cliname(argname): argval for argname, argval in defaults.items()})
         
-        return parser
+        return cli_arg_name_map
     
     def __init__(self, values_key: str, gt_key: str, mode: str, limit_points: int, stage: RunningStageOrStr, python_generator: random.Random,):
         """
@@ -720,7 +723,6 @@ class DataloaderPreviewCallback(pl.Callback):
         self.dataloader = dataloader
         self.n_samples = n_samples
         
-        
         assert isinstance(stage, RunningStage) or isinstance(stage, str), f"stage must be a RunningStage or a string, got {type(stage)}"
         ACCEPTED_STAGES = (
             RunningStage.TRAINING,
@@ -780,83 +782,73 @@ class LogImageHeatmapTableCallback(
 ):
 
     @staticmethod
-    def add_arguments(parser: ArgumentParser, stage: str) -> ArgumentParser:
+    def cli_add_arguments(parser: ArgumentParser, stage: str, **defaults) -> CliArgNameMap:
         
         assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
-        
-        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
-        
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         
         parser.description = f"Log image/heatmap table for stage={stage}."
         
-        argname = "imgs_key"
+        cli_arg_name_map = dict()
+                
+        def cliname(argname):
+            cliname = f"imageheatmap_{stage}_{argname}"
+            cli_arg_name_map[cliname] = argname
+            return cliname
+        
         parser.add_argument(
-            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            f'--{cliname("imgs_key")}', 
             type=str, 
         )
         
-        argname = "scores_key"
         parser.add_argument(
-            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            f'--{cliname("scores_key")}', 
             type=str, 
         )
         
-        argname = "masks_key"
         parser.add_argument(
-            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            f'--{cliname("masks_key")}', 
             type=str, 
         )
         
-        argname = "labels_key"
         parser.add_argument(
-            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            f'--{cliname("labels_key")}', 
             type=str, 
         )
         
-        argname = "labels_key"
         parser.add_argument(
-            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
-            type=str, 
-        )
-        
-        argname = "nsamples"
-        parser.add_argument(
-            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            f'--{cliname("nsamples")}', 
             type=int, 
             help="How many images per class to log",
         )
         
-        argname = "resolution"
         parser.add_argument(
-            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            f'--{cliname("resolution")}', 
             type=none_or_int, 
             help="If None, the original resolution is used. Otherwise, the resolution is scaled to this value.",
         )
         
-        argname = "heatmap_normalization"
         parser.add_argument(
-            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            f'--{cliname("heatmap_normalization")}', 
             type=str, choices=HEATMAP_NORMALIZATION_CHOICES,
         )
         
-        argname = "min_max_percentiles"
         parser.add_argument(
-            f"--callback_imageheatmap_{stage}_{argname}", dest=argname,
+            f'--{cliname("min_max_percentiles")}', 
             type=float, nargs=2, 
             help="Percentile values for the contrast of the heatmap: min/max", 
         )
+                
+        # these shouldnt be changed
+        parser.add_argument(f'--{cliname("stage")}', type=str, default=stage,)
+        # the seed here can be fixed, no need to follow the seed of the other
+        # random stuff because in anycase the training is already random, and 
+        # this randomness is just for the sampling of points used to estimate the ROC
+        # it's not a big deal if all trainings use the same seed
+        parser.add_argument(f'--{cliname("python_generator")}', type=create_python_random_generator, default=create_python_random_generator(0),)
+        parser.set_defaults(**{cliname(argname): argval for argname, argval in defaults.items()})
         
-        parser.set_defaults(
-            stage=stage,
-            # the seed here can be fixed, no need to follow the seed of the other
-            # random stuff because in anycase the training is already random, and 
-            # this randomness is just for the sampling of points used to estimate the PR curve
-            # it's not a big deal if all trainings use the same seed
-            python_generator=create_python_random_generator(0),
-        )
-        
-        return parser
+        return cli_arg_name_map
     
     def __init__(
         self,
@@ -1102,41 +1094,47 @@ class LogPercentilesPerClassCallback(
 ):
   
     @staticmethod
-    def add_arguments(parser: ArgumentParser, percentiles_of: str, stage: str) -> ArgumentParser:
+    def cli_add_arguments(parser: ArgumentParser, percentiles_of: str, stage: str, **defaults) -> CliArgNameMap:
         
         assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
-        
-        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
-        
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         assert isinstance(percentiles_of, str), f"percentiles_of must be a str, got {type(percentiles_of)}"
         assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, percentiles_of), f"percentiles_of must be a valid variable name, got {percentiles_of}"
         
         parser.description = f"Log percentiles per class of {percentiles_of} for stage={stage}."
         
-        argname = "values_key"
+        cli_arg_name_map = dict()
+                
+        def cliname(argname):
+            cliname = f"percentiles_{percentiles_of}_{stage}_{argname}"
+            cli_arg_name_map[cliname] = argname
+            return cliname
+        
         parser.add_argument(
-            f"--callback_percentiles_{percentiles_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("values_key")}', 
             type=str, 
         )
         
-        argname = "gt_key"
         parser.add_argument(
-            f"--callback_percentiles_{percentiles_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("gt_key")}', 
             type=str, 
         )
         
-        argname = "percentiles"
         parser.add_argument(
-            f"--callback_percentiles_{percentiles_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("percentiles")}', 
             type=bool, 
         )
+                
+        # these shouldnt be changed
+        parser.add_argument(f'--{cliname("stage")}', type=str, default=stage,)
+        # the seed here can be fixed, no need to follow the seed of the other
+        # random stuff because in anycase the training is already random, and 
+        # this randomness is just for the sampling of points used to estimate the ROC
+        # it's not a big deal if all trainings use the same seed
+        parser.add_argument(f'--{cliname("python_generator")}', type=create_python_random_generator, default=create_python_random_generator(0),)
+        parser.set_defaults(**{cliname(argname): argval for argname, argval in defaults.items()})
         
-        parser.set_defaults(
-            stage=stage,
-        )
-        
-        return parser
+        return cli_arg_name_map
 
     def __init__(self, values_key: str, gt_key: str, percentiles: Tuple[float, ...], stage: RunningStageOrStr,):
         """
@@ -1205,33 +1203,37 @@ class LogPerInstanceMeanCallback(
 ):
 
     @staticmethod
-    def add_arguments(parser: ArgumentParser, mean_of: str, stage: str) -> ArgumentParser:
+    def cli_add_arguments(parser: ArgumentParser, mean_of: str, stage: str, **defaults) -> CliArgNameMap:
         
         assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
-        
-        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
-        
         assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
         assert isinstance(mean_of, str), f"percentiles_of must be a str, got {type(mean_of)}"
         assert re.match(REGEXSTR_ASSERT_VARIABLE_NAME, mean_of), f"percentiles_of must be a valid variable name, got {mean_of}"
         
         parser.description = f"Log per instance mean of {mean_of} for stage={stage}."
         
-        argname = "values_key"
+        cli_arg_name_map = dict()
+                
+        def cliname(argname):
+            cliname = f"perinstance_mean_{mean_of}_{stage}_{argname}"
+            cli_arg_name_map[cliname] = argname
+            return cliname
+        
         parser.add_argument(
-            f"--callback_perinstance_mean_{mean_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("values_key")}', 
             type=str, 
         )
         
-        argname = "labels_key"
         parser.add_argument(
-            f"--callback_perinstance_mean_{mean_of}_{stage}_{argname}", dest=argname,
+            f'--{cliname("labels_key")}', 
             type=str, 
         )
+                
+        # these shouldnt be changed
+        parser.add_argument(f'--{cliname("stage")}', type=str, default=stage,)
+        parser.set_defaults(**{cliname(argname): argval for argname, argval in defaults.items()})
         
-        parser.set_defaults(stage=stage,)
-        
-        return parser
+        return cli_arg_name_map
 
     def __init__(self, values_key: str, labels_key: str, stage: RunningStageOrStr,):
         """
