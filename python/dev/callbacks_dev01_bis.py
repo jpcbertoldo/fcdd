@@ -48,46 +48,6 @@ HEATMAP_NORMALIZATION_CHOICES = (
 
 REGEXSTR_ASSERT_VARIABLE_NAME = "^[a-zA-Z_][a-zA-Z0-9_]*$"
 
-def merge_steps_outputs(steps_outputs: List[Dict[str, Tensor]]):
-    """
-    gather all the pieces into a single dict and transfer tensors to cpu
-
-    several callbacks depend on the pl_module (model) having the attribute last_epoch_outputs,
-    which should be set with this function
-    """
-
-    if steps_outputs is None:
-        return None
-
-    assert isinstance(steps_outputs, list), f"steps_outputs must be a list, got {type(steps_outputs)}"
-
-    assert len(steps_outputs) >= 1, f"steps_outputs must have at least one element, got {len(steps_outputs)}"
-
-    assert all(isinstance(x, dict) for x in steps_outputs), f"steps_outputs must be a list of dicts, got {steps_outputs}"
-
-    dict0 = steps_outputs[0]
-    keys = set(dict0.keys())
-
-    assert all(set(x.keys()) == keys for x in steps_outputs), f"steps_outputs must have the same keys, got {steps_outputs}, keys={keys}"
-
-    return {
-        # step 3: transfer the tensor to the cpu to liberate the gpu memory
-        k: v.cpu()
-        for k, v in {
-            # step 2: concatenate the tensors
-            k: (
-                torch.stack(list_of_values, dim=0)
-                if list_of_values[0].ndim == 0 else
-                torch.cat(list_of_values, dim=0)
-            )
-            for k, list_of_values in {
-                # step 1: gather the dicts values into lists (one list per key) ==> single dict
-                k: [step_outputs[k] for step_outputs in steps_outputs]
-                for k in keys
-            }.items()
-        }.items()
-    }
-
 
 class RandomCallbackMixin:
     """
@@ -116,26 +76,18 @@ class RandomCallbackMixin:
 
 class LastEpochOutputsDependentCallbackMixin:
 
-    def setup_verify_plmodule_with_last_epoch_outputs(pl_module_setup):
+    def setup_validate_plmodule_last_epoch_outputs(self, trainer, pl_module, stage=None):
         """
-        this should be used as a decorator on top of setup() of callbacks that depend on last_epoch_outputs
+        this should be called in setup() of callbacks that depend on last_epoch_outputs
 
         make sure that the attribute `last_epoch_outputs` is None at the beginning of a new stage
         otherwise it's because it hasn't been cleaned up properly
         """
+        
+        assert hasattr(pl_module, "last_epoch_outputs"), f"{pl_module.__class__.__name__} must have attribute `last_epoch_outputs`"
 
-        @functools.wraps(pl_module_setup)
-        def wrapper(self, trainer, pl_module, stage=None):
-            """self is the callback"""
-
-            assert hasattr(pl_module, "last_epoch_outputs"), f"{self} must have attribute `last_epoch_outputs`"
-
-            assert pl_module.last_epoch_outputs is None, f"pl_module.last_epoch_outputs must be None at the beginning of stage (={stage}), did you forget to clean up in the teardown()?  got {pl_module.last_epoch_outputs}"
-
-            return pl_module_setup(self, trainer, pl_module, stage=stage)
-
-        return wrapper
-
+        assert pl_module.last_epoch_outputs is None, f"pl_module.last_epoch_outputs must be None at the beginning of stage (={stage}), did you forget to clean up in the teardown()?  got {pl_module.last_epoch_outputs}"
+        
 
 class MultiStageEpochEndCallbackMixin(abc.ABC):
     """
@@ -277,9 +229,8 @@ class LogRocCallback(
         self.python_generator = python_generator
         self.stage = stage
         
-    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
-        pass  # just let the mixin do its job
+        self.setup_validate_plmodule_last_epoch_outputs(trainer, pl_module, stage=stage)
 
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
         if pl_module.last_epoch_outputs is None:
@@ -418,10 +369,9 @@ class LogPrcurveCallback(
         self.python_generator = python_generator
         self.stage = stage
 
-    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
-        pass  # just let the mixin do its job
-
+        self.setup_validate_plmodule_last_epoch_outputs(trainer, pl_module, stage=stage)
+        
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
         self._log_avg_precision(trainer, pl_module)
 
@@ -524,9 +474,8 @@ class LogHistogramCallback(
         # mixin args
         self.stage = stage
 
-    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
-        pass  # just let the mixin do its job
+        self.setup_validate_plmodule_last_epoch_outputs(trainer, pl_module, stage=stage)
 
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
         self._log_histogram(trainer, pl_module)
@@ -642,9 +591,8 @@ class LogHistogramsSuperposedCallback(
         self.stage = stage
         self.python_generator = python_generator
 
-    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
-        pass  # just let the mixin do its job
+        self.setup_validate_plmodule_last_epoch_outputs(trainer, pl_module, stage=stage)
 
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
         self._log_histograms_supperposed_per_class(trainer, pl_module)
@@ -912,9 +860,8 @@ class LogImageHeatmapTableCallback(
         self.stage = stage
         self.python_generator = python_generator
 
-    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
-        pass  # just let the mixin do its job
+        self.setup_validate_plmodule_last_epoch_outputs(trainer, pl_module, stage=stage)
 
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
 
@@ -1156,9 +1103,8 @@ class LogPercentilesPerClassCallback(
         # mixin args
         self.stage = stage
 
-    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
-        pass  # just let the mixin do its job
+        self.setup_validate_plmodule_last_epoch_outputs(trainer, pl_module, stage=stage)
 
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
 
@@ -1253,9 +1199,8 @@ class LogPerInstanceMeanCallback(
         # mixin args
         self.stage = stage
 
-    @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
-        pass  # just let the mixin do its job
+        self.setup_validate_plmodule_last_epoch_outputs(trainer, pl_module, stage=stage)
 
     def _multi_stage_epoch_end_do(self, trainer, pl_module):
 

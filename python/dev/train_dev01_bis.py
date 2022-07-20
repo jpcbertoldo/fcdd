@@ -12,7 +12,7 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profiler import (AdvancedProfiler, PyTorchProfiler,
                                         SimpleProfiler)
 
-import model_dev01
+import model_dev01_bis
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
 from callbacks_dev01_bis import (LearningRateLoggerCallback)
@@ -150,12 +150,12 @@ print(f"SUPERVISE_MODE_CHOICES={ALL_SUPERVISE_MODE_CHOICES}")
 # ======================================== models ========================================
 
 MODEL_CLASSES = {
-    model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.FCDD,
-    model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.HyperSphereU2Net,
-    model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.HyperSphereU2Net,
-    model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.HyperSphereU2Net,
-    model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.HyperSphereU2Net,
-    model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.HyperSphereU2Net,
+    model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.FCDD,
+    model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.HyperSphereU2Net,
+    model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.HyperSphereU2Net,
+    model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.HyperSphereU2Net,
+    model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01_bis.HyperSphereU2Net,
+    model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01_bis.HyperSphereU2Net,
 }
 MODEL_CHOICES = tuple(sorted(MODEL_CLASSES.keys()))
 print(f"MODEL_CHOICES={MODEL_CHOICES}")
@@ -172,12 +172,12 @@ def unknown_model(wrapped: Callable[[str, ], Any]):
 @unknown_model
 def model_optimizer_choices(model_name: str) -> List[str]:
     return {
-        model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01_bis.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01_bis.OPTIMIZER_CHOICES,
     }[model_name]   
 
 
@@ -192,12 +192,12 @@ print(f"OPTIMIZER_CHOICES={OPTIMIZER_CHOICES}")
 @unknown_model
 def model_scheduler_choices(model_name: str) -> List[str]:
     return {
-        model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01_bis.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01_bis.SCHEDULER_CHOICES,
     }[model_name]
 
 
@@ -212,12 +212,12 @@ print(f"SCHEDULER_CHOICES={SCHEDULER_CHOICES}")
 @unknown_model
 def model_loss_choices(model_name: str) -> List[str]:
     return {
-        model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.LOSS_FCDD_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.LOSS_U2NET_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.LOSS_U2NET_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.LOSS_U2NET_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.LOSS_U2NET_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.LOSS_U2NET_CHOICES,
+        model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.LOSS_FCDD_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.LOSS_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.LOSS_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.LOSS_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01_bis.LOSS_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01_bis.LOSS_U2NET_CHOICES,
     }[model_name]
 
 
@@ -506,7 +506,7 @@ def run_one(
         assert scores.shape[-2:] == inshape, f"{model.__class__.__name__} must return a tensor of shape (..., {inshape[0]}, {inshape[1]}), found {scores.shape}"
         assert tuple(scores.shape[0:2]) == (1, 1), f"{model.__class__.__name__} must return a tensor of shape (1, 1, ...), found {scores.shape}"
       
-    if model_class == model_dev01.HyperSphereU2Net:  
+    if model_class == model_dev01_bis.HyperSphereU2Net:  
         test_input_output_dimensions(datamodule.net_shape)
     
     def log_model_architecture(model_: torch.nn.Module):
@@ -697,7 +697,7 @@ def run(
             offline=wandb_offline,
             log_model=not wandb_offline,  # save only the last weights
             **wandb_init_kwargs,
-        )   
+        )
         
         wandb_logger_save_dir = Path(wandb_logger.save_dir).resolve().absolute()
         print(f"wandb_logger_save_dir: {wandb_logger_save_dir}")

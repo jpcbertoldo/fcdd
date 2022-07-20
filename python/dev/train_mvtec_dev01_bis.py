@@ -7,7 +7,7 @@ import time
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
 
-import model_dev01
+import model_dev01_bis
 import mvtec_dataset_dev01
 import train_dev01_bis
 from callbacks_dev01_bis import (
@@ -64,10 +64,10 @@ runone_args_group.set_defaults(
     weight_decay=1e-4,
     test=True,
     # model
-    model=model_dev01.MODEL_FCDD_CNN224_VGG_F,
-    loss=model_dev01.LOSS_PIXELWISE_BATCH_AVG,
-    optimizer=model_dev01.OPTIMIZER_SGD,
-    scheduler=model_dev01.SCHEDULER_LAMBDA,
+    model=model_dev01_bis.MODEL_FCDD_CNN224_VGG_F,
+    loss=model_dev01_bis.LOSS_PIXELWISE_BATCH_AVG,
+    optimizer=model_dev01_bis.OPTIMIZER_SGD,
+    scheduler=model_dev01_bis.SCHEDULER_LAMBDA,
     scheduler_parameters=[0.985],
     # dataset
     dataset=mvtec_dataset_dev01.DATASET_NAME,
