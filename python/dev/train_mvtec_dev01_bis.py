@@ -19,9 +19,9 @@ from callbacks_dev01_bis import (
     HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH, LOG_HISTOGRAM_MODE_LOG,
     LOG_HISTOGRAM_MODES, DataloaderPreviewCallback, LearningRateLoggerCallback,
     LogPrcurveCallback, LogHistogramCallback,
-    LogHistogramsSuperposedPerClassCallback, LogImageHeatmapTableCallback,
+    LogHistogramsSuperposedCallback, LogImageHeatmapTableCallback,
     LogPercentilesPerClassCallback, LogPerInstanceValueCallback,
-    LogRocCallback, TorchTensorboardProfilerCallback)
+    LogRocCallback,)
 from common_dev01 import (LogdirBaserundir, Seeds, WandbOffline, WandbTags, CudaVisibleDevices, CliConfigHash, create_python_random_generator)
 
 
@@ -97,6 +97,7 @@ parser_run_one.set_defaults(
 
 callbacks_class_parser_pairs = []
 
+# ROC 
 parser = LogRocCallback.add_arguments(ArgumentParser(), stage="validate")
 parser.set_defaults(
     scores_key="score_maps",
@@ -115,7 +116,7 @@ parser.set_defaults(
 )
 callbacks_class_parser_pairs.append((LogRocCallback, parser))
 
-
+# PRCURVE
 parser = LogPrcurveCallback.add_arguments(ArgumentParser(), stage="validate")
 parser.set_defaults(
     scores_key="score_maps",
@@ -133,6 +134,40 @@ parser.set_defaults(
     limit_points=None,  # 9k
 )
 callbacks_class_parser_pairs.append((LogPrcurveCallback, parser))
+
+# HISTOGRAM - score
+parser = LogHistogramCallback.add_arguments(ArgumentParser(), histogram_of="score", stage="test")
+parser.set_defaults(
+    key="score_maps",
+    mode=LOG_HISTOGRAM_MODE_LOG,
+)
+callbacks_class_parser_pairs.append((LogHistogramCallback, parser))
+
+# HISTOGRAM - loss
+parser = LogHistogramCallback.add_arguments(ArgumentParser(), histogram_of="loss", stage="test")
+parser.set_defaults(
+    key="loss_maps",
+    mode=LOG_HISTOGRAM_MODE_LOG,
+)
+callbacks_class_parser_pairs.append((LogHistogramCallback, parser))
+
+# SUPPERPOSED HISTOGRAMS - score
+parser = LogHistogramsSuperposedCallback.add_arguments(ArgumentParser(), histogram_of="score", stage="test")
+parser.set_defaults(
+    values_key="score_maps",
+    gt_key="gtmaps",
+    mode=LOG_HISTOGRAM_MODE_LOG,
+)
+callbacks_class_parser_pairs.append((LogHistogramsSuperposedCallback, parser))
+
+# SUPPERPOSED HISTOGRAMS - loss
+parser = LogHistogramsSuperposedCallback.add_arguments(ArgumentParser(), histogram_of="loss", stage="test")
+parser.set_defaults(
+    values_key="loss_maps",
+    gt_key="gtmaps",
+    mode=LOG_HISTOGRAM_MODE_LOG,
+)
+callbacks_class_parser_pairs.append((LogHistogramsSuperposedCallback, parser))
 
 
 # >>>>>>>>>>>>>>>>>>> argv <<<<<<<<<<<<<<<<<<<<<<
@@ -343,127 +378,6 @@ print('end')
 # # add_callbacks_log_image_heatmap(
 # #     *wandb_log_image_heatmap_nsamples, *wandb_log_image_heatmap_resolution,
 # # )
-
-
-
-
-
-
-
-
-
-# # ========================================================================= histograms
-
-# def add_callbacks_log_histogram_score(train_mode: str, validation_mode: str, test_mode: str):
-    
-#     if train_mode is not None:
-#         callbacks.extend([
-#             LogHistogramCallback(stage=RunningStage.TRAINING, key="score_maps", mode=train_mode,), 
-#             LogHistogramsSuperposedPerClassCallback(
-#                 stage=RunningStage.TRAINING, 
-#                 mode=train_mode,
-#                 limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TRAIN,  # 3k
-#                 # same everywhere 
-#                 values_key="score_maps", 
-#                 gt_key="gtmaps", 
-#                 python_generator=create_python_random_generator(seed),
-#             ),
-#         ])
-
-#     if validation_mode is not None:
-#         callbacks.extend([
-#             LogHistogramCallback(stage=RunningStage.VALIDATING, key="score_maps", mode=validation_mode,), 
-#             LogHistogramsSuperposedPerClassCallback(
-#                 stage=RunningStage.VALIDATING, 
-#                 mode=validation_mode,
-#                 limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_VALIDATION,  # 3k
-#                 # same everywhere 
-#                 values_key="score_maps", 
-#                 gt_key="gtmaps", 
-#                 python_generator=create_python_random_generator(seed),
-#             ),
-#         ])
-    
-#     if test_mode is not None:
-#         callbacks.extend([
-#             LogHistogramCallback(stage=RunningStage.TESTING, key="score_maps", mode=test_mode,), 
-#             LogHistogramsSuperposedPerClassCallback(
-#                 stage=RunningStage.TESTING, 
-#                 mode=test_mode,
-#                 limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TEST,  # 30k
-#                 # same everywhere 
-#                 values_key="score_maps", 
-#                 gt_key="gtmaps", 
-#                 python_generator=create_python_random_generator(seed),
-#             ),
-#         ])
-
-
-# def add_callbacks_log_histogram_loss(train_mode: str, validation_mode: str, test_mode: str):
-    
-#     if train_mode is not None:
-#         callbacks.extend([
-#             LogHistogramCallback(stage=RunningStage.TRAINING, key="loss_maps", mode=train_mode,), 
-#             LogHistogramsSuperposedPerClassCallback(
-#                 stage=RunningStage.TRAINING, 
-#                 mode=train_mode,
-#                 limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TRAIN,  # 3k
-#                 # same everywhere 
-#                 values_key="loss_maps", 
-#                 gt_key="gtmaps", 
-#                 python_generator=create_python_random_generator(seed),
-#             ),
-#         ])
-
-#     if validation_mode is not None:
-#         callbacks.extend([
-#             LogHistogramCallback(stage=RunningStage.VALIDATING, key="loss_maps", mode=validation_mode,), 
-#             LogHistogramsSuperposedPerClassCallback(
-#                 stage=RunningStage.VALIDATING, 
-#                 mode=validation_mode,
-#                 limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_VALIDATION,  # 3k
-#                 # same everywhere 
-#                 values_key="loss_maps", 
-#                 gt_key="gtmaps", 
-#                 python_generator=create_python_random_generator(seed),
-#             ),
-#         ])
-    
-#     if test_mode is not None:
-#         callbacks.extend([
-#             LogHistogramCallback(stage=RunningStage.TESTING, key="loss_maps", mode=test_mode,), 
-#             LogHistogramsSuperposedPerClassCallback(
-#                 stage=RunningStage.TESTING, 
-#                 mode=test_mode,
-#                 limit_points=PIXELWISE_HISTOGRAMS_LIMIT_POINTS_TEST,  # 30k
-#                 # same everywhere 
-#                 values_key="loss_maps", 
-#                 gt_key="gtmaps", 
-#                 python_generator=create_python_random_generator(seed),
-#             ),
-#         ])
-    
-
-# wandb_log_histogram_score=(None, None, LOG_HISTOGRAM_MODE_LOG),
-# wandb_log_histogram_loss=(None, None, LOG_HISTOGRAM_MODE_LOG),
-# parser.add_argument(
-#     "--wandb_log_histogram_score", type=none_or_str, nargs=3, choices=LOG_HISTOGRAM_MODES,
-#     help="if and how to log  score values; you should give 3 values, respectively for the train/validation/test hooks"
-# )
-# assert len(wandb_log_histogram_score) == 3, f"wandb_log_histogram_score should have 3 bools, for train/validation/test, but got {len(wandb_log_histogram_score)} things"
-# assert all(val in LOG_HISTOGRAM_MODES for val in wandb_log_histogram_score), f"wandb_log_histogram_score values should be in {LOG_HISTOGRAM_MODES}, got {wandb_log_histogram_score}"        
-# wandb_log_histogram_score: Tuple[bool, bool, bool],
-# add_callbacks_log_histogram_score(*wandb_log_histogram_score)
-
-# parser.add_argument(
-#     "--wandb_log_histogram_loss", type=none_or_str, nargs=3, choices=LOG_HISTOGRAM_MODES,
-#     help="if and how to log loss values; you should give 3 values, respectively for the train/validation/test hooks"
-# )
-# assert len(wandb_log_histogram_loss) == 3, f"wandb_log_histogram_loss should have 3 bools, for train/validation/test, but got {len(wandb_log_histogram_loss)} things"
-# assert all(val in LOG_HISTOGRAM_MODES for val in wandb_log_histogram_loss), f"wandb_log_histogram_loss values should be in {LOG_HISTOGRAM_MODES}, got {wandb_log_histogram_loss}"
-# wandb_log_histogram_loss: Tuple[bool, bool, bool],
-# add_callbacks_log_histogram_loss(*wandb_log_histogram_loss)
-
 
 
 

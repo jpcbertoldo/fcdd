@@ -18,9 +18,10 @@ from torch import Tensor
 from torchvision.transforms import InterpolationMode
 from common_dev01 import AdaptiveClipError, find_scores_clip_values_from_empircal_cdf
 from common_dev01 import (LogdirBaserundir, Seeds, WandbOffline, WandbTags, CudaVisibleDevices, CliConfigHash, create_python_random_generator)
-
+import data_dev01
 from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
 
+RunningStageOrStr = Union[RunningStage, str]
 
 def merge_steps_outputs(steps_outputs: List[Dict[str, Tensor]]):
     """
@@ -87,34 +88,6 @@ class RandomCallbackMixin:
     
         self._python_generator = value
 
-    def init__python_generator(__init__):
-        """Make sure that an arge `python_generator` is given as a kwarg at the init function."""
-
-        @functools.wraps(__init__)
-        def wrapper(self, *args, **kwargs):
-            assert "python_generator" in kwargs, "key argument `python_generator` must be provided"
-            gen: random.Random = kwargs.pop("python_generator")
-            assert gen is not None, f"python_generator must not be None"
-            assert isinstance(gen, random.Random), f"gen must be a random.Random, got {type(gen)}"
-            self.python_generator = gen
-            __init__(self, *args, **kwargs)
-
-        return wrapper
-
-    def __init__torch_generator(__init__):
-        """Make sure that an arge `torch_generator` is given as a kwarg at the init function."""
-
-        @functools.wraps(__init__)
-        def wrapper(self, *args, **kwargs):
-            assert "torch_generator" in kwargs, "key argument `torch_generator` must be provided"
-            gen: torch.Generator = kwargs.pop("torch_generator")
-            assert gen is not None, f"torch_generator must not be None"
-            assert isinstance(gen, torch.Generator), f"gen must be a torch.Generator, got {type(gen)}"
-            self.torch_generator = gen
-            __init__(self, *args, **kwargs)
-
-        return wrapper
-
 
 class LastEpochOutputsDependentCallbackMixin:
 
@@ -170,24 +143,10 @@ class MultiStageEpochEndCallbackMixin(abc.ABC):
         if hasattr(self, "_stage"):
             raise AttributeError("stage already set, what are you doing?")
         
-        assert value is not None, f"stage must not be None"
+        assert isinstance(value, RunningStage) or isinstance(value, str), f"stage must be a RunningStage or a string, got {type(value)}"
         assert value in self.ACCEPTED_STAGES, f"stage must be one of {self.ACCEPTED_STAGES}, got {value}"
         
         self._stage = value
-
-    def init__stage(__init__):
-        """Make sure that an arg `stage` is given as a kwarg at the init function and is valid"""
-
-        @functools.wraps(__init__)
-        def wrapper(self, *args, **kwargs):
-            assert "stage" in kwargs, "key argument `stage` must be provided"
-            stage: Union[str, RunningStage] = kwargs.pop("stage")
-            assert stage is not None, f"stage must not be None"
-            assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
-            self.stage = stage
-            __init__(self, *args, **kwargs)
-
-        return wrapper
 
     @staticmethod
     def should_log(hook_stage, callback_stage, trainer_stage, ):
@@ -267,7 +226,7 @@ class LogRocCallback(
         limit_points: int,
         # mixin args
         python_generator: random.Random,
-        stage: RunningStage,
+        stage: RunningStageOrStr,
     ):
         """
         Log the area under the roc curve and (optionally) the curve itself at the end of an epoch.
@@ -409,7 +368,7 @@ class LogPrcurveCallback(
         limit_points: int,
         # mixin args
         python_generator: random.Random,
-        stage: RunningStage,
+        stage: RunningStageOrStr,
     ):
         """
         Log the average precision and (optionally) its curve (precision-recall curve) at the end of an epoch.
@@ -500,8 +459,36 @@ class LogHistogramCallback(
     pl.Callback,
 ):
 
-    @MultiStageEpochEndCallbackMixin.init__stage
-    def __init__(self, key: str, mode: str):
+    @staticmethod
+    def add_arguments(parser: ArgumentParser, histogram_of: str, stage: str) -> ArgumentParser:
+        
+        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        
+        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
+        
+        assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
+        assert isinstance(histogram_of, str), f"histogram_of must be a str, got {type(histogram_of)}"
+        
+        
+        parser.description = f"Log histogram of {histogram_of} for stage={stage}."
+        
+        argname = "key"
+        parser.add_argument(
+            f"--callback_log_histogram_{histogram_of}_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "mode"
+        parser.add_argument(
+            f"--callback_log_histogram_{histogram_of}_{stage}_{argname}", dest=argname,
+            type=str, choices=LOG_HISTOGRAM_MODES,
+        )
+        
+        parser.set_defaults(stage=stage,)
+        
+        return parser
+       
+    def __init__(self, key: str, mode: str, stage: RunningStageOrStr,):
         """
         Args:
             key: inside the last_epoch_outputs, what do you want to log?
@@ -512,6 +499,9 @@ class LogHistogramCallback(
         assert mode is not None, f"log_mode must not be None, just dont add the callback to the trainer :)"
         self.key = key
         self.mode = mode
+        
+        # mixin args
+        self.stage = stage
 
     @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
@@ -552,16 +542,60 @@ class LogHistogramCallback(
             raise ValueError(f"log_mode must be one of {LOG_HISTOGRAM_MODES}, got '{self.mode}'")
 
 
-class LogHistogramsSuperposedPerClassCallback(
+class LogHistogramsSuperposedCallback(
     MultiStageEpochEndCallbackMixin,
     LastEpochOutputsDependentCallbackMixin,
     RandomCallbackMixin,
     pl.Callback,
 ):
 
-    @MultiStageEpochEndCallbackMixin.init__stage
-    @RandomCallbackMixin.init__python_generator
-    def __init__(self, values_key: str, gt_key: str, mode: str, limit_points: int = 3000,):
+    @staticmethod
+    def add_arguments(parser: ArgumentParser, histogram_of: str, stage: str) -> ArgumentParser:
+        
+        assert stage in MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES, f"stage must be one of {MultiStageEpochEndCallbackMixin.ACCEPTED_STAGES}, got {stage}"
+        
+        assert isinstance(parser, ArgumentParser), f"parser must be an ArgumentParser, got {type(parser)}"
+        
+        assert isinstance(stage, str), f"stage must be a str, got {type(stage)}"
+        
+        parser.description = f"Log histograms superposed per class for stage={stage}."
+        
+        argname = "values_key"
+        parser.add_argument(
+            f"--callback_histograms_supperposed_{histogram_of}_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "gt_key"
+        parser.add_argument(
+            f"--callback_histograms_supperposed_{histogram_of}_{stage}_{argname}", dest=argname,
+            type=str, 
+        )
+        
+        argname = "mode"
+        parser.add_argument(
+            f"--callback_histograms_supperposed_{histogram_of}_{stage}_{argname}", dest=argname,
+            type=str, choices=LOG_HISTOGRAM_MODES,
+        )
+        
+        argname = "limit_points"
+        parser.add_argument(
+            f"--callback_histograms_supperposed_{histogram_of}_{stage}_{argname}", dest=argname,
+            type=int, 
+        )
+        
+        parser.set_defaults(
+            stage=stage,
+            # the seed here can be fixed, no need to follow the seed of the other
+            # random stuff because in anycase the training is already random, and 
+            # this randomness is just for the sampling of points used to estimate the PR curve
+            # it's not a big deal if all trainings use the same seed
+            python_generator=create_python_random_generator(0),
+        )
+        
+        return parser
+    
+    def __init__(self, values_key: str, gt_key: str, mode: str, limit_points: int, stage: RunningStageOrStr, python_generator: random.Random,):
         """
         Args:
             values_key & gt_key: inside the last_epoch_outputs, how are the values and their respective labels called?
@@ -582,6 +616,10 @@ class LogHistogramsSuperposedPerClassCallback(
         self.gt_key = gt_key
         self.mode = mode
         self.limit_points = limit_points
+        
+        # mixin args
+        self.stage = stage
+        self.python_generator = python_generator
 
     @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
@@ -672,14 +710,23 @@ class LogHistogramsSuperposedPerClassCallback(
 
 class DataloaderPreviewCallback(pl.Callback):
 
-    def __init__(self, dataloader, n_samples=5,  logkey_prefix="train/preview"):
+    def __init__(self, dataloader, n_samples=5,  stage="train"):
         """the keys loggeda are `{logkey_prefix}/anomalous` and `{logkey_prefix}/normal`"""
         super().__init__()
         assert isinstance(dataloader, torch.utils.data.DataLoader), f"dataloader must be a torch.utils.data.DataLoader, got {type(dataloader)}"
         assert n_samples > 0, f"n_samples must be > 0, got {n_samples}"
         self.dataloader = dataloader
         self.n_samples = n_samples
-        self.logkey_prefix = logkey_prefix
+        
+        
+        assert isinstance(stage, RunningStage) or isinstance(stage, str), f"stage must be a RunningStage or a string, got {type(stage)}"
+        ACCEPTED_STAGES = (
+            RunningStage.TRAINING,
+            RunningStage.VALIDATING,
+            RunningStage.TESTING,
+        )
+        assert stage in ACCEPTED_STAGES, f"stage must be one of {ACCEPTED_STAGES}, got {stage}"
+        self.stage = stage
 
     @staticmethod
     def _get_mask_dict(mask):
@@ -695,39 +742,21 @@ class DataloaderPreviewCallback(pl.Callback):
         )
 
     def on_fit_start(self, trainer, model):
-        import data_dev01
         (
             norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps
         ) = data_dev01.generate_dataloader_images(self.dataloader, nimages_perclass=self.n_samples)
 
         import wandb
         wandb.log({
-            f"{self.logkey_prefix}/normal": [
+            f"{self.stage}/preview_normal": [
                 wandb.Image(img, caption=[f"normal {idx:03d}"], masks=self._get_mask_dict(mask))
                 for idx, (img, mask) in enumerate(zip(norm_imgs, norm_gtmaps))
             ],
-            f"{self.logkey_prefix}/anomalous": [
+            f"{self.stage}/preview_anomalous": [
                 wandb.Image(img, caption=[f"anomalous {idx:03d}"], masks=self._get_mask_dict(mask))
                 for idx, (img, mask) in enumerate(zip(anom_imgs, anom_gtmaps))
             ],
         })
-
-
-class TorchTensorboardProfilerCallback(pl.Callback):
-  """
-  Quick-and-dirty Callback for invoking TensorboardProfiler during training.
-
-  For greater robustness, extend the pl.profiler.profilers.BaseProfiler. See
-  https://pytorch-lightning.readthedocs.io/en/stable/advanced/profiler.html
-  """
-
-  def __init__(self, profiler):
-    super().__init__()
-    self.profiler = profiler
-
-  def on_train_batch_end(self, trainer, pl_module, outputs, *args, **kwargs):
-    self.profiler.step()
-    # pl_module.log_dict(outputs)  # also logging the loss, while we're here
 
 
 HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH = "minmax-epoch"
@@ -749,8 +778,6 @@ class LogImageHeatmapTableCallback(
     pl.Callback,
 ):
 
-    @MultiStageEpochEndCallbackMixin.init__stage
-    @RandomCallbackMixin.init__python_generator
     def __init__(
         self,
         imgs_key: str,
@@ -760,7 +787,9 @@ class LogImageHeatmapTableCallback(
         nsamples_each_class: int,
         resolution: Optional[int],
         heatmap_normalization: str,
-        min_max_percentiles: Optional[Tuple[float, float]] = None,
+        min_max_percentiles: Optional[Tuple[float, float]],
+        stage: RunningStageOrStr,
+        python_generator: random.Random,
     ):
         """
         it is assumed that the number and order of images is the same every epoch
@@ -800,6 +829,10 @@ class LogImageHeatmapTableCallback(
 
         # lazy initialization because we don't know the batch size in advance
         self.selected_instances_indices = None
+        
+        # mixin args
+        self.stage = stage
+        self.python_generator = python_generator
 
     @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
@@ -985,8 +1018,7 @@ class LogPercentilesPerClassCallback(
     pl.Callback,
 ):
 
-    @MultiStageEpochEndCallbackMixin.init__stage
-    def __init__(self, values_key: str, gt_key: str, percentiles: Tuple[float, ...],):
+    def __init__(self, values_key: str, gt_key: str, percentiles: Tuple[float, ...], stage: RunningStageOrStr,):
         """
         Args:
             values_key & gt_key: inside the last_epoch_outputs, how are the values and their respective labels called?
@@ -1000,6 +1032,9 @@ class LogPercentilesPerClassCallback(
         self.values_key = values_key
         self.gt_key = gt_key
         self.percentiles = percentiles
+        
+        # mixin args
+        self.stage = stage
 
     @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):
@@ -1051,8 +1086,7 @@ class LogPerInstanceValueCallback(
     pl.Callback,
 ):
 
-    @MultiStageEpochEndCallbackMixin.init__stage
-    def __init__(self, values_key: str, labels_key: str,):
+    def __init__(self, values_key: str, labels_key: str, stage: RunningStageOrStr,):
         """
         Args:
             values_key & gt_key: inside the last_epoch_outputs, how are the values and their respective labels called?
@@ -1063,6 +1097,9 @@ class LogPerInstanceValueCallback(
         assert values_key != labels_key, f"values_key and gt_key must be different, got {values_key} and {labels_key}"
         self.values_key = values_key
         self.labels_key = labels_key
+        
+        # mixin args
+        self.stage = stage
 
     @LastEpochOutputsDependentCallbackMixin.setup_verify_plmodule_with_last_epoch_outputs
     def setup(self, trainer, pl_module, stage=None):

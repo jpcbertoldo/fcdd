@@ -16,6 +16,7 @@ import torch
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profiler import (AdvancedProfiler, PyTorchProfiler,
                                         SimpleProfiler)
+from callbacks_dev01_bis import DataloaderPreviewCallback
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
@@ -552,6 +553,16 @@ def run_one(
         # pl.callbacks.ModelSummary(max_depth=lightning_model_summary_max_depth),
         pl.callbacks.RichModelSummary(max_depth=lightning_model_summary_max_depth),
         LearningRateLoggerCallback(),
+        # DataloaderPreviewCallback(
+        #     datamodule.train_dataloader(batch_size_override=10, embed_preprocessing=True),
+        #     n_samples=20,
+        #     stage="train",
+        # ),
+        # DataloaderPreviewCallback(
+        #     datamodule.val_dataloader(batch_size_override=10, embed_preprocessing=True),
+        #     n_samples=20,
+        #     stage="validate",
+        # ),
     ] + callbacks
     
     # ================================ PROFILING ================================

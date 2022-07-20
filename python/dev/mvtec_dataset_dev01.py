@@ -1324,8 +1324,8 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         self.real_anomaly_limit = real_anomaly_limit
         
         # data parameters
-        self.raw_shape = raw_shape
-        self.net_shape = net_shape
+        self.raw_shape = tuple(raw_shape)  # it has to be a tuple for the comparison with torch shapes
+        self.net_shape = tuple(net_shape)  
         self.normal_class = normal_class
 
         # training parameters

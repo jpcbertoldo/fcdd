@@ -226,7 +226,7 @@ class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
     def __init__(
         self, 
         # model
-        in_shape: Tuple[int, int, int], 
+        in_shape: Tuple[int, int], 
         # optimizer
         optimizer_name: str,
         lr: float,
@@ -250,7 +250,7 @@ class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
         super().__init__()
         
         self.last_epoch_outputs = None
-        self.in_shape = in_shape
+        self.in_shape = tuple(in_shape)
         
         state_dict = load_state_dict_from_url(
             torchvision.models.vgg.model_urls['vgg11_bn'],
@@ -308,7 +308,7 @@ class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
         pass
     
     def forward(self, x):
-        assert x.shape[-2:] == self.in_shape, f"{x.shape[1:]} != {self.in_shape}"
+        assert tuple(x.shape[-2:]) == self.in_shape, f"{x.shape[-2:]} != {self.in_shape}"
         x = self.features(x)
         x = self.conv_final(x)
         return x
