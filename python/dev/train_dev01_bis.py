@@ -187,6 +187,29 @@ OPTIMIZER_CHOICES = tuple(set.union(*[
 ]))
 print(f"OPTIMIZER_CHOICES={OPTIMIZER_CHOICES}")  
 
+# ======================================== dropout ========================================
+
+@unknown_model
+def model_dropout_mode_choices(model_name: str) -> List[str]:
+    return {
+        # fcdd
+        model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.DROPOUT_MODE_FCDD_CHOICES,
+        # u2net
+        model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.DROPOUT_MODE_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.DROPOUT_MODE_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.DROPOUT_MODE_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01_bis.DROPOUT_MODE_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01_bis.DROPOUT_MODE_U2NET_CHOICES,
+    }[model_name]
+
+
+DROPOUT_MODE_CHOICES = tuple(set.union(*[
+    set(model_dropout_mode_choices(model_name))
+    for model_name in MODEL_CHOICES
+]))
+print(f"DROPOUT_MODE_CHOICES={DROPOUT_MODE_CHOICES}")
+
+
 # ======================================== schedulers ========================================
 
 @unknown_model
@@ -275,6 +298,8 @@ def cli_add_arguments_run_one(parser: ArgumentParserOrArgumentGroup):
         help='Sequence of learning rate scheduler parameters. '
              '"lambda": one parameter is allowed, the factor the learning rate is reduced per epoch. '
     )
+    parser.add_argument("--dropout_mode", type=str, choices=DROPOUT_MODE_CHOICES,)
+    parser.add_argument("--dropout_parameters", type=float, nargs='*',)
     # ====================================== dataset =====================================
     parser.add_argument('--dataset', type=str, choices=DATASET_CHOICES,)
     parser.add_argument("--raw_shape", type=int, nargs=2,)
@@ -356,16 +381,26 @@ def cli_add_arguments_run_one(parser: ArgumentParserOrArgumentGroup):
     )
 
 
+# ====================================== minimal validations for cli arguments =====================================
+
 def args_validate_dataset_specific_choices(args):
+    
+    assert args.dataset in DATASET_CHOICES, f"Invalid dataset: {args.dataset}, chose from {DATASET_CHOICES}"
+    
+    # dataset-specific validation
     assert args.preprocessing in dataset_preprocessing_choices(args.dataset), f"args.dataset={args.dataset}: {args.preprocessing} not in {dataset_preprocessing_choices(args.dataset)}"
     assert args.supervise_mode in dataset_supervise_mode_choices(args.dataset), f"args.dataset={args.dataset}: {args.supervise_mode} not in {dataset_supervise_mode_choices(args.dataset)}"
 
 
 def args_validate_model_specific_choices(args):
+    
+    assert args.model in MODEL_CHOICES, f"Invalid model: {args.model}, chose from {MODEL_CHOICES}"
+    
+    # model-specific validation   
     assert args.loss in model_loss_choices(args.model), f"args.model={args.model}: {args.loss} not in {model_loss_choices(args.model)}"
     assert args.optimizer in model_optimizer_choices(args.model), f"args.model={args.model}: {args.optimizer} not in {model_optimizer_choices(args.model)}"
     assert args.scheduler in model_scheduler_choices(args.model), f"args.model={args.model}: {args.scheduler} not in {model_scheduler_choices(args.model)}"
-
+    assert args.dropout_mode in model_dropout_mode_choices(args.model), f"args.model={args.model}: {args.dropout_mode} not in {model_dropout_mode_choices(args.model)}"
 
 # ==========================================================================================
 # ==========================================================================================
@@ -386,6 +421,8 @@ def run_one(
     optimizer: str, 
     scheduler: str,
     scheduler_parameters: list,
+    dropout_mode: str,
+    dropout_parameters: list,
     # dataset
     dataset: str,
     raw_shape: Tuple[int, int],
@@ -418,19 +455,6 @@ def run_one(
     wandb_logger: WandbLogger,
     callbacks: list,
 ):
-    
-    # minimal validation for early mistakes
-    assert dataset in DATASET_CHOICES, f"Invalid dataset: {dataset}, chose from {DATASET_CHOICES}"
-    
-    # dataset-specific validation
-    assert supervise_mode in dataset_supervise_mode_choices(dataset), f"Invalid supervise_mode: {supervise_mode} for dataset {dataset}, chose from {dataset_supervise_mode_choices(dataset)}"
-    assert preprocessing in dataset_preprocessing_choices(dataset), f"Invalid preproc: {preprocessing} for dataset {dataset}, chose from {dataset_preprocessing_choices(dataset)}"
-    
-    # model-specific validation
-    assert loss in model_loss_choices(model), f"Invalid loss: {loss} for model {model}, chose from {model_loss_choices(model)}"
-    assert optimizer in model_optimizer_choices(model), f"Invalid optimizer: {optimizer} for model {model}, chose from {model_optimizer_choices(model)}"
-    assert scheduler in model_scheduler_choices(model), f"Invalid scheduler: {scheduler} for model {model}, chose from {model_scheduler_choices(model)}"
-    
     # lightning-stuff validation
     assert lightning_accelerator in LIGHTNING_ACCELERATOR_CHOICES, f"Invalid lightning_accelerator: {lightning_accelerator}, chose from {LIGHTNING_ACCELERATOR_CHOICES}"
     if lightning_strategy is not None:
@@ -500,6 +524,9 @@ def run_one(
             # scheduler
             scheduler_name=scheduler,
             scheduler_parameters=scheduler_parameters,
+            # dropout
+            dropout_mode=dropout_mode,
+            dropout_parameters=dropout_parameters,
         )
         
     except ModelError as ex:

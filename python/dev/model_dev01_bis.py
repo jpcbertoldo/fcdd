@@ -22,6 +22,20 @@ import numpy as np
 
 from common_dev01_bis import AdaptiveClipError, find_scores_clip_values_from_empircal_cdf
 
+DROPOUT_MODE_LASTCONV = "lastconv"
+DROPOUT_MODE_FCDD_CHOICES = (None, DROPOUT_MODE_LASTCONV,)
+DROPOUT_MODE_U2NET_CHOICES = (None,)
+
+def dropout_validate_parameters_mode_single_proba(parameters: list):
+    assert len(parameters) == 1, f"{parameters} is not a valid for dropout mode {DROPOUT_MODE_LASTCONV}"
+    proba = parameters[0]
+    assert 0.0 <= proba <= 1.0, f"{proba} (parameters[0]) is not a valid probability"
+    if proba == 0.0:
+        warnings.warn(f"{proba} (parameters[0]) is 0.0, so dropout will be disabled, you can also set dropout_mode to None")
+    if proba == 1.0:
+        warnings.warn(f"{proba} (parameters[0]) is 1.0, so dropout will drop all the connections!")
+    return proba
+
 OPTIMIZER_SGD = 'sgd'
 OPTIMIZER_ADAM = 'adam'
 OPTIMIZER_CHOICES = (OPTIMIZER_SGD, OPTIMIZER_ADAM)
@@ -306,12 +320,18 @@ class FCDD(SchedulersMixin, MergeStepOutputsMixin, PixelwiseHSCLossesMixin, Ligh
         scheduler_parameters: list,
         # else
         loss_name: str,
+        dropout_mode: Optional[str],
+        dropout_parameters: list,
     ):
         assert optimizer_name in OPTIMIZER_CHOICES, f"optimizer_name={optimizer_name} not in {OPTIMIZER_CHOICES}"
         assert scheduler_name in SCHEDULER_CHOICES, f"scheduler_name={scheduler_name} not in {SCHEDULER_CHOICES}"
         assert loss_name in LOSS_FCDD_CHOICES, f"loss_name={loss_name} not in {LOSS_FCDD_CHOICES}"
         assert model_name in MODEL_CHOICES_FCDD, f"model_name={model_name} not in {MODEL_CHOICES_FCDD}"
+        assert dropout_mode in DROPOUT_MODE_FCDD_CHOICES, f"dropout_mode={dropout_mode} not in {DROPOUT_MODE_FCDD_CHOICES}"
         
+        if dropout_mode == DROPOUT_MODE_LASTCONV:
+            dropout_proba = dropout_validate_parameters_mode_single_proba(dropout_parameters)
+                
         if model_name != MODEL_FCDD_CNN224_VGG_F:
             raise NotImplementedError(f"model_name={model_name} not implemented")
         
@@ -372,6 +392,15 @@ class FCDD(SchedulersMixin, MergeStepOutputsMixin, PixelwiseHSCLossesMixin, Ligh
                 p.requires_grad = False
         
         self.conv_final = torch.nn.Conv2d(512, 1, 1)
+        
+        if dropout_mode is None:
+            self.dropout_lastconv = nn.Identity()
+            
+        elif dropout_mode == DROPOUT_MODE_LASTCONV:
+            self.dropout_lastconv = nn.Dropout(p=dropout_proba)
+        
+        else:
+            raise NotImplementedError(f"dropout_mode={dropout_mode} not implemented")
         
         self.save_hyperparameters()
         pass
@@ -782,9 +811,15 @@ class HyperSphereU2Net(
         scheduler_parameters: list,
         loss_name: str,
         model_name: str,
+        dropout_mode: Optional[str],
+        dropout_parameters: list,
         # this is held constant for now (there is no option in the cli)
         loss_stage_weights: Union[str, Tuple[float, ...]] = HYPERSHPERE_U2NET_LOSS_WEIGHTS_UNIFORM,
     ):
+        
+        if dropout_mode is not None:
+            raise NotImplementedError(f"dropout is not implemented yet for class {self.__class__.__name__}")
+        
         assert optimizer_name in OPTIMIZER_CHOICES, f"{optimizer_name} is not a valid optimizer name"
         assert scheduler_name in SCHEDULER_CHOICES, f"{scheduler_name} is not a valid scheduler name"
         assert loss_name in LOSS_U2NET_CHOICES, f"{loss_name} is not a valid loss name"

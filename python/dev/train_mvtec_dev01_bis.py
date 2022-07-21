@@ -7,6 +7,8 @@ import time
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
 
+from torch import dropout
+
 import model_dev01_bis
 import mvtec_dataset_dev01_bis
 import train_dev01_bis
@@ -70,12 +72,14 @@ runone_args_group.set_defaults(
     optimizer=model_dev01_bis.OPTIMIZER_SGD,
     scheduler=model_dev01_bis.SCHEDULER_LAMBDA,
     scheduler_parameters=[0.985],
+    dropout_mode=None,
+    dropout_parameters=[],
     # dataset
     dataset=mvtec_dataset_dev01_bis.DATASET_NAME,
     raw_shape=(240, 240),
     net_shape=(224, 224),
     batch_size=64,  # it was 128, i'm accumulating batches to simulate the same size
-    nworkers=4,
+    nworkers=2,
     pin_memory=False,
     preprocessing=mvtec_dataset_dev01_bis.PREPROCESSING_LCNAUG2,
     preprocess_moment=mvtec_dataset_dev01_bis.DATAMODULE_PREPROCESS_MOMENT_BEFORE_BATCH_TRANSFER,
