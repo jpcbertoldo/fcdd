@@ -8,7 +8,7 @@ from argparse import ArgumentParser, Namespace
 from pathlib import Path
 
 import model_dev01_bis
-import mvtec_dataset_dev01
+import mvtec_dataset_dev01_bis
 import train_dev01_bis
 from callbacks_dev01_bis import (
     HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
@@ -71,14 +71,15 @@ runone_args_group.set_defaults(
     scheduler=model_dev01_bis.SCHEDULER_LAMBDA,
     scheduler_parameters=[0.985],
     # dataset
-    dataset=mvtec_dataset_dev01.DATASET_NAME,
+    dataset=mvtec_dataset_dev01_bis.DATASET_NAME,
     raw_shape=(240, 240),
     net_shape=(224, 224),
     batch_size=64,  # it was 128, i'm accumulating batches to simulate the same size
-    nworkers=1,
+    nworkers=4,
     pin_memory=False,
-    preprocessing=mvtec_dataset_dev01.PREPROCESSING_LCNAUG1,
-    supervise_mode=mvtec_dataset_dev01.SUPERVISE_MODE_REAL_ANOMALY,
+    preprocessing=mvtec_dataset_dev01_bis.PREPROCESSING_LCNAUG2,
+    preprocess_moment=mvtec_dataset_dev01_bis.DATAMODULE_PREPROCESS_MOMENT_BEFORE_BATCH_TRANSFER,
+    supervise_mode=mvtec_dataset_dev01_bis.SUPERVISE_MODE_REAL_ANOMALY,
     real_anomaly_limit=1,
     datadir=Path("../../data/datasets"),
     # pytorch lightning

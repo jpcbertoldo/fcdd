@@ -13,9 +13,9 @@ from pytorch_lightning.profiler import (AdvancedProfiler, PyTorchProfiler,
                                         SimpleProfiler)
 
 import model_dev01_bis
-import mvtec_dataset_dev01 as mvtec_dataset_dev01
+import mvtec_dataset_dev01_bis as mvtec_dataset_dev01_bis
 import wandb
-from callbacks_dev01_bis import (LearningRateLoggerCallback)
+from callbacks_dev01_bis import (DataloaderPreviewCallback, LearningRateLoggerCallback)
 from common_dev01_bis import (ArgumentParserOrArgumentGroup, hashify_config,
                               none_or_str, seed_int2str)
 
@@ -81,7 +81,7 @@ print(f"WANDB_CHECKPOINT_MODES={WANDB_CHECKPOINT_MODES}")
 
 # ======================================== dataset ========================================
 
-DATASET_CHOICES = (mvtec_dataset_dev01.DATASET_NAME,)
+DATASET_CHOICES = (mvtec_dataset_dev01_bis.DATASET_NAME,)
 print(f"DATASET_CHOICES={DATASET_CHOICES}")
 
 
@@ -95,21 +95,21 @@ def unknown_dataset(wrapped: Callable[[str, ], Any]):
 @unknown_dataset
 def dataset_class_labels(dataset_name: str) -> List[str]:
     return {
-        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.CLASSES_LABELS,
+        mvtec_dataset_dev01_bis.DATASET_NAME: mvtec_dataset_dev01_bis.CLASSES_LABELS,
     }[dataset_name]
     
 
 @unknown_dataset
 def dataset_class_fullqualified(dataset_name: str) -> List[str]:
     return {
-        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.CLASSES_FULLQUALIFIED,
+        mvtec_dataset_dev01_bis.DATASET_NAME: mvtec_dataset_dev01_bis.CLASSES_FULLQUALIFIED,
     }[dataset_name]
 
 
 @unknown_dataset
 def dataset_nclasses(dataset_name: str) -> int:
     return {
-        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.NCLASSES,
+        mvtec_dataset_dev01_bis.DATASET_NAME: mvtec_dataset_dev01_bis.NCLASSES,
     }[dataset_name]
 
 
@@ -122,7 +122,7 @@ def dataset_class_index(dataset_name: str, class_name: str) -> int:
 @unknown_dataset
 def dataset_preprocessing_choices(dataset_name: str) -> List[str]:
     return {
-        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.PREPROCESSING_CHOICES,
+        mvtec_dataset_dev01_bis.DATASET_NAME: mvtec_dataset_dev01_bis.PREPROCESSING_CHOICES,
     }[dataset_name]
 
 
@@ -137,7 +137,7 @@ print(f"PREPROCESSING_CHOICES={ALL_PREPROCESSING_CHOICES}")
 @unknown_dataset
 def dataset_supervise_mode_choices(dataset_name: str) -> List[str]:
     return {
-        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.SUPERVISE_MODES,
+        mvtec_dataset_dev01_bis.DATASET_NAME: mvtec_dataset_dev01_bis.SUPERVISE_MODES,
     }[dataset_name]
 
 
@@ -290,6 +290,10 @@ def cli_add_arguments_run_one(parser: ArgumentParserOrArgumentGroup):
         help='Preprocessing pipeline (augmentations and such). Defined inside each dataset module.'
     )
     parser.add_argument(
+        "--preprocess_moment", type=str, choices=mvtec_dataset_dev01_bis.DATAMODULE_PREPROCESS_MOMENT_CHOICES,
+        help="Should the preprocessing be applied before or after the data being transferred to the GPU?",
+    )
+    parser.add_argument(
         '--supervise_mode', type=str, choices=ALL_SUPERVISE_MODE_CHOICES,
         help='This determines the kind of artificial anomalies. '
     )
@@ -390,6 +394,7 @@ def run_one(
     nworkers: int, 
     pin_memory: bool,
     preprocessing: str,
+    preprocess_moment: str,
     supervise_mode: str,
     real_anomaly_limit: int,
     datadir: Path,
@@ -453,10 +458,11 @@ def run_one(
     print(f"datadir: resolved: {datadir}")
     
     # datamodule hard-coded for now, but later other datasets can be added
-    datamodule = mvtec_dataset_dev01.MVTecAnomalyDetectionDataModule(
+    datamodule = mvtec_dataset_dev01_bis.MVTecAnomalyDetectionDataModule(
         root=datadir,
         normal_class=normal_class,
         preprocessing=preprocessing,
+        preprocess_moment=preprocess_moment,
         supervise_mode=supervise_mode,
         real_anomaly_limit=real_anomaly_limit,
         raw_shape=raw_shape,
@@ -468,11 +474,12 @@ def run_one(
     )
     summary_update_dict_dataset = dict(
         normal_class_label=dataset_class_labels(dataset)[normal_class],
-        mvtec_class_type=mvtec_dataset_dev01.CLASSES_TYPES[normal_class],
+        mvtec_class_type=mvtec_dataset_dev01_bis.CLASSES_TYPES[normal_class],
         normal_class_fullqualified=dataset_class_fullqualified(dataset)[normal_class],
     )
     wandb.run.summary.update(summary_update_dict_dataset)
     datamodule.prepare_data()
+    datamodule.setup()
 
     # ================================ MODEL ================================
     try:
@@ -514,7 +521,8 @@ def run_one(
         model_str_fpath = rundir / "model.txt"
         model_str_fpath.write_text(model_str)
          # now = dont keep syncing if it changes
-        wandb.save(str(model_str_fpath), policy="now") 
+        print(f"saving model architecture to {str(model_str_fpath)}")
+        wandb.save(str(model_str_fpath), policy="now", base_path=str(model_str_fpath.parent)) 
     
     log_model_architecture(model)
     
@@ -525,11 +533,11 @@ def run_one(
         # pl.callbacks.ModelSummary(max_depth=lightning_model_summary_max_depth),
         pl.callbacks.RichModelSummary(max_depth=lightning_model_summary_max_depth),
         LearningRateLoggerCallback(),
-        # DataloaderPreviewCallback(
-        #     datamodule.train_dataloader(batch_size_override=10, embed_preprocessing=True),
-        #     n_samples=20,
-        #     stage="train",
-        # ),
+        DataloaderPreviewCallback(
+            datamodule.train_dataloader(batch_size_override=10, nworkers_override=0, embed_preprocessing=True),
+            n_samples=20,
+            stage="train",
+        ),
         # DataloaderPreviewCallback(
         #     datamodule.val_dataloader(batch_size_override=10, embed_preprocessing=True),
         #     n_samples=20,
@@ -555,7 +563,6 @@ def run_one(
             return AdvancedProfiler(
                 dirpath=wandb_logger.save_dir,
                 filename=f"lightning-profiler.{LIGHTNING_PROFILER_ADVANCED}",
-
             )
         
         elif profiler_choice == LIGHTNING_PROFILER_PYTORCH:
@@ -594,7 +601,9 @@ def run_one(
     trainer.fit(model=model, datamodule=datamodule)
     
     if lightning_profiler is not None:
-        wandb.save(str(Path(lightning_profiler.dirpath) / lightning_profiler.filename), policy="now") 
+        profile_fpath = Path(lightning_profiler.dirpath) / lightning_profiler.filename
+        print(f"Saving profiler {lightning_profiler} at {profile_fpath}")
+        wandb.save(str(profile_fpath), policy="now", base_path=str(profile_fpath.parent)) 
 
     # ================================ TEST ================================
     if test:

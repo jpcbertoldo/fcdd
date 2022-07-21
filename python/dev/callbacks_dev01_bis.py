@@ -19,7 +19,7 @@ from pytorch_lightning.trainer.states import RunningStage
 from sklearn.metrics import average_precision_score, roc_auc_score
 from torch import Tensor
 
-import data_dev01
+import data_dev01_bis
 import hacked_dev01
 import wandb
 from common_dev01_bis import (AdaptiveClipError, ArgumentParserOrArgumentGroup,
@@ -27,7 +27,7 @@ from common_dev01_bis import (AdaptiveClipError, ArgumentParserOrArgumentGroup,
                               create_python_random_generator,
                               find_scores_clip_values_from_empircal_cdf,
                               none_or_int)
-from data_dev01 import ANOMALY_TARGET, NOMINAL_TARGET
+from data_dev01_bis import ANOMALY_TARGET, NOMINAL_TARGET
 
 from pytorch_lightning.loggers import WandbLogger
 
@@ -731,7 +731,7 @@ class DataloaderPreviewCallback(pl.Callback):
     def on_fit_start(self, trainer, model):
         (
             norm_imgs, norm_gtmaps, anom_imgs, anom_gtmaps
-        ) = data_dev01.generate_dataloader_images(self.dataloader, nimages_perclass=self.n_samples)
+        ) = data_dev01_bis.generate_dataloader_images(self.dataloader, nimages_perclass=self.n_samples)
 
         wandb.log({
             f"{self.stage}/preview_normal": [
