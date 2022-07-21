@@ -98,7 +98,14 @@ runone_args_group.set_defaults(
     lightning_gradient_clip_val=0,
     lightning_gradient_clip_algorithm=train_dev01_bis.LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM,
     lightning_deterministic=False,
+    # pytorch lightning SWA
+    lightning_swa_enabled=False,
+    lightning_swa_learning_rate=None,
+    lightning_swa_epoch_start=None,
+    lightning_swa_annealing_epochs=10,  # default from pytorch-lightning
+    lightning_swa_annealing_strategy=train_dev01_bis.LIGHTNING_SWA_ANNEALING_STRATEGY_COS,
 )
+
 
 # ========================================================================= BUILD PARSERS of callbacks[]
 

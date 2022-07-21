@@ -4,7 +4,7 @@ import functools
 import itertools
 from pathlib import Path
 from re import A
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import pytorch_lightning as pl
 import torch
@@ -18,6 +18,7 @@ import wandb
 from callbacks_dev01_bis import (DataloaderPreviewCallback, LearningRateLoggerCallback)
 from common_dev01_bis import (ArgumentParserOrArgumentGroup, hashify_config,
                               none_or_str, seed_int2str)
+from pytorch_lightning.callbacks import StochasticWeightAveraging
 
 # ======================================== lightning ========================================
 
@@ -64,6 +65,12 @@ LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM = "norm"
 LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES = (
     LIGHTNING_GRADIENT_CLIP_ALGORITHM_NORM,
     LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE, 
+)
+
+LIGHTNING_SWA_ANNEALING_STRATEGY_LINEAR = "linear"
+LIGHTNING_SWA_ANNEALING_STRATEGY_COS = "cos"
+LIGHTNING_SWA_ANNEALING_STRATEGY_CHOICES = (
+    LIGHTNING_SWA_ANNEALING_STRATEGY_LINEAR, LIGHTNING_SWA_ANNEALING_STRATEGY_COS,
 )
 
 # ======================================== wandb ========================================
@@ -311,7 +318,7 @@ def cli_add_arguments_run_one(parser: ArgumentParserOrArgumentGroup):
     )
     parser.add_argument('--pin_memory', action='store_true', )
     parser.add_argument(
-        '--preprocessing', type=str, choices=ALL_PREPROCESSING_CHOICES,
+        '--preprocessing', type=none_or_str, choices=ALL_PREPROCESSING_CHOICES,
         help='Preprocessing pipeline (augmentations and such). Defined inside each dataset module.'
     )
     parser.add_argument(
@@ -379,6 +386,20 @@ def cli_add_arguments_run_one(parser: ArgumentParserOrArgumentGroup):
         "--lightning_deterministic", type=bool, 
         help="https://pytorch-lightning.readthedocs.io/en/stable/common/trainer.html#reproducibility",
     )
+    
+    # ================================ pytorch lightning SWA =================================
+    
+    group_swa = parser.add_argument_group("swa", description="Stochastic Weight Averaging")
+    group_swa.add_argument(
+        "--lightning_swa_enabled", action='store_true',
+        help="Activate Stochastic Weight Averaging (SWA). See https://pytorch-lightning.readthedocs.io/en/latest/api/pytorch_lightning.callbacks.StochasticWeightAveraging.html#pytorch_lightning.callbacks.StochasticWeightAveraging"
+    )
+    group_swa.add_argument("--lightning_swa_learning_rate", type=float,)
+    group_swa_epoch_start = group_swa.add_mutually_exclusive_group()
+    group_swa_epoch_start.add_argument("--lightning_swa_epoch_start_absolute", dest="lightning_swa_epoch_start", type=int,)
+    group_swa_epoch_start.add_argument("--lightning_swa_epoch_start_relative", dest="lightning_swa_epoch_start", type=float,)
+    group_swa.add_argument("--lightning_swa_annealing_epochs", type=int,)
+    group_swa.add_argument("--lightning_swa_annealing_strategy", type=str, choices=LIGHTNING_SWA_ANNEALING_STRATEGY_CHOICES,)
 
 
 # ====================================== minimal validations for cli arguments =====================================
@@ -447,6 +468,12 @@ def run_one(
     lightning_gradient_clip_val: float,
     lightning_gradient_clip_algorithm: str,
     lightning_deterministic: bool, 
+    # stochastic weight averaging
+    lightning_swa_enabled: bool,
+    lightning_swa_learning_rate: Optional[float],
+    lightning_swa_epoch_start: Optional[Union[int, float]],
+    lightning_swa_annealing_epochs: Optional[int],
+    lightning_swa_annealing_strategy: Optional[str],
     # from run()
     rundir: Path,
     normal_class: int,
@@ -552,8 +579,7 @@ def run_one(
         wandb.save(str(model_str_fpath), policy="now", base_path=str(model_str_fpath.parent)) 
     
     log_model_architecture(model)
-    
-
+        
     # ================================ CALLBACKS ================================
 
     callbacks = [
@@ -571,6 +597,26 @@ def run_one(
         #     stage="validate",
         # ),
     ] + callbacks
+    
+    # ================================ SWA ================================
+    if lightning_swa_enabled:
+        assert lightning_swa_learning_rate is not None, f"lightning_swa_learning_rate must be set if lightning_swa_enabled is True"
+        assert lightning_swa_epoch_start is not None, f"lightning_swa_epoch_start must be set if lightning_swa_enabled is True"
+        assert lightning_swa_annealing_epochs is not None, f"lightning_swa_annealing_epochs must be set if lightning_swa_enabled is True"
+        assert lightning_swa_annealing_strategy is not None, f"lightning_swa_annealing_strategy must be set if lightning_swa_enabled is True"
+        
+        assert isinstance(lightning_swa_learning_rate, float), f"lightning_swa_learning_rate must be a float, found {type(lightning_swa_learning_rate)}"
+        assert lightning_swa_learning_rate > 0, f"lightning_swa_learning_rate must be > 0, found {lightning_swa_learning_rate}"
+        assert 0 < lightning_swa_epoch_start < epochs, f"lightning_swa_epoch_start must be > 0 and < epochs, found {lightning_swa_epoch_start} and {epochs}"
+        
+        callbacks.append(StochasticWeightAveraging(
+            swa_lrs=lightning_swa_learning_rate, 
+            swa_epoch_start=lightning_swa_epoch_start, 
+            annealing_epochs=lightning_swa_annealing_epochs, 
+            annealing_strategy=lightning_swa_annealing_strategy, 
+            avg_fn=None, 
+            device=None, 
+        ))
     
     # ================================ PROFILING ================================
         

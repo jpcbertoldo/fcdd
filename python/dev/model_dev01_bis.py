@@ -460,7 +460,7 @@ class FCDD(SchedulersMixin, MergeStepOutputsMixin, PixelwiseHSCLossesMixin, Ligh
         receptive field specifically hard-coded for the archicteture FCDD_CNN224_VGG
         """
         return {
-            'n': 28, 'j': 8, 'r': 62, 's': 3.5, 'img_shape': (3, 224, 224),
+            'n': 28, 'j': 8, 'r': 62, 's': 3.5, 'img_shape': (3, ) + self.in_shape,
             # !!!
             # this one didnt exist before, i hard-coded it in there to further simplify
             # this is only valid for the class FCDD_CNN224_VGG_F
