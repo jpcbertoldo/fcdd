@@ -4,11 +4,13 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 # ==============================================================================
 
-SBATCH_SCRIPT_FPATH="${HOME}/fcdd/python/scripts/sbatch/06-nparallel-arrayargs-02-1gpu-4cpuptask.slurm"
+SBATCH_SCRIPT_FPATH="${HOME}/fcdd/python/scripts/sbatch/07-nparallel-arrayargs-02-1gpu-4cpuptask.slurm"
 
 export SBATCH_SCRIPT_ARG_WORKDIR="${HOME}/fcdd/python/scripts"
 export SBATCH_SCRIPT_ARG_CONDAENV="fcdd_rc21"
-export SBATCH_SCRIPT_ARG_SCRIPT_FNAME="wandb.py"
+
+export SBATCH_SCRIPT_ARG_SCRIPT_FNAME="null"
+export SBATCH_SCRIPT_ARG_CUSTOM_COMMAND="wandb"
 
 export SBATCH_SCRIPT_ARG_ARRAY_ARGS_FPATH="null"
 export SBATCH_SCRIPT_ARG_NPARALLEL_RUNS=3
