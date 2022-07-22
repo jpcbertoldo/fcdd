@@ -6,7 +6,7 @@
 #SBATCH --partition  cmm-gpu
 #SBATCH --gres       gpu:1
 #SBATCH --cpus-per-task 2
-#SBATCH --array=0-10%3   # Id of job start-end % number of simultaneous running job
+#SBATCH --array=0-100%3   # Id of job start-end % number of simultaneous running job
 
 # variable meanings
 # %x = job-name
@@ -16,7 +16,7 @@
 # %j = SLURM_JOBID (unique for each job)
 
 # OUTPUT FOR ARRAY JOB
-#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/nparallel-arrayargs/%x-%N-%A_%a-%j.log
+#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/nparallel-arrayargs/%x-%A_%a-%j-%N.log
  
 #SBATCH --mail-type  ALL
 #SBATCH --mail-user joaopcbertoldo@gmail.com
@@ -29,22 +29,25 @@ ARRAY_ARGS_FPATH_NULL="null"
 END_OF_JOB_CONTINUE_ARRAY="continue-array"
 END_OF_JOB_END_ARRAY="end-array"
 
+CANCEL_AND_EXIT_MSG="canceling the array job SLURM_ARRAY_JOB_ID=${SLURM_ARRAY_JOB_ID} and exiting"
+END_AND_EXIT_MSG="ending the array job SLURM_ARRAY_JOB_ID=${SLURM_ARRAY_JOB_ID} (cancel pending jobs) and exiting"
 
 function cancel_array_and_exit() {
-    echo "canceling the array job SLURM_ARRAY_JOB_ID=${SLURM_ARRAY_JOB_ID} and exiting"
     scancel ${SLURM_ARRAY_JOB_ID}
 	exit 1
 }
 
 function end_array_and_exit() {
-    echo "ending the array job SLURM_ARRAY_JOB_ID=${SLURM_ARRAY_JOB_ID} and exiting"
-    scancel ${SLURM_ARRAY_JOB_ID}
+    # src: https://stackoverflow.com/a/47325966/9582881
+    # this will cancel the array job and all pending jobs in the array
+    scancel -t PD ${SLURM_ARRAY_JOB_ID}
 	exit 0
 }
 
 function check_env_var() {
     if [ -z "${!1}" ]; then
         echo "ERROR: ${1} is not set"
+        echo "${CANCEL_AND_EXIT_MSG}"
         cancel_array_and_exit
     else
         echo "${1}=${!1}"
@@ -70,6 +73,48 @@ WorkDir="${SBATCH_SCRIPT_ARG_WORKDIR}"
 SCRIPT_FNAME="${SBATCH_SCRIPT_ARG_SCRIPT_FNAME}"
 CONDA_ENV_NAME="${SBATCH_SCRIPT_ARG_CONDAENV}"
 
+# ==============================================================================
+echo "=============================== VARIABLES ================================"
+# ==============================================================================
+
+INIT_CONDA_BASH_FPATH="${HOME}/init-conda-bash"
+SLEEP_BETWEEN_LAUNCHS_SECS=7
+Node=$(hostname)
+MYTMPDIR="/cluster/CMM/data1/jcasagrandebertoldo/tmp"
+# as in the SBATCH output
+JOB_ARRAY_IDENTIFIER="${SLURM_JOB_NAME}-${SLURM_ARRAY_JOB_ID}"
+JOB_FULL_IDENTIFIER="${SLURM_JOB_NAME}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}-${SLURM_JOB_ID}-${Node}"
+
+# logging
+
+BASE_LOGDIR="${HOME}/log/nparallel-arrayargs"
+LOGDIR="${BASE_LOGDIR}/${JOB_ARRAY_IDENTIFIER}"
+
+echo "creating log dir"
+echo "LOGDIR=${LOGDIR}"
+mkdir -p ${LOGDIR}
+
+LOGFILE_FNAME="${JOB_FULL_IDENTIFIER}.log"
+
+function move_logfile_to_logdir() {
+    echo "moving logfile to logdir"
+    mv "${BASE_LOGDIR}/${LOGFILE_FNAME}" "${LOGDIR}"
+}
+
+JNAME_BASE="${JOB_FULL_IDENTIFIER}.python-"
+JPATH_BASE="${LOGDIR}/${JNAME_BASE}"
+JPATH_EXT=".log"
+
+echo "Node=$Node"
+echo "WorkDir=$WorkDir"
+echo "CONDA_ENV_NAME=$CONDA_ENV_NAME"
+echo "SCRIPT_FNAME=$SCRIPT_FNAME"
+echo "MYTMPDIR = ${MYTMPDIR}"
+echo "LOGDIR=${LOGDIR}"
+echo "JNAME_BASE=${JNAME_BASE}"
+echo "JPATH_BASE=${JPATH_BASE}"
+echo "JPATH_EXT=${JPATH_EXT}"   
+
 
 # ==============================================================================
 echo "========================== N PARALLEL RUNS STUFF ========================="
@@ -80,6 +125,8 @@ if [[ ! ${NPARALLEL_RUNS} =~ $IS_INT_REGEX ]] || [ ${NPARALLEL_RUNS} -lt 1 ]
 then
 	echo "ERROR: NPARALLEL_RUNS is not a valid integer >= 1"
     echo "NPARALLEL_RUNS=${NPARALLEL_RUNS}"
+    echo "${CANCEL_AND_EXIT_MSG}"
+    move_logfile_to_logdir
     cancel_array_and_exit
 fi
 
@@ -95,6 +142,16 @@ done
 
 echo "number of parrallel runs: ${NPARALLEL_RUNS}"
 echo "INDICES=${INDICES[@]}"
+
+JPATHS=()
+
+for idx in ${INDICES[@]}
+do
+    JPATH="${JPATH_BASE}${idx}${JPATH_EXT}"
+    echo "idx=${idx}"
+    echo "JPATH=${JPATH}"
+    JPATHS+=($JPATH)
+done
 
 # ==============================================================================
 echo "============================= ARRAY TASK ARGS ============================"
@@ -116,6 +173,8 @@ else
     if [ ! -f "${ARRAY_ARGS_FPATH}" ]
     then
         echo "ERROR: ARRAY_ARGS_FPATH=${ARRAY_ARGS_FPATH} does not exist"
+        echo "${CANCEL_AND_EXIT_MSG}"
+       move_logfile_to_logdir
         cancel_array_and_exit
     fi
 
@@ -128,13 +187,17 @@ else
     if [ "${N_LINES}" -eq 0 ]
     then
         echo "ERROR: the file is empty, it should have one set of arguments per line; if you want to run without array args then pass the value <<${ARRAY_ARGS_FPATH_NULL}>> for ARRAY_ARGS_FPATH"
+        echo "${CANCEL_AND_EXIT_MSG}"
+        move_logfile_to_logdir
         cancel_array_and_exit
     fi
 
     # check if it is the end of args
-    if [ "${SLURM_ARRAY_TASK_ID}" -eq "${N_LINES}" ]
+    if [ "${SLURM_ARRAY_TASK_ID}" -ge "${N_LINES}" ]
     then
         echo "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID} does not have any array task args anymore"
+        echo "${END_AND_EXIT_MSG}"
+        move_logfile_to_logdir
         end_array_and_exit
     fi
 
@@ -159,44 +222,6 @@ ARGS="${ARGS} ${ARRAY_TASK_ARGS}"
 echo "ARGS=${ARGS}"
 
 # ==============================================================================
-echo "=============================== VARIABLES ================================"
-# ==============================================================================
-
-INIT_CONDA_BASH_FPATH="${HOME}/init-conda-bash"
-SLEEP_BETWEEN_LAUNCHS_SECS=7
-Node=$(hostname)
-MYTMPDIR="/cluster/CMM/data1/jcasagrandebertoldo/tmp"
-# as in the SBATCH output
-JOB_FULL_IDENTIFIER="${SLURM_JOB_NAME}-${Node}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}-${SLURM_JOB_ID}"
-
-# logging
-LOGDIR="${HOME}/log/nparallel-arrayargs/${JOB_FULL_IDENTIFIER}"
-JNAME_BASE="${JOB_FULL_IDENTIFIER}.python-"
-JPATH_BASE="${LOGDIR}/${JNAME_BASE}"
-JPATH_EXT=".log"
-
-JPATHS=()
-
-for idx in ${INDICES[@]}
-do
-    JPATH="${JPATH_BASE}${idx}${JPATH_EXT}"
-    echo "idx=${idx}"
-    echo "JPATH=${JPATH}"
-    JPATHS+=($JPATH)
-done
-
-echo "Node=$Node"
-echo "WorkDir=$WorkDir"
-echo "CONDA_ENV_NAME=$CONDA_ENV_NAME"
-echo "SCRIPT_FNAME=$SCRIPT_FNAME"
-echo "MYTMPDIR = ${MYTMPDIR}"
-echo "LOGDIR=${LOGDIR}"
-echo "JNAME_BASE=${JNAME_BASE}"
-echo "JPATH_BASE=${JPATH_BASE}"
-echo "JPATH_EXT=${JPATH_EXT}"   
-echo "JPATHS=${JPATHS[@]}"
-
-# ==============================================================================
 echo "================================= SETUP =================================="
 # ==============================================================================
 
@@ -208,9 +233,6 @@ source ${INIT_CONDA_BASH_FPATH}
 
 echo "activating conda env"
 conda activate $CONDA_ENV_NAME
-
-echo "creating log dir"
-mkdir -p ${LOGDIR}
 
 echo "changing tmp dir"
 export TMPDIR=$MYTMPDIR
@@ -279,14 +301,18 @@ echo "END_OF_JOB=${END_OF_JOB}"
 if [ "${END_OF_JOB}" == "${END_OF_JOB_CONTINUE_ARRAY}" ]
 then
     echo "continuing the array, exiting this job"
+    move_logfile_to_logdir
     exit 0
 
 elif [ "${END_OF_JOB}" == "${END_OF_JOB_END_ARRAY}" ]
 then
+    echo "${END_AND_EXIT_MSG}"
+    move_logfile_to_logdir
     end_array_and_exit
 
 else
     echo "unknown END_OF_JOB=${END_OF_JOB}"
+    echo "${CANCEL_AND_EXIT_MSG}"
+    move_logfile_to_logdir
     cancel_array_and_exit
-
 fi
