@@ -1,0 +1,38 @@
+program: "../../../dev/train_mvtec_dev01_bis.py"
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--wandb_issweep"
+  - ${args}
+method: grid
+metric:
+  goal: maximize
+  name: test/avg-precision
+parameters:
+  epochs:
+    value: 500
+  dropout_mode:
+    value: lastconv
+  dropout_parameters:
+    values:
+      - 0.0
+      - 0.03
+      - 0.10
+      - 0.30
+  preprocessing:
+    values:
+      - lcnaug1
+      - lcnaug2
+  supervise_mode:
+    values: 
+      - "synthetic-anomaly-confetti"
+      - "real-anomaly"
+  seeds:
+    # i got these seed values from a random list of runs
+    values:
+      - "0x526f289f74732498"
+      - "0x40452d6f87068d81"
+      - "0x2395859d21efbbd6"
+      - "0x22cd096d5f8a9c21"
+      - "0xeb33f3d140c7b5f4"

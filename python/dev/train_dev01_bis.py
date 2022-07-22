@@ -813,12 +813,13 @@ def run(
         # image logging is not working properly with the logger
         # so i also use the default wandb interface for that
         # dir: equivalent of savedir in the logger
-        wandb.init(dir=str(rundir), **wandb_init_kwargs,)
+        run = wandb.init(dir=str(rundir), **wandb_init_kwargs,)
         
         try:            
             run_one(wandb_logger=wandb_logger, callbacks=callbacks, **run_one_kwargs,)
         
         except TypeError as ex:
+            run.tags = run.tags + ("crashed",)
             
             wandb_logger.finalize("crashed")
             wandb.finish(1)
@@ -831,6 +832,8 @@ def run(
             raise ex
         
         except Exception as ex:
+            run.tags = run.tags + ("crashed",)
+            
             wandb_logger.finalize("crashed")
             wandb.finish(1)
             

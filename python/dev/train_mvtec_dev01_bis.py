@@ -21,6 +21,13 @@ from callbacks_dev01_bis import (
 from common_dev01_bis import (CliConfigHash, CudaVisibleDevices,
                               LogdirBaserundir, Seeds, WandbOffline, WandbTags,)
 
+
+# some relative paths depend on this
+train_script_dir = Path(train_dev01_bis.__file__).parent.resolve().absolute()
+print("changing working directory to `train_script_dir`")
+print(f"train_script_dir: {train_script_dir}")
+os.chdir(train_script_dir)
+
 start_time = int(time.time())
 print(f"start_time: {start_time}")
 
@@ -62,7 +69,7 @@ train_dev01_bis.cli_add_arguments_run_one(runone_args_group)
 runone_args_group.set_defaults(
     # training
     # epochs=500,  # before each epoch was doing 10 cycles over the data
-    epochs=3,
+    # epochs=3,
     learning_rate=1e-3,
     weight_decay=1e-4,
     test=True,
@@ -71,7 +78,7 @@ runone_args_group.set_defaults(
     loss=model_dev01_bis.LOSS_PIXELWISE_BATCH_AVG,
     optimizer=model_dev01_bis.OPTIMIZER_SGD,
     scheduler=model_dev01_bis.SCHEDULER_LAMBDA,
-    scheduler_parameters=[0.985],
+    scheduler_parameters=[0.9985],
     dropout_mode=None,
     dropout_parameters=[],
     # dataset
@@ -79,10 +86,10 @@ runone_args_group.set_defaults(
     raw_shape=(240, 240),
     net_shape=(224, 224),
     batch_size=64,  # it was 128, i'm accumulating batches to simulate the same size
-    nworkers=2,
+    nworkers=3,
     pin_memory=False,
     preprocessing=mvtec_dataset_dev01_bis.PREPROCESSING_LCNAUG2,
-    preprocess_moment=mvtec_dataset_dev01_bis.DATAMODULE_PREPROCESS_MOMENT_BEFORE_BATCH_TRANSFER,
+    preprocess_moment=mvtec_dataset_dev01_bis.DATAMODULE_PREPROCESS_MOMENT_AFTER_BATCH_TRANSFER,
     supervise_mode=mvtec_dataset_dev01_bis.SUPERVISE_MODE_REAL_ANOMALY,
     real_anomaly_limit=1,
     datadir=Path("../../data/datasets"),
@@ -91,8 +98,8 @@ runone_args_group.set_defaults(
     lightning_ndevices=1,
     lightning_strategy=None,
     lightning_precision=train_dev01_bis.LIGHTNING_PRECISION_32,
-    lightning_model_summary_max_depth=4,
-    lightning_check_val_every_n_epoch=10,
+    lightning_model_summary_max_depth=2,
+    lightning_check_val_every_n_epoch=20,
     lightning_accumulate_grad_batches=2,
     lightning_profiler=train_dev01_bis.LIGHTNING_PROFILER_SIMPLE,
     lightning_gradient_clip_val=0,
@@ -266,7 +273,7 @@ cli_arg_name_map = LogImageHeatmapTableCallback.cli_add_arguments(
     scores_key="score_maps",
     masks_key="gtmaps",
     labels_key="labels",
-    nsamples=30,
+    nsamples=20,
     resolution=None,
     heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
     min_max_percentiles=None,
@@ -311,7 +318,8 @@ group = parser.add_argument_group("log_histavg_validate")
 cli_arg_name_map = LogHistAvgAtEpochEnd.cli_add_arguments(
     group, stage="validate",
     # defaults
-    metric_names=["validate/avg-precision", "validate/roc-auc"],
+    # metric_names=["validate/avg-precision", "validate/roc-auc"],
+    metric_names=[],
 )
 callbacks_class_and_namempa_by_argsgroup[group.title] = (
     LogHistAvgAtEpochEnd,
