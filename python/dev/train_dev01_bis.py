@@ -5,6 +5,7 @@ import itertools
 from pathlib import Path
 from re import A
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+import warnings
 
 import pytorch_lightning as pl
 import torch
@@ -274,12 +275,25 @@ class ModelError(Exception):
 # ==========================================================================================
 
 def cli_add_arguments_run(parser: ArgumentParserOrArgumentGroup):
+    parser.add_argument("--wandb_issweep", action="store_true", help="use this when you are launching a sweep")
     parser.add_argument("--wandb_entity", type=str,)
     parser.add_argument("--wandb_project", type=str,)
     parser.add_argument(
         '--classes', type=int, nargs='+', 
         help='Run only training sessions for some of the classes being nominal. If not give (default) then all classes are trained.'
     )
+    
+    
+def args_run_validate_wandb_options(args):
+    
+    if args.wandb_issweep:
+        if args.wandb_entity is not None:
+            warnings.warn("--wandb_entity is ignored when --wandb_issweep is set")
+        if args.wandb_project is not None:
+            warnings.warn("--wandb_project is ignored when --wandb_issweep is set")
+    else:
+        assert args.wandb_entity is not None, f"--wandb_entity is required when --wandb_issweep is not set"
+        assert args.wandb_project is not None, f"--wandb_project is required when --wandb_issweep is not set"
 
 
 def cli_add_arguments_run_one(parser: ArgumentParserOrArgumentGroup):
@@ -692,6 +706,7 @@ def run_one(
 
     
 def run(
+    wandb_issweep: bool,
     wandb_entity: str,
     wandb_project: str,
     wandb_offline: bool,
@@ -721,8 +736,11 @@ def run(
         # it's super important that the dir must already exist for wandb logging           
         rundir.mkdir(parents=True, exist_ok=True)
         
-        # wandb_name = f"{dataset}.{base_rundir.name}.cls{c:02}.it{it:02}.seed:{seed_int2str(seed)}"
-        # print(f"wandb_name={wandb_name}")
+        # ==========================================================================================
+        # ==========================================================================================
+        # disclaimer: this part is a bit confusing and the order of things is very important!!!
+        # ==========================================================================================
+        # ==========================================================================================
         
         run_one_kwargs = {
             **runone_common_kwargs, 
@@ -756,42 +774,46 @@ def run(
         }
         print(f"confighashes: {confighashes}")
         
-        wandb_init_kwargs_noconfig = dict(                
-            entity=wandb_entity,
-            project=wandb_project, 
-            # name=wandb_name,
+        wandb_init_kwargs_noconfig = dict(      
             tags=wandb_tags,
             save_code=True,
             reinit=True,
         )
+        if not wandb_issweep:
+            
+            wandb_init_kwargs_noconfig = dict(
+                entity=wandb_entity,
+                project=wandb_project, 
+                **wandb_init_kwargs_noconfig,
+            )
+        
         print(f"wandb_init_kwargs_noconfig: {wandb_init_kwargs_noconfig}")
         
-        wandb_init_kwargs = dict(
+        wandblogger_init_kwargs = dict(
             **wandb_init_kwargs_noconfig,
-            config=dict(
-                **wandb_config,
-                **confighashes
-            ),
+            config=dict(**wandb_config, **confighashes),
         )
-        
+                
         wandb_logger = WandbLogger(
             save_dir=str(rundir),
             offline=wandb_offline,
             log_model=not wandb_offline,  # save only the last weights
-            **wandb_init_kwargs,
+            **wandblogger_init_kwargs,
         )
         
         wandb_logger_save_dir = Path(wandb_logger.save_dir).resolve().absolute()
         print(f"wandb_logger_save_dir: {wandb_logger_save_dir}")
+        
+        wandb_init_kwargs = dict(**wandblogger_init_kwargs)
+        
+        if not wandb_issweep:
+            # make sure both have the same run_id
+            wandb_init_kwargs["id"] = wandb_logger.experiment._run_id
             
         # image logging is not working properly with the logger
         # so i also use the default wandb interface for that
-        wandb.init(
-            # make sure both have the same run_id
-            id=wandb_logger.experiment._run_id,
-            dir=str(rundir),  # equivalent of savedir in the logger
-            **wandb_init_kwargs,
-        )
+        # dir: equivalent of savedir in the logger
+        wandb.init(dir=str(rundir), **wandb_init_kwargs,)
         
         try:            
             run_one(wandb_logger=wandb_logger, callbacks=callbacks, **run_one_kwargs,)

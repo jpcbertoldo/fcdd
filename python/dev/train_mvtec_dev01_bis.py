@@ -348,6 +348,8 @@ args_runone = args_bygroup["runone"]
 
 # >>>>>>>>>>>>>>>>>>> process args of run() <<<<<<<<<<<<<<<<<<<<<<
 
+train_dev01_bis.args_run_validate_wandb_options(args_run)
+
 CudaVisibleDevices.consume_arguments(args_run)
 WandbOffline.consume_arguments(args_run)
 
@@ -391,38 +393,12 @@ print(f"wandb_init_config_extra: {wandb_init_config_extra}")
 # a collection of things from wandb's config that will be hashed together
 # and the value is appended to the the config
 confighashes_keys = dict(
-    confighash_full=(
-        "epochs",
-        "learning_rate",
-        "weight_decay",
-        "model",
-        "loss",
-        "optimizer",
-        "scheduler",
-        "scheduler_parameters",
-        "dataset",
-        "raw_shape",
-        "net_shape",
-        "batch_size",
-        "preprocessing",
-        "supervise_mode",
-        "real_anomaly_limit",
-        "normal_class",
-    ),
     confighash_dcs=("datset", "normal_class", "supervise_mode"),
     confighash_dcsl=("datset", "normal_class", "supervise_mode", "loss"),
     confighash_slurm=(
         # the info here should be very redundant but it's ok
-        "slurm_job_id",
-        "slurm_array_job_id",
-        "slurm_array_task_id",
-        "slurm_task_pid",
-        "slurm_job_user",
-        "slurm_job_name",
-        "slurm_submit_host",
-        "slurm_cluster_name",
-        "slurmd_nodename",
-        "slurm_job_partition",
+        "slurm_job_id", "slurm_array_job_id", "slurm_array_task_id", "slurm_task_pid", "slurm_job_user",
+        "slurm_job_name", "slurm_submit_host", "slurm_cluster_name", "slurmd_nodename", "slurm_job_partition",
     ),
     **cli_config_hashes,
 )
