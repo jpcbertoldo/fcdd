@@ -71,10 +71,30 @@ p2.add_argument('--arg2', type=int, help='Argument 2')
 # print(f"args2: {args2}")
 
 # case 07: default without arg?
-p1.set_defaults(A=10, B=20)
-argv = "--arg1 1 --arg2 2"
+# p1.set_defaults(A=10, B=20)
+# argv = "--arg1 1 --arg2 2"
+# argv = argv.split()
+# args1, argv = p1.parse_known_args(argv)
+# args2 = p2.parse_args(argv)
+# print(f"args1: {args1}")
+# print(f"args2: {args2}")
+
+# case 08: help
+pgroups = argparse.ArgumentParser(description='Test parser GROUPS')
+g1 = pgroups.add_argument_group('Group 1')
+g2 = pgroups.add_argument_group('Group 2')
+g1.add_argument('--arg10', type=int, help='Argument 10')
+g2.add_argument('--arg20', type=int, help='Argument 20', default=2000)
+# argv = "--arg10 1 --arg20 20"
+argv = "--help"
 argv = argv.split()
-args1, argv = p1.parse_known_args(argv)
-args2 = p2.parse_args(argv)
-print(f"args1: {args1}")
-print(f"args2: {args2}")
+args, argv = pgroups.parse_known_args(argv)
+print(f"args: {args}")
+
+# src: https://stackoverflow.com/a/46929320/9582881
+arg_groups={}
+for group in pgroups._action_groups:
+    group_dict={a.dest:getattr(args,a.dest,None) for a in group._group_actions}
+    arg_groups[group.title]=argparse.Namespace(**group_dict)
+    
+print(f"arg_groups: {arg_groups}")

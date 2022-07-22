@@ -1,15 +1,10 @@
 #!/usr/bin/env python
 # coding: utf-8
-import contextlib
 import functools
 import itertools
-import os
-import time
-from argparse import ArgumentParser
-from datetime import datetime
 from pathlib import Path
 from re import A
-from typing import Any, Callable, List, Optional, Tuple, Dict
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import pytorch_lightning as pl
 import torch
@@ -17,176 +12,15 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profiler import (AdvancedProfiler, PyTorchProfiler,
                                         SimpleProfiler)
 
-import mvtec_dataset_dev01 as mvtec_dataset_dev01
+import model_dev01_bis
+import mvtec_dataset_dev01_bis as mvtec_dataset_dev01_bis
 import wandb
-from callbacks_dev01 import LearningRateLoggerCallback
-from common_dev01 import (hashify_config, seed_int2str,)
+from callbacks_dev01_bis import (DataloaderPreviewCallback, LearningRateLoggerCallback)
+from common_dev01_bis import (ArgumentParserOrArgumentGroup, hashify_config,
+                              none_or_str, seed_int2str)
+from pytorch_lightning.callbacks import StochasticWeightAveraging
 
-# ======================================== exceptions ========================================
-
-class ScriptError(Exception):
-    pass
-
-
-class ModelError(Exception):
-    pass
-
-
-# ======================================== dataset ========================================
-
-DATASET_CHOICES = (mvtec_dataset_dev01.DATASET_NAME,)
-print(f"DATASET_CHOICES={DATASET_CHOICES}")
-
-
-def unknown_dataset(wrapped: Callable[[str, ], Any]):
-    @functools.wraps(wrapped)
-    def wrapper(dataset: str, *args, **kwargs) -> Any:
-        assert dataset in DATASET_CHOICES
-        return wrapped(dataset, *args, **kwargs)
-    return wrapper
-
-@unknown_dataset
-def dataset_class_labels(dataset_name: str) -> List[str]:
-    return {
-        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.CLASSES_LABELS,
-    }[dataset_name]
-    
-
-@unknown_dataset
-def dataset_class_fullqualified(dataset_name: str) -> List[str]:
-    return {
-        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.CLASSES_FULLQUALIFIED,
-    }[dataset_name]
-
-
-@unknown_dataset
-def dataset_nclasses(dataset_name: str) -> int:
-    return {
-        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.NCLASSES,
-    }[dataset_name]
-
-
-@unknown_dataset
-def dataset_class_index(dataset_name: str, class_name: str) -> int:
-    return dataset_class_labels(dataset_name).index(class_name)
-
-
-# ======================================== preprocessing ========================================
-
-@unknown_dataset
-def dataset_preprocessing_choices(dataset_name: str) -> List[str]:
-    return {
-        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.PREPROCESSING_CHOICES,
-    }[dataset_name]
-
-
-ALL_PREPROCESSING_CHOICES = tuple(set.union(*[
-    set(dataset_preprocessing_choices(dataset_name)) 
-    for dataset_name in DATASET_CHOICES
-]))
-print(f"PREPROCESSING_CHOICES={ALL_PREPROCESSING_CHOICES}")
-
-
-# ======================================== supervise mode ========================================
-
-@unknown_dataset
-def dataset_supervise_mode_choices(dataset_name: str) -> List[str]:
-    return {
-        mvtec_dataset_dev01.DATASET_NAME: mvtec_dataset_dev01.SUPERVISE_MODES,
-    }[dataset_name]
-
-
-ALL_SUPERVISE_MODE_CHOICES = tuple(set.union(*[
-    set(dataset_supervise_mode_choices(dataset_name)) 
-    for dataset_name in DATASET_CHOICES
-]))
-print(f"SUPERVISE_MODE_CHOICES={ALL_SUPERVISE_MODE_CHOICES}")
-
-
-# ======================================== models ========================================
-
-import model_dev01
-
-MODEL_CLASSES = {
-    model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.FCDD,
-    model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.HyperSphereU2Net,
-    model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.HyperSphereU2Net,
-    model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.HyperSphereU2Net,
-    model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.HyperSphereU2Net,
-    model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.HyperSphereU2Net,
-}
-MODEL_CHOICES = tuple(sorted(MODEL_CLASSES.keys()))
-print(f"MODEL_CHOICES={MODEL_CHOICES}")
-
-def unknown_model(wrapped: Callable[[str, ], Any]):
-    @functools.wraps(wrapped)
-    def wrapper(model: str, *args, **kwargs) -> Any:
-        assert model in MODEL_CHOICES
-        return wrapped(model, *args, **kwargs)
-    return wrapper
-
-# ======================================== optmizers ========================================
-
-@unknown_model
-def model_optimizer_choices(model_name: str) -> List[str]:
-    return {
-        model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.OPTIMIZER_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.OPTIMIZER_CHOICES,
-    }[model_name]   
-
-
-OPTIMIZER_CHOICES = tuple(set.union(*[
-    set(model_optimizer_choices(model_name))
-    for model_name in MODEL_CHOICES
-]))
-print(f"OPTIMIZER_CHOICES={OPTIMIZER_CHOICES}")  
-
-# ======================================== schedulers ========================================
-
-@unknown_model
-def model_scheduler_choices(model_name: str) -> List[str]:
-    return {
-        model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.SCHEDULER_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.SCHEDULER_CHOICES,
-    }[model_name]
-
-
-SCHEDULER_CHOICES = tuple(set.union(*[
-    set(model_scheduler_choices(model_name))
-    for model_name in MODEL_CHOICES
-]))
-print(f"SCHEDULER_CHOICES={SCHEDULER_CHOICES}")
-
-# ======================================== losses ========================================
-
-@unknown_model
-def model_loss_choices(model_name: str) -> List[str]:
-    return {
-        model_dev01.MODEL_FCDD_CNN224_VGG_F: model_dev01.LOSS_FCDD_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT4_LITE: model_dev01.LOSS_U2NET_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_LITE: model_dev01.LOSS_U2NET_CHOICES,
-        model_dev01.MODEL_U2NET_HEIGHT6_FULL: model_dev01.LOSS_U2NET_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01.LOSS_U2NET_CHOICES,
-        model_dev01.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01.LOSS_U2NET_CHOICES,
-    }[model_name]
-
-
-LOSS_CHOICES = tuple(set.union(*[
-    set(model_loss_choices(model_name))
-    for model_name in MODEL_CHOICES
-]))
-print(f"LOSS_CHOICES={LOSS_CHOICES}")
-
-
-# ======================================== pytorch lightning ========================================
+# ======================================== lightning ========================================
 
 LIGHTNING_ACCELERATOR_CPU = "cpu"
 LIGHTNING_ACCELERATOR_GPU = "gpu"
@@ -233,9 +67,13 @@ LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES = (
     LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE, 
 )
 
+LIGHTNING_SWA_ANNEALING_STRATEGY_LINEAR = "linear"
+LIGHTNING_SWA_ANNEALING_STRATEGY_COS = "cos"
+LIGHTNING_SWA_ANNEALING_STRATEGY_CHOICES = (
+    LIGHTNING_SWA_ANNEALING_STRATEGY_LINEAR, LIGHTNING_SWA_ANNEALING_STRATEGY_COS,
+)
 
 # ======================================== wandb ========================================
-
 
 WANDB_CHECKPOINT_MODE_LAST = "last"
 # WANDB_CHECKPOINT_MODE_BEST = "best"
@@ -248,6 +86,186 @@ WANDB_CHECKPOINT_MODES = (
 )
 print(f"WANDB_CHECKPOINT_MODES={WANDB_CHECKPOINT_MODES}")
 
+# ======================================== dataset ========================================
+
+DATASET_CHOICES = (mvtec_dataset_dev01_bis.DATASET_NAME,)
+print(f"DATASET_CHOICES={DATASET_CHOICES}")
+
+
+def unknown_dataset(wrapped: Callable[[str, ], Any]):
+    @functools.wraps(wrapped)
+    def wrapper(dataset: str, *args, **kwargs) -> Any:
+        assert dataset in DATASET_CHOICES
+        return wrapped(dataset, *args, **kwargs)
+    return wrapper
+
+@unknown_dataset
+def dataset_class_labels(dataset_name: str) -> List[str]:
+    return {
+        mvtec_dataset_dev01_bis.DATASET_NAME: mvtec_dataset_dev01_bis.CLASSES_LABELS,
+    }[dataset_name]
+    
+
+@unknown_dataset
+def dataset_class_fullqualified(dataset_name: str) -> List[str]:
+    return {
+        mvtec_dataset_dev01_bis.DATASET_NAME: mvtec_dataset_dev01_bis.CLASSES_FULLQUALIFIED,
+    }[dataset_name]
+
+
+@unknown_dataset
+def dataset_nclasses(dataset_name: str) -> int:
+    return {
+        mvtec_dataset_dev01_bis.DATASET_NAME: mvtec_dataset_dev01_bis.NCLASSES,
+    }[dataset_name]
+
+
+@unknown_dataset
+def dataset_class_index(dataset_name: str, class_name: str) -> int:
+    return dataset_class_labels(dataset_name).index(class_name)
+
+# ======================================== preprocessing ========================================
+
+@unknown_dataset
+def dataset_preprocessing_choices(dataset_name: str) -> List[str]:
+    return {
+        mvtec_dataset_dev01_bis.DATASET_NAME: mvtec_dataset_dev01_bis.PREPROCESSING_CHOICES,
+    }[dataset_name]
+
+
+ALL_PREPROCESSING_CHOICES = tuple(set.union(*[
+    set(dataset_preprocessing_choices(dataset_name)) 
+    for dataset_name in DATASET_CHOICES
+]))
+print(f"PREPROCESSING_CHOICES={ALL_PREPROCESSING_CHOICES}")
+
+# ======================================== supervise mode ========================================
+
+@unknown_dataset
+def dataset_supervise_mode_choices(dataset_name: str) -> List[str]:
+    return {
+        mvtec_dataset_dev01_bis.DATASET_NAME: mvtec_dataset_dev01_bis.SUPERVISE_MODES,
+    }[dataset_name]
+
+
+ALL_SUPERVISE_MODE_CHOICES = tuple(set.union(*[
+    set(dataset_supervise_mode_choices(dataset_name)) 
+    for dataset_name in DATASET_CHOICES
+]))
+print(f"SUPERVISE_MODE_CHOICES={ALL_SUPERVISE_MODE_CHOICES}")
+
+# ======================================== models ========================================
+
+MODEL_CLASSES = {
+    model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.FCDD,
+    model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.HyperSphereU2Net,
+    model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.HyperSphereU2Net,
+    model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.HyperSphereU2Net,
+    model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01_bis.HyperSphereU2Net,
+    model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01_bis.HyperSphereU2Net,
+}
+MODEL_CHOICES = tuple(sorted(MODEL_CLASSES.keys()))
+print(f"MODEL_CHOICES={MODEL_CHOICES}")
+
+def unknown_model(wrapped: Callable[[str, ], Any]):
+    @functools.wraps(wrapped)
+    def wrapper(model: str, *args, **kwargs) -> Any:
+        assert model in MODEL_CHOICES
+        return wrapped(model, *args, **kwargs)
+    return wrapper
+
+# ======================================== optmizers ========================================
+
+@unknown_model
+def model_optimizer_choices(model_name: str) -> List[str]:
+    return {
+        model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01_bis.OPTIMIZER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01_bis.OPTIMIZER_CHOICES,
+    }[model_name]   
+
+
+OPTIMIZER_CHOICES = tuple(set.union(*[
+    set(model_optimizer_choices(model_name))
+    for model_name in MODEL_CHOICES
+]))
+print(f"OPTIMIZER_CHOICES={OPTIMIZER_CHOICES}")  
+
+# ======================================== dropout ========================================
+
+@unknown_model
+def model_dropout_mode_choices(model_name: str) -> List[str]:
+    return {
+        # fcdd
+        model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.DROPOUT_MODE_FCDD_CHOICES,
+        # u2net
+        model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.DROPOUT_MODE_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.DROPOUT_MODE_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.DROPOUT_MODE_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01_bis.DROPOUT_MODE_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01_bis.DROPOUT_MODE_U2NET_CHOICES,
+    }[model_name]
+
+
+DROPOUT_MODE_CHOICES = tuple(set.union(*[
+    set(model_dropout_mode_choices(model_name))
+    for model_name in MODEL_CHOICES
+]))
+print(f"DROPOUT_MODE_CHOICES={DROPOUT_MODE_CHOICES}")
+
+
+# ======================================== schedulers ========================================
+
+@unknown_model
+def model_scheduler_choices(model_name: str) -> List[str]:
+    return {
+        model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01_bis.SCHEDULER_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01_bis.SCHEDULER_CHOICES,
+    }[model_name]
+
+
+SCHEDULER_CHOICES = tuple(set.union(*[
+    set(model_scheduler_choices(model_name))
+    for model_name in MODEL_CHOICES
+]))
+print(f"SCHEDULER_CHOICES={SCHEDULER_CHOICES}")
+
+# ======================================== losses ========================================
+
+@unknown_model
+def model_loss_choices(model_name: str) -> List[str]:
+    return {
+        model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.LOSS_FCDD_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.LOSS_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.LOSS_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.LOSS_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT4_LITE: model_dev01_bis.LOSS_U2NET_CHOICES,
+        model_dev01_bis.MODEL_U2NET_REPVGG_HEIGHT5_FULL: model_dev01_bis.LOSS_U2NET_CHOICES,
+    }[model_name]
+
+
+LOSS_CHOICES = tuple(set.union(*[
+    set(model_loss_choices(model_name))
+    for model_name in MODEL_CHOICES
+]))
+print(f"LOSS_CHOICES={LOSS_CHOICES}")
+
+# ======================================== exceptions ========================================
+
+class ScriptError(Exception):
+    pass
+
+
+class ModelError(Exception):
+    pass
+
 
 # ==========================================================================================
 # ==========================================================================================
@@ -255,30 +273,16 @@ print(f"WANDB_CHECKPOINT_MODES={WANDB_CHECKPOINT_MODES}")
 # ==========================================================================================
 # ==========================================================================================
 
-
-def none_or_str(value: str):
-    if value.lower() == 'none':
-        return None
-    return value
-
-
-def none_or_int(value: str):
-    if value.lower() == 'none':
-        return None
-    return int(value)
-
-
-def parser_add_arguments_run(parser: ArgumentParser) -> ArgumentParser:
+def cli_add_arguments_run(parser: ArgumentParserOrArgumentGroup):
     parser.add_argument("--wandb_entity", type=str,)
     parser.add_argument("--wandb_project", type=str,)
     parser.add_argument(
         '--classes', type=int, nargs='+', 
         help='Run only training sessions for some of the classes being nominal. If not give (default) then all classes are trained.'
     )
-    return parser
 
 
-def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
+def cli_add_arguments_run_one(parser: ArgumentParserOrArgumentGroup):
     # ===================================== training =====================================
     parser.add_argument('--epochs', type=int,)
     parser.add_argument('--learning_rate', type=float,)
@@ -301,6 +305,8 @@ def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
         help='Sequence of learning rate scheduler parameters. '
              '"lambda": one parameter is allowed, the factor the learning rate is reduced per epoch. '
     )
+    parser.add_argument("--dropout_mode", type=str, choices=DROPOUT_MODE_CHOICES,)
+    parser.add_argument("--dropout_parameters", type=float, nargs='*',)
     # ====================================== dataset =====================================
     parser.add_argument('--dataset', type=str, choices=DATASET_CHOICES,)
     parser.add_argument("--raw_shape", type=int, nargs=2,)
@@ -312,8 +318,12 @@ def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
     )
     parser.add_argument('--pin_memory', action='store_true', )
     parser.add_argument(
-        '--preprocessing', type=str, choices=ALL_PREPROCESSING_CHOICES,
+        '--preprocessing', type=none_or_str, choices=ALL_PREPROCESSING_CHOICES,
         help='Preprocessing pipeline (augmentations and such). Defined inside each dataset module.'
+    )
+    parser.add_argument(
+        "--preprocess_moment", type=str, choices=mvtec_dataset_dev01_bis.DATAMODULE_PREPROCESS_MOMENT_CHOICES,
+        help="Should the preprocessing be applied before or after the data being transferred to the GPU?",
     )
     parser.add_argument(
         '--supervise_mode', type=str, choices=ALL_SUPERVISE_MODE_CHOICES,
@@ -376,19 +386,42 @@ def parser_add_arguments_run_one(parser: ArgumentParser) -> ArgumentParser:
         "--lightning_deterministic", type=bool, 
         help="https://pytorch-lightning.readthedocs.io/en/stable/common/trainer.html#reproducibility",
     )
-    return parser
+    
+    # ================================ pytorch lightning SWA =================================
+    
+    group_swa = parser.add_argument_group("swa", description="Stochastic Weight Averaging")
+    group_swa.add_argument(
+        "--lightning_swa_enabled", action='store_true',
+        help="Activate Stochastic Weight Averaging (SWA). See https://pytorch-lightning.readthedocs.io/en/latest/api/pytorch_lightning.callbacks.StochasticWeightAveraging.html#pytorch_lightning.callbacks.StochasticWeightAveraging"
+    )
+    group_swa.add_argument("--lightning_swa_learning_rate", type=float,)
+    group_swa_epoch_start = group_swa.add_mutually_exclusive_group()
+    group_swa_epoch_start.add_argument("--lightning_swa_epoch_start_absolute", dest="lightning_swa_epoch_start", type=int,)
+    group_swa_epoch_start.add_argument("--lightning_swa_epoch_start_relative", dest="lightning_swa_epoch_start", type=float,)
+    group_swa.add_argument("--lightning_swa_annealing_epochs", type=int,)
+    group_swa.add_argument("--lightning_swa_annealing_strategy", type=str, choices=LIGHTNING_SWA_ANNEALING_STRATEGY_CHOICES,)
 
+
+# ====================================== minimal validations for cli arguments =====================================
 
 def args_validate_dataset_specific_choices(args):
+    
+    assert args.dataset in DATASET_CHOICES, f"Invalid dataset: {args.dataset}, chose from {DATASET_CHOICES}"
+    
+    # dataset-specific validation
     assert args.preprocessing in dataset_preprocessing_choices(args.dataset), f"args.dataset={args.dataset}: {args.preprocessing} not in {dataset_preprocessing_choices(args.dataset)}"
     assert args.supervise_mode in dataset_supervise_mode_choices(args.dataset), f"args.dataset={args.dataset}: {args.supervise_mode} not in {dataset_supervise_mode_choices(args.dataset)}"
 
 
 def args_validate_model_specific_choices(args):
+    
+    assert args.model in MODEL_CHOICES, f"Invalid model: {args.model}, chose from {MODEL_CHOICES}"
+    
+    # model-specific validation   
     assert args.loss in model_loss_choices(args.model), f"args.model={args.model}: {args.loss} not in {model_loss_choices(args.model)}"
     assert args.optimizer in model_optimizer_choices(args.model), f"args.model={args.model}: {args.optimizer} not in {model_optimizer_choices(args.model)}"
     assert args.scheduler in model_scheduler_choices(args.model), f"args.model={args.model}: {args.scheduler} not in {model_scheduler_choices(args.model)}"
-
+    assert args.dropout_mode in model_dropout_mode_choices(args.model), f"args.model={args.model}: {args.dropout_mode} not in {model_dropout_mode_choices(args.model)}"
 
 # ==========================================================================================
 # ==========================================================================================
@@ -409,6 +442,8 @@ def run_one(
     optimizer: str, 
     scheduler: str,
     scheduler_parameters: list,
+    dropout_mode: str,
+    dropout_parameters: list,
     # dataset
     dataset: str,
     raw_shape: Tuple[int, int],
@@ -417,6 +452,7 @@ def run_one(
     nworkers: int, 
     pin_memory: bool,
     preprocessing: str,
+    preprocess_moment: str,
     supervise_mode: str,
     real_anomaly_limit: int,
     datadir: Path,
@@ -432,6 +468,12 @@ def run_one(
     lightning_gradient_clip_val: float,
     lightning_gradient_clip_algorithm: str,
     lightning_deterministic: bool, 
+    # stochastic weight averaging
+    lightning_swa_enabled: bool,
+    lightning_swa_learning_rate: Optional[float],
+    lightning_swa_epoch_start: Optional[Union[int, float]],
+    lightning_swa_annealing_epochs: Optional[int],
+    lightning_swa_annealing_strategy: Optional[str],
     # from run()
     rundir: Path,
     normal_class: int,
@@ -440,19 +482,6 @@ def run_one(
     wandb_logger: WandbLogger,
     callbacks: list,
 ):
-    
-    # minimal validation for early mistakes
-    assert dataset in DATASET_CHOICES, f"Invalid dataset: {dataset}, chose from {DATASET_CHOICES}"
-    
-    # dataset-specific validation
-    assert supervise_mode in dataset_supervise_mode_choices(dataset), f"Invalid supervise_mode: {supervise_mode} for dataset {dataset}, chose from {dataset_supervise_mode_choices(dataset)}"
-    assert preprocessing in dataset_preprocessing_choices(dataset), f"Invalid preproc: {preprocessing} for dataset {dataset}, chose from {dataset_preprocessing_choices(dataset)}"
-    
-    # model-specific validation
-    assert loss in model_loss_choices(model), f"Invalid loss: {loss} for model {model}, chose from {model_loss_choices(model)}"
-    assert optimizer in model_optimizer_choices(model), f"Invalid optimizer: {optimizer} for model {model}, chose from {model_optimizer_choices(model)}"
-    assert scheduler in model_scheduler_choices(model), f"Invalid scheduler: {scheduler} for model {model}, chose from {model_scheduler_choices(model)}"
-    
     # lightning-stuff validation
     assert lightning_accelerator in LIGHTNING_ACCELERATOR_CHOICES, f"Invalid lightning_accelerator: {lightning_accelerator}, chose from {LIGHTNING_ACCELERATOR_CHOICES}"
     if lightning_strategy is not None:
@@ -480,10 +509,11 @@ def run_one(
     print(f"datadir: resolved: {datadir}")
     
     # datamodule hard-coded for now, but later other datasets can be added
-    datamodule = mvtec_dataset_dev01.MVTecAnomalyDetectionDataModule(
+    datamodule = mvtec_dataset_dev01_bis.MVTecAnomalyDetectionDataModule(
         root=datadir,
         normal_class=normal_class,
         preprocessing=preprocessing,
+        preprocess_moment=preprocess_moment,
         supervise_mode=supervise_mode,
         real_anomaly_limit=real_anomaly_limit,
         raw_shape=raw_shape,
@@ -495,11 +525,12 @@ def run_one(
     )
     summary_update_dict_dataset = dict(
         normal_class_label=dataset_class_labels(dataset)[normal_class],
-        mvtec_class_type=mvtec_dataset_dev01.CLASSES_TYPES[normal_class],
+        mvtec_class_type=mvtec_dataset_dev01_bis.CLASSES_TYPES[normal_class],
         normal_class_fullqualified=dataset_class_fullqualified(dataset)[normal_class],
     )
     wandb.run.summary.update(summary_update_dict_dataset)
     datamodule.prepare_data()
+    datamodule.setup()
 
     # ================================ MODEL ================================
     try:
@@ -520,6 +551,9 @@ def run_one(
             # scheduler
             scheduler_name=scheduler,
             scheduler_parameters=scheduler_parameters,
+            # dropout
+            dropout_mode=dropout_mode,
+            dropout_parameters=dropout_parameters,
         )
         
     except ModelError as ex:
@@ -533,7 +567,7 @@ def run_one(
         assert scores.shape[-2:] == inshape, f"{model.__class__.__name__} must return a tensor of shape (..., {inshape[0]}, {inshape[1]}), found {scores.shape}"
         assert tuple(scores.shape[0:2]) == (1, 1), f"{model.__class__.__name__} must return a tensor of shape (1, 1, ...), found {scores.shape}"
       
-    if model_class == model_dev01.HyperSphereU2Net:  
+    if model_class == model_dev01_bis.HyperSphereU2Net:  
         test_input_output_dimensions(datamodule.net_shape)
     
     def log_model_architecture(model_: torch.nn.Module):
@@ -541,18 +575,48 @@ def run_one(
         model_str_fpath = rundir / "model.txt"
         model_str_fpath.write_text(model_str)
          # now = dont keep syncing if it changes
-        wandb.save(str(model_str_fpath), policy="now") 
+        print(f"saving model architecture to {str(model_str_fpath)}")
+        wandb.save(str(model_str_fpath), policy="now", base_path=str(model_str_fpath.parent)) 
     
     log_model_architecture(model)
-    
-
+        
     # ================================ CALLBACKS ================================
 
     callbacks = [
         # pl.callbacks.ModelSummary(max_depth=lightning_model_summary_max_depth),
         pl.callbacks.RichModelSummary(max_depth=lightning_model_summary_max_depth),
         LearningRateLoggerCallback(),
+        DataloaderPreviewCallback(
+            datamodule.train_dataloader(batch_size_override=10, nworkers_override=0, embed_preprocessing=True),
+            n_samples=20,
+            stage="train",
+        ),
+        # DataloaderPreviewCallback(
+        #     datamodule.val_dataloader(batch_size_override=10, embed_preprocessing=True),
+        #     n_samples=20,
+        #     stage="validate",
+        # ),
     ] + callbacks
+    
+    # ================================ SWA ================================
+    if lightning_swa_enabled:
+        assert lightning_swa_learning_rate is not None, f"lightning_swa_learning_rate must be set if lightning_swa_enabled is True"
+        assert lightning_swa_epoch_start is not None, f"lightning_swa_epoch_start must be set if lightning_swa_enabled is True"
+        assert lightning_swa_annealing_epochs is not None, f"lightning_swa_annealing_epochs must be set if lightning_swa_enabled is True"
+        assert lightning_swa_annealing_strategy is not None, f"lightning_swa_annealing_strategy must be set if lightning_swa_enabled is True"
+        
+        assert isinstance(lightning_swa_learning_rate, float), f"lightning_swa_learning_rate must be a float, found {type(lightning_swa_learning_rate)}"
+        assert lightning_swa_learning_rate > 0, f"lightning_swa_learning_rate must be > 0, found {lightning_swa_learning_rate}"
+        assert 0 < lightning_swa_epoch_start < epochs, f"lightning_swa_epoch_start must be > 0 and < epochs, found {lightning_swa_epoch_start} and {epochs}"
+        
+        callbacks.append(StochasticWeightAveraging(
+            swa_lrs=lightning_swa_learning_rate, 
+            swa_epoch_start=lightning_swa_epoch_start, 
+            annealing_epochs=lightning_swa_annealing_epochs, 
+            annealing_strategy=lightning_swa_annealing_strategy, 
+            avg_fn=None, 
+            device=None, 
+        ))
     
     # ================================ PROFILING ================================
         
@@ -572,7 +636,6 @@ def run_one(
             return AdvancedProfiler(
                 dirpath=wandb_logger.save_dir,
                 filename=f"lightning-profiler.{LIGHTNING_PROFILER_ADVANCED}",
-
             )
         
         elif profiler_choice == LIGHTNING_PROFILER_PYTORCH:
@@ -611,7 +674,9 @@ def run_one(
     trainer.fit(model=model, datamodule=datamodule)
     
     if lightning_profiler is not None:
-        wandb.save(str(Path(lightning_profiler.dirpath) / lightning_profiler.filename), policy="now") 
+        profile_fpath = Path(lightning_profiler.dirpath) / lightning_profiler.filename
+        print(f"Saving profiler {lightning_profiler} at {profile_fpath}")
+        wandb.save(str(profile_fpath), policy="now", base_path=str(profile_fpath.parent)) 
 
     # ================================ TEST ================================
     if test:
@@ -635,14 +700,14 @@ def run(
     base_rundir: Path,
     seeds: List[int],
     classes: List[str],
+    runone_common_kwargs: dict = {},
     confighashes_keys: Dict[str, Tuple[str, ...]] = {},
     wandb_init_config_extra: dict = {},
     callbacks: List[pl.Callback] = [],
-    **run_one_common_kwargs
 ) -> dict:
     
     # if none then do all the classes
-    classes = classes or tuple(range(dataset_nclasses(run_one_common_kwargs['dataset'])))
+    classes = classes or tuple(range(dataset_nclasses(runone_common_kwargs['dataset'])))
     its = tuple(range(len(seeds)))
     
     for c, (it, seed) in itertools.product(classes, zip(its, seeds)):
@@ -660,7 +725,7 @@ def run(
         # print(f"wandb_name={wandb_name}")
         
         run_one_kwargs = {
-            **run_one_common_kwargs, 
+            **runone_common_kwargs, 
             **dict(
                 rundir=rundir,  
                 seed=seed,
@@ -714,7 +779,7 @@ def run(
             offline=wandb_offline,
             log_model=not wandb_offline,  # save only the last weights
             **wandb_init_kwargs,
-        )   
+        )
         
         wandb_logger_save_dir = Path(wandb_logger.save_dir).resolve().absolute()
         print(f"wandb_logger_save_dir: {wandb_logger_save_dir}")
