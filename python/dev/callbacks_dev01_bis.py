@@ -301,6 +301,8 @@ class LogRocCallback(
 
         trainer.model.log(auc_logkey, roc_auc_score(binary_gt, scores))
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(stage={self.stage}, scores_key={self.scores_key}, limit_points={self.limit_points})"
 
 class LogPrcurveCallback(
     MultiStageCallbackMixin,
@@ -440,6 +442,8 @@ class LogPrcurveCallback(
 
         trainer.model.log(avg_precision_logkey, average_precision_score(binary_gt, scores))
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(stage={self.stage}, scores_key={self.scores_key}, limit_points={self.limit_points})"
 
 class LogHistogramCallback(
     MultiStageCallbackMixin,
@@ -530,6 +534,8 @@ class LogHistogramCallback(
         else:
             raise ValueError(f"log_mode must be one of {LOG_HISTOGRAM_MODES}, got '{self.mode}'")
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(stage={self.stage}, key={self.key})"
 
 class LogHistogramsSuperposedCallback(
     MultiStageCallbackMixin,
@@ -695,6 +701,8 @@ class LogHistogramsSuperposedCallback(
         else:
             raise ValueError(f"mode must be one of {LOG_HISTOGRAM_MODES}, got '{self.mode}'")
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(stage={self.stage}, limit_points={self.limit_points})"
 
 class DataloaderPreviewCallback(pl.Callback):
 
@@ -744,6 +752,8 @@ class DataloaderPreviewCallback(pl.Callback):
             ],
         })
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(stage={self.stage})"
 
 class LogImageHeatmapTableCallback(
     MultiStageCallbackMixin,
@@ -1062,6 +1072,8 @@ class LogImageHeatmapTableCallback(
         table_logkey = f"{logkey_prefix}images-heatmaps-table"
         wandb.log({table_logkey: table})
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(stage={self.stage}, heatmap_normalization={self.heatmap_normalization})"
 
 class LogPercentilesPerClassCallback(
     MultiStageCallbackMixin,
@@ -1170,6 +1182,8 @@ class LogPercentilesPerClassCallback(
 
         wandb.log({logkey: table})
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(stage={self.stage}, percentiles={self.percentiles})"
 
 class LogPerInstanceMeanCallback(
     MultiStageCallbackMixin,
@@ -1272,6 +1286,8 @@ class LogPerInstanceMeanCallback(
 
         wandb.log({logkey: table})
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(stage={self.stage})"
 
 class LearningRateLoggerCallback(pl.Callback):
     
@@ -1284,6 +1300,8 @@ class LearningRateLoggerCallback(pl.Callback):
             current_lr = scheduler['scheduler'].get_last_lr()[0]
             trainer.model.log(f"train/learning_rate_scheduler_idx={idx}", current_lr)
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}"
 
 class LogHistAvgAtEpochEnd(
     MultiStageCallbackMixin,
@@ -1379,3 +1397,6 @@ class LogHistAvgAtEpochEnd(
         
         for k, v in histavg_metrics.items():
             trainer.model.log(k, v)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(stage={self.stage}, metric_names={self.metric_names})"

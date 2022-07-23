@@ -756,9 +756,11 @@ def run(
         wandb_config = {
             **run_one_kwargs,
             **dict(
-                seeds_str=seed_int2str(seed),
+                seed_str=seed_int2str(seed),
                 script_start_time=start_time,
                 it=it,
+                run_kwargs_classes=classes,
+                callbacks=[str(cb) for cb in callbacks],
             ),
             **wandb_init_config_extra,
         }
