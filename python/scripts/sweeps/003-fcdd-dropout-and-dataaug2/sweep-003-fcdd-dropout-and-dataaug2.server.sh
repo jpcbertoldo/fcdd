@@ -7,6 +7,6 @@ cd ${HOME}/fcdd/python/scripts/sweeps/003-fcdd-dropout-and-dataaug2
 
 wandb sweep --entity mines-paristech-cmm --project fcdd-mvtec-bmvc-01 --verbose --name sweep-03 sweep-003-fcdd-dropout-and-dataaug2.yaml
 
-# sweep id: 0cmmty3c
-# full id: mines-paristech-cmm/fcdd-mvtec-bmvc-01/0cmmty3c
+# sweep id: i0h9swpi
+# full id: mines-paristech-cmm/fcdd-mvtec-bmvc-01/i0h9swpi
 

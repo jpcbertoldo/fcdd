@@ -14,4 +14,4 @@ then
     exit 1
 fi
 
-wandb agent mines-paristech-cmm/fcdd-mvtec-bmvc-01/0cmmty3c
+wandb agent mines-paristech-cmm/fcdd-mvtec-bmvc-01/i0h9swpi
