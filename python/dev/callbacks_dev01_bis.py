@@ -905,18 +905,21 @@ class LogImageHeatmapTableCallback(
         if self.selected_instances_indices is None:
 
             labels = labels.numpy()
-            normals_indices = np.where(labels == NOMINAL_TARGET)[0]
-            anomalies_indices = np.where(labels == ANOMALY_TARGET)[0]
+            
+            def sample_instances(label_value):
+                indices = np.where(labels == label_value)[0]
+                if len(indices) > self.nsamples:
+                    # python_generator.sample() is without replacement
+                    indices: List[int] = self.python_generator.choice(indices.tolist(), self.nsamples)
+            
+            normals_indices = sample_instances(NOMINAL_TARGET)
+            anomalies_indices = sample_instances(ANOMALY_TARGET)
 
-            if len(normals_indices) > self.nsamples:
-                # python_generator.sample() is without replacement
-                normals_indices: List[int] = self.python_generator.sample(normals_indices.tolist(), self.nsamples)
-
-            if len(anomalies_indices) > self.nsamples:
-                # python_generator.sample() is without replacement
-                anomalies_indices: List[int] = self.python_generator.sample(anomalies_indices.tolist(), self.nsamples)
-
-            self.selected_instances_indices = [*normals_indices, *anomalies_indices]
+            selected_instances_indices = [*normals_indices, *anomalies_indices]
+            
+            # this happened and i could not explain/debug so i added this to make sure there will be no error            
+            epoch_ninstances = len(labels)
+            self.selected_instances_indices = [idx for idx in selected_instances_indices if 0 <= idx < epoch_ninstances]            
 
         self._log(trainer, pl_module, imgs, scores, masks, labels, self.selected_instances_indices)
 
@@ -1009,7 +1012,10 @@ class LogImageHeatmapTableCallback(
         # scores: [instances, 1, height, width]
         # masks: [instances, 1, height, width]
         # labels: [instances]
-        imgs, scores, masks, labels = imgs[selected_instances_indices], scores[selected_instances_indices], masks[selected_instances_indices], labels[selected_instances_indices]
+        imgs = imgs[selected_instances_indices]
+        scores = scores[selected_instances_indices]
+        masks = masks[selected_instances_indices]
+        labels = labels[selected_instances_indices]
         
         if self.heatmap_normalization == HEATMAP_NORMALIZATION_MINMAX_INSTANCE:
             scores = normalize_minmax_instance(scores)
