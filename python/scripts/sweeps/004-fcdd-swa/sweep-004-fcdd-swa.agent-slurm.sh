@@ -15,7 +15,7 @@ export SBATCH_SCRIPT_ARG_CONDAENV="fcdd_rc21"
 export SBATCH_SCRIPT_ARG_COMMAND="wandb"
 
 ARGS=""
-ARGS="${ARGS} agent mines-paristech-cmm/fcdd-mvtec-bmvc-01/n0pdwtp5"
+ARGS="${ARGS} agent mines-paristech-cmm/fcdd-mvtec-bmvc-01/oegqeips"
 echo "ARGS=${ARGS}"
 
 sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS}
