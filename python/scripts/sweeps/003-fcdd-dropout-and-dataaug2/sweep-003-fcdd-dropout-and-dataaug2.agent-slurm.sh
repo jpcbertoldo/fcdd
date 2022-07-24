@@ -18,4 +18,4 @@ ARGS=""
 ARGS="${ARGS} agent mines-paristech-cmm/fcdd-mvtec-bmvc-01/b76erf8a"
 echo "ARGS=${ARGS}"
 
-sbatch ${ARGS}
+sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS}

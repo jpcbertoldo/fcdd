@@ -29,20 +29,78 @@ ARRAY_ARGS_FPATH_NULL="null"
 END_OF_JOB_CONTINUE_ARRAY="continue-array"
 END_OF_JOB_END_ARRAY="end-array"
 
-CANCEL_AND_EXIT_MSG="canceling the array job SLURM_ARRAY_JOB_ID=${SLURM_ARRAY_JOB_ID} and exiting"
-END_AND_EXIT_MSG="ending the array job SLURM_ARRAY_JOB_ID=${SLURM_ARRAY_JOB_ID} (cancel pending jobs) and exiting"
+# ==============================================================================
+echo "=============================== VARIABLES ================================"
+# ==============================================================================
+
+INIT_CONDA_BASH_FPATH="${HOME}/init-conda-bash"
+SLEEP_BETWEEN_LAUNCHS_SECS=7
+Node=$(hostname)
+MYTMPDIR="/cluster/CMM/data1/jcasagrandebertoldo/tmp"
+
+JOB_ARRAY_IDENTIFIER="${SLURM_JOB_NAME}-${SLURM_ARRAY_JOB_ID}"
+# full = as in the SBATCH output
+JOB_FULL_IDENTIFIER="${SLURM_JOB_NAME}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}-${SLURM_JOB_ID}-${Node}"
+
+# logging
+
+BASE_LOGDIR="${HOME}/log/nparallel-arrayargs"
+LOGDIR="${BASE_LOGDIR}/${JOB_ARRAY_IDENTIFIER}"
+
+echo "creating log dir"
+echo "LOGDIR=${LOGDIR}"
+mkdir -p ${LOGDIR}
+
+LOGFILE_FNAME="${JOB_FULL_IDENTIFIER}.log"
+
+JNAME_BASE="${JOB_FULL_IDENTIFIER}.python-"
+JPATH_BASE="${LOGDIR}/${JNAME_BASE}"
+JPATH_EXT=".log"
+
+echo "Node=${Node}"
+echo "WorkDir=${WorkDir}"
+echo "CONDA_ENV_NAME=${CONDA_ENV_NAME}"
+echo "COMMAND=${COMMAND}"
+echo "MYTMPDIR = ${MYTMPDIR}"
+echo "BASE_LOGDIR=${BASE_LOGDIR}"
+echo "LOGDIR=${LOGDIR}"
+echo "JOB_ARRAY_IDENTIFIER=${JOB_ARRAY_IDENTIFIER}"
+echo "JOB_FULL_IDENTIFIER=${JOB_FULL_IDENTIFIER}"
+echo "JNAME_BASE=${JNAME_BASE}"
+echo "JPATH_BASE=${JPATH_BASE}"
+echo "JPATH_EXT=${JPATH_EXT}"   
+
+# the following functions are defined here because they depend on 
+# the variables defined above
+
+function move_logfile_to_logdir() {
+    # this has to be the last 'echo' of the script
+    # because otherwise the log file will be re-created
+    echo "moving logfile to logdir"
+    mv "${BASE_LOGDIR}/${LOGFILE_FNAME}" "${LOGDIR}"
+}
 
 function cancel_array_and_exit() {
+    echo "canceling the array job SLURM_ARRAY_JOB_ID=${SLURM_ARRAY_JOB_ID} and exiting"
     scancel ${SLURM_ARRAY_JOB_ID}
+    move_logfile_to_logdir
 	exit 1
 }
 
 function end_array_and_exit() {
     # src: https://stackoverflow.com/a/47325966/9582881
     # this will cancel the array job and all pending jobs in the array
+    echo "ending the array job SLURM_ARRAY_JOB_ID=${SLURM_ARRAY_JOB_ID} (cancel pending jobs) and exiting"
     scancel -t PD ${SLURM_ARRAY_JOB_ID}
+    move_logfile_to_logdir
 	exit 0
 }
+
+
+# ==============================================================================
+echo "==================== SBATCH ARGUMENTS (FROM ENV VARS) ===================="
+# ==============================================================================
+
 
 function check_env_var() {
     if [ -z "${!1}" ]; then
@@ -53,10 +111,6 @@ function check_env_var() {
         echo "${1}=${!1}"
     fi
 }
-
-# ==============================================================================
-echo "==================== SBATCH ARGUMENTS (FROM ENV VARS) ===================="
-# ==============================================================================
 
 check_env_var "SBATCH_SCRIPT_ARG_NPARALLEL_RUNS"
 check_env_var "SBATCH_SCRIPT_ARG_ARRAY_ARGS_FPATH"
@@ -75,48 +129,6 @@ COMMAND="${SBATCH_SCRIPT_ARG_COMMAND}"
 WorkDir="${SBATCH_SCRIPT_ARG_WORKDIR}"
 CONDA_ENV_NAME="${SBATCH_SCRIPT_ARG_CONDAENV}"
 
-# ==============================================================================
-echo "=============================== VARIABLES ================================"
-# ==============================================================================
-
-INIT_CONDA_BASH_FPATH="${HOME}/init-conda-bash"
-SLEEP_BETWEEN_LAUNCHS_SECS=7
-Node=$(hostname)
-MYTMPDIR="/cluster/CMM/data1/jcasagrandebertoldo/tmp"
-# as in the SBATCH output
-JOB_ARRAY_IDENTIFIER="${SLURM_JOB_NAME}-${SLURM_ARRAY_JOB_ID}"
-JOB_FULL_IDENTIFIER="${SLURM_JOB_NAME}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}-${SLURM_JOB_ID}-${Node}"
-
-# logging
-
-BASE_LOGDIR="${HOME}/log/nparallel-arrayargs"
-LOGDIR="${BASE_LOGDIR}/${JOB_ARRAY_IDENTIFIER}"
-
-echo "creating log dir"
-echo "LOGDIR=${LOGDIR}"
-mkdir -p ${LOGDIR}
-
-LOGFILE_FNAME="${JOB_FULL_IDENTIFIER}.log"
-
-function move_logfile_to_logdir() {
-    echo "moving logfile to logdir"
-    mv "${BASE_LOGDIR}/${LOGFILE_FNAME}" "${LOGDIR}"
-}
-
-JNAME_BASE="${JOB_FULL_IDENTIFIER}.python-"
-JPATH_BASE="${LOGDIR}/${JNAME_BASE}"
-JPATH_EXT=".log"
-
-echo "Node=${Node}"
-echo "WorkDir=${WorkDir}"
-echo "CONDA_ENV_NAME=${CONDA_ENV_NAME}"
-echo "COMMAND=${COMMAND}"
-echo "MYTMPDIR = ${MYTMPDIR}"
-echo "LOGDIR=${LOGDIR}"
-echo "JNAME_BASE=${JNAME_BASE}"
-echo "JPATH_BASE=${JPATH_BASE}"
-echo "JPATH_EXT=${JPATH_EXT}"   
-
 
 # ==============================================================================
 echo "========================== N PARALLEL RUNS STUFF ========================="
@@ -127,8 +139,6 @@ if [[ ! ${NPARALLEL_RUNS} =~ $IS_INT_REGEX ]] || [ ${NPARALLEL_RUNS} -lt 1 ]
 then
 	echo "ERROR: NPARALLEL_RUNS is not a valid integer >= 1"
     echo "NPARALLEL_RUNS=${NPARALLEL_RUNS}"
-    echo "${CANCEL_AND_EXIT_MSG}"
-    move_logfile_to_logdir
     cancel_array_and_exit
 fi
 
@@ -159,10 +169,19 @@ done
 echo "============================= ARRAY TASK ARGS ============================"
 # ==============================================================================
 
+echo "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID}"
+echo "ARRAY_ARGS_FPATH=${ARRAY_ARGS_FPATH}"
+
 if [ "${ARRAY_ARGS_FPATH}" == "${ARRAY_ARGS_FPATH_NULL}" ]
 then
     echo "ARRAY_ARGS_FPATH=${ARRAY_ARGS_FPATH} is null"
     echo "there are no array task args, array will be canceled at the end of this job"
+
+    if [ "${SLURM_ARRAY_TASK_ID}" -gt 0 ]
+    then
+        echo "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID} is > 0 so this job will be canceled (when ARRAY_ARGS_FPATH is null, only the first task will be executed)"
+        end_array_and_exit
+    fi
 
     ARRAY_TASK_ARGS=""
     END_OF_JOB="${END_OF_JOB_END_ARRAY}"
@@ -175,8 +194,6 @@ else
     if [ ! -f "${ARRAY_ARGS_FPATH}" ]
     then
         echo "ERROR: ARRAY_ARGS_FPATH=${ARRAY_ARGS_FPATH} does not exist"
-        echo "${CANCEL_AND_EXIT_MSG}"
-       move_logfile_to_logdir
         cancel_array_and_exit
     fi
 
@@ -189,8 +206,6 @@ else
     if [ "${N_LINES}" -eq 0 ]
     then
         echo "ERROR: the file is empty, it should have one set of arguments per line; if you want to run without array args then pass the value <<${ARRAY_ARGS_FPATH_NULL}>> for ARRAY_ARGS_FPATH"
-        echo "${CANCEL_AND_EXIT_MSG}"
-        move_logfile_to_logdir
         cancel_array_and_exit
     fi
 
@@ -198,8 +213,6 @@ else
     if [ "${SLURM_ARRAY_TASK_ID}" -ge "${N_LINES}" ]
     then
         echo "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID} does not have any array task args anymore"
-        echo "${END_AND_EXIT_MSG}"
-        move_logfile_to_logdir
         end_array_and_exit
     fi
 
@@ -209,13 +222,14 @@ else
 
 fi
 
-echo "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID}"
 echo "ARRAY_TASK_ARGS=${ARRAY_TASK_ARGS}"
 echo "END_OF_JOB=${END_OF_JOB}"
 
 # ==============================================================================
 echo "================================== ARGS =================================="
 # ==============================================================================
+
+echo "COMMAND=${COMMAND}"
 
 ARGS=$*
 echo "ARGS=${ARGS}"
@@ -308,13 +322,9 @@ then
 
 elif [ "${END_OF_JOB}" == "${END_OF_JOB_END_ARRAY}" ]
 then
-    echo "${END_AND_EXIT_MSG}"
-    move_logfile_to_logdir
     end_array_and_exit
 
 else
     echo "unknown END_OF_JOB=${END_OF_JOB}"
-    echo "${CANCEL_AND_EXIT_MSG}"
-    move_logfile_to_logdir
     cancel_array_and_exit
 fi
