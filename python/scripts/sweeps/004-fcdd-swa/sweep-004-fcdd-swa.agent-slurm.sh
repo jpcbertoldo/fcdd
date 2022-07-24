@@ -4,19 +4,18 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 # ==============================================================================
 
-SBATCH_SCRIPT_FPATH="${HOME}/repos/fcdd/python/scripts/sbatch/07-nparallel-arrayargs-01-1gpu-2cpuptask.slurm"
-
-export SBATCH_SCRIPT_ARG_WORKDIR="${HOME}/fcdd/python/scripts/sweeps/004-fcdd-swa"
-export SBATCH_SCRIPT_ARG_CONDAENV="fcdd_rc21"
-
-export SBATCH_SCRIPT_ARG_SCRIPT_FNAME="null"
-export SBATCH_SCRIPT_ARG_CUSTOM_COMMAND="wandb"
+SBATCH_SCRIPT_FPATH="${HOME}/repos/fcdd/python/scripts/sbatch/08-nparallel-arrayargs-00-1gpu-4cpuptask.slurm"
 
 export SBATCH_SCRIPT_ARG_ARRAY_ARGS_FPATH="null"
 export SBATCH_SCRIPT_ARG_NPARALLEL_RUNS=3
 
+export SBATCH_SCRIPT_ARG_WORKDIR="${HOME}/fcdd/python/dev"
+export SBATCH_SCRIPT_ARG_CONDAENV="fcdd_rc21"
+
+export SBATCH_SCRIPT_ARG_COMMAND="wandb"
+
 ARGS=""
-ARGS="${ARGS} agent mines-paristech-cmm/fcdd-mvtec-bmvc-01/ji05j3me"
+ARGS="${ARGS} agent mines-paristech-cmm/fcdd-mvtec-bmvc-01/n0pdwtp5"
 echo "ARGS=${ARGS}"
 
 sbatch ${SBATCH_SCRIPT_FPATH} ${ARGS}

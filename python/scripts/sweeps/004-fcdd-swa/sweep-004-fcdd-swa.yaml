@@ -1,4 +1,4 @@
-program: "../../../dev/train_mvtec_dev01_bis.py"
+program: "train_mvtec_dev01_bis.py"
 command:
   - ${env}
   - ${interpreter}
@@ -19,6 +19,7 @@ parameters:
     value: 0.9985  # equivalent to the old 0.985
   # obs: scheduler_parameters ^ epochs = 0.9985 ^ 500 = 0.47 ~ 0.5
   # so the usual scheduler will decrease the initial lr to half of it 
+  # obs2: this is already the default but i'm putting it here for clarity of the other params
   learning_rate:
     value: 0.001
   preprocessing:
@@ -44,3 +45,20 @@ parameters:
       - "0x2395859d21efbbd6"
       - "0x22cd096d5f8a9c21"
       - "0xeb33f3d140c7b5f4"
+  classes:
+    values:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      - 13
+      - 14
