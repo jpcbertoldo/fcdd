@@ -3,7 +3,8 @@ set -e  # stops the execution of a script if a command or pipeline has an
 
 source ${HOME}/init-conda-bash
 conda activate fcdd_rc21
-cd ${HOME}/fcdd/python/scripts/sweeps/003-fcdd-dropout-and-dataaug2
+
+cd ${HOME}/fcdd/python/dev
 
 # agent 
 export CUDA_VISIBLE_DEVICES=$1
@@ -14,4 +15,4 @@ then
     exit 1
 fi
 
-wandb agent mines-paristech-cmm/fcdd-mvtec-bmvc-01/i0h9swpi
+wandb agent mines-paristech-cmm/fcdd-mvtec-bmvc-01/b76erf8a

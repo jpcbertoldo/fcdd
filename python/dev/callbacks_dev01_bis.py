@@ -917,10 +917,11 @@ class LogImageHeatmapTableCallback(
             labels = labels.numpy()
             
             def sample_instances(label_value):
-                indices = np.where(labels == label_value)[0]
+                indices = np.where(labels == label_value)[0].tolist()
                 if len(indices) > self.nsamples:
                     # python_generator.sample() is without replacement
-                    indices: List[int] = self.python_generator.sample(indices.tolist(), self.nsamples)
+                    indices: List[int] = self.python_generator.sample(indices, self.nsamples)
+                return indices
             
             normals_indices = sample_instances(NOMINAL_TARGET)
             anomalies_indices = sample_instances(ANOMALY_TARGET)

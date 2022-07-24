@@ -22,11 +22,6 @@ from common_dev01_bis import (CliConfigHash, CudaVisibleDevices,
                               LogdirBaserundir, Seeds, WandbOffline, WandbTags,)
 
 
-# some relative paths depend on this
-train_script_dir = Path(train_dev01_bis.__file__).parent.resolve().absolute()
-print("changing working directory to `train_script_dir`")
-print(f"train_script_dir: {train_script_dir}")
-os.chdir(train_script_dir)
 
 start_time = int(time.time())
 print(f"start_time: {start_time}")
