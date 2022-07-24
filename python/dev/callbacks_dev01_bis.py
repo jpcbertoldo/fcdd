@@ -920,7 +920,7 @@ class LogImageHeatmapTableCallback(
                 indices = np.where(labels == label_value)[0]
                 if len(indices) > self.nsamples:
                     # python_generator.sample() is without replacement
-                    indices: List[int] = self.python_generator.choice(indices.tolist(), self.nsamples)
+                    indices: List[int] = self.python_generator.sample(indices.tolist(), self.nsamples)
             
             normals_indices = sample_instances(NOMINAL_TARGET)
             anomalies_indices = sample_instances(ANOMALY_TARGET)
@@ -1287,7 +1287,7 @@ class LogPerInstanceMeanCallback(
         wandb.log({logkey: table})
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(stage={self.stage})"
+        return f"{self.__class__.__name__}(stage={self.stage}, values_key={self.values_key})"
 
 class LearningRateLoggerCallback(pl.Callback):
     
