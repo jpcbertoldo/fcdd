@@ -40,12 +40,9 @@
 		"files.exclude": {
 			"**/.ipynb_checkpoints/": true
 		},
-		"python.defaultInterpreterPath": "/cluster/CMM/home/jcasagrandebertoldo/miniconda3/envs/fcdd_rc21/bin/python",
-		"terminal.integrated.defaultProfile.linux": "/home/bertoldo/.local/bin/zsh",
-		"jupyter.jupyterServerType": "local",
+		"python.defaultInterpreterPath": "${HOME}/miniconda3/envs/fcdd_rc21/bin/python",
 		"scm.autoReveal": false,
 		"problems.autoReveal": false,
-		// "terminal.integrated.cwd": "/home/bertoldo/repos/fcdd/python/fcdd",
 		"workbench.list.openMode": "doubleClick",
 	},
 	"launch": {
