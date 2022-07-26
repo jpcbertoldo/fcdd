@@ -29,7 +29,7 @@ parameters:
       - 0.010
       - 0.003
       - 0.001
-  lightning_swa_epoch_start:
+  lightning_swa_epoch_start_relative:
     values:
       - 0.2  # 0.2 * 500 = 100
       - 0.5  # 0.4 * 500 = 200
