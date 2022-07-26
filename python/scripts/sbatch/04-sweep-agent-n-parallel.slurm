@@ -2,12 +2,10 @@
  
 # Personalisation de la tache
 
-#SBATCH --job-name   03-fcdd-mvtec-train-dev01-run-n-parallel
+#SBATCH --job-name   04-sweep-agent-n-parallel
 #SBATCH --partition  cmm-gpu
 #SBATCH --gres       gpu:1
-#SBATCH --cpus-per-task 2
-
-#SBATCH --array=0-5%1   # Id of job start-end % number of simultaneous running job
+#SBATCH --cpus-per-task 6
 
 # variable meanings
 # %x = job-name
@@ -16,12 +14,8 @@
 # %a = SLURM_ARRAY_TASK_ID (the job index in the array)
 # %j = SLURM_JOBID (unique for each job)
 
-# !!!!! THIS ONE !!!!!! 
-# OUTPUT FOR ARRAY JOB
-#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/run-n-parallel/%x-%N-%A_%a-%j.log
- 
 # OUTPUT FOR SINGLE JOB
-##SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/run-n-parallel/%x-%N-%j.log
+#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/sweep-agent-n-parallel/%x-%N-%j.log
 
 # tous les evenements pertinents seront envoyes par email a cette adresse
 #SBATCH --mail-type  ALL
@@ -83,51 +77,28 @@ echo "number of parrallel runs: ${NPARALLEL_RUNS}"
 echo "INDICES=${INDICES[@]}"
 echo "ARGS='${ARGS}'"
 
-# SLURM_ARRAY_TASK_ID \in {}
-# echo "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID}"
-
-# if (( ${SLURM_ARRAY_TASK_ID} >= 15 ))
-# then
-#     echo "SLURM_ARRAY_TASK_ID bad"
-#     echo "exiting"
-#     exit
-# fi
-
-echo "setting common args in slurm job" 
-
-COMMON_ARGS=""
-COMMON_ARGS="${COMMON_ARGS} --nworkers 1"
-COMMON_ARGS="${COMMON_ARGS} --wandb-tags dev01 run-n-parallel-${NPARALLEL_RUNS}"
-echo "COMMON_ARGS=${COMMON_ARGS}"
-
-ARGS="${COMMON_ARGS} ${ARGS}"
-echo "ARGS=${ARGS}"
-
 
 # ==============================================================================
 echo "=============================== VARIABLES ================================"
 # ==============================================================================
 
-SLEEP_BETWEEN_LAUNCHS_SECS=7
+SLEEP_BETWEEN_LAUNCHS_SECS=0
 
 Node=$(hostname)
 
 # exec
 WorkDir=$HOME/fcdd/python/dev
 CONDA_ENV_NAME="fcdd_rc21"
-SCRIPT_FNAME="train_mvtec_dev01.py"
+# SCRIPT_FNAME="train_mvtec_dev01.py"
 
 # etc
 MYTMPDIR="/cluster/CMM/data1/jcasagrandebertoldo/tmp"
 
 # logging
-LOGDIR="${HOME}/log/fcdd/mvtec/run-n-parallel"
-
-# OUTPUT FOR ARRAY JOB
-JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}-${SLURM_JOB_ID}.python-"
+LOGDIR="${HOME}/log/fcdd/mvtec/sweep-agent-n-parallel"
 
 # OUTPUT FOR SINGLE JOB
-# JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_JOB_ID}.python-"
+JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_JOB_ID}.python-"
 
 JPATH_BASE=${LOGDIR}/$JNAME_BASE
 JPATH_EXT=".log"
@@ -145,7 +116,7 @@ done
 echo "Node=$Node"
 echo "WorkDir=$WorkDir"
 echo "CONDA_ENV_NAME=$CONDA_ENV_NAME"
-echo "SCRIPT_FNAME=$SCRIPT_FNAME"
+# echo "SCRIPT_FNAME=$SCRIPT_FNAME"
 echo "MYTMPDIR = ${MYTMPDIR}"
 echo "LOGDIR=${LOGDIR}"
 echo "JNAME_BASE=${JNAME_BASE}"
@@ -202,7 +173,7 @@ do
     echo "JPATH=${JPATH}"
     
     # & will put it in the background
-    python ${SCRIPT_FNAME} ${ARGS} > "${JPATH}" 2>&1 & 
+    wandb agent ${ARGS} > "${JPATH}" 2>&1 & 
     
     PID=$!
     echo "PID=${PID}"

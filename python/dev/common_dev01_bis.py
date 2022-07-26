@@ -1,22 +1,37 @@
 #!/usr/bin/env python
 
+import functools
 import hashlib
 import json
-from pathlib import Path
+import os
 import random
 import time
-from typing import List, Optional, Tuple
 import warnings
+from argparse import ArgumentParser, Namespace, _ArgumentGroup
+from functools import partial
+from pathlib import Path
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+from pytorch_lightning.trainer.states import RunningStage
+from scipy import signal
 from torch import Tensor
-import warnings
-from functools import partial
-from scipy import signal 
-import os
-from argparse import ArgumentParser, Namespace
-import functools
+
+ArgumentParserOrArgumentGroup = Union[ArgumentParser, _ArgumentGroup]
+RunningStageOrStr = Union[RunningStage, str]
+
+
+def none_or_str(value: str):
+    if value.lower() == 'none':
+        return None
+    return value
+
+
+def none_or_int(value: str):
+    if value.lower() == 'none':
+        return None
+    return int(value)
 
 
 def seed_str2int(seed: str):
@@ -87,7 +102,7 @@ def hashify_config(config_dict: dict, keys=None) -> str:
 class CudaVisibleDevices:
     
     @staticmethod
-    def add_arguments(parser: ArgumentParser):
+    def cli_add_arguments(parser: ArgumentParserOrArgumentGroup):
         parser.add_argument(
             "--cuda_visible_devices", 
             type=int, 
@@ -115,7 +130,6 @@ class CudaVisibleDevices:
         del vars(args)['cuda_visible_devices']
 
 
-
 class LogdirBaserundir:
     """
     `logdir` depends on arguments, `base_rundir` is subfolder of `logdir` and contains the start time of script. 
@@ -123,7 +137,7 @@ class LogdirBaserundir:
     """
     
     @staticmethod
-    def add_arguments(parser):
+    def cli_add_arguments(parser: ArgumentParserOrArgumentGroup):
         parser.add_argument(
             '--logdir', type=Path,
             help='Where log data is to be stored. The runs will be in subfolders and the names will be {base_rundir_prefix}run_{starttime}{base_rundir_suffix}. Default: ../../data/results.'
@@ -179,7 +193,7 @@ class LogdirBaserundir:
 class Seeds:
     
     @staticmethod
-    def add_arguments(parser: ArgumentParser):
+    def cli_add_arguments(parser: ArgumentParserOrArgumentGroup):
         seeds_group = parser.add_mutually_exclusive_group(required=True)
         seeds_group.add_argument(
             '--n_seeds', type=int, 
@@ -226,7 +240,7 @@ class Seeds:
 class WandbOffline:
     
     @staticmethod
-    def add_arguments(parser: ArgumentParser):
+    def cli_add_arguments(parser: ArgumentParserOrArgumentGroup):
         parser.add_argument("--wandb_offline", action="store_true", help="If set, will not sync with the webserver.",)
     
     @staticmethod
@@ -241,7 +255,7 @@ class WandbOffline:
 class WandbTags:
     
     @staticmethod
-    def add_arguments(parser: ArgumentParser):
+    def cli_add_arguments(parser: ArgumentParserOrArgumentGroup):
         parser.add_argument("--wandb_tags", type=str, nargs='*', action='extend',)
         
     @staticmethod
@@ -273,7 +287,7 @@ class WandbTags:
 class CliConfigHash:
     
     @staticmethod
-    def add_arguments(parser: ArgumentParser):
+    def cli_add_arguments(parser: ArgumentParserOrArgumentGroup):
         parser.add_argument("--cli_config_hash", type=str, nargs=2, action="append", default=None,)
         
     @staticmethod

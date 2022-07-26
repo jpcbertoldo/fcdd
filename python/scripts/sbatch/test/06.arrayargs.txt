@@ -1,0 +1,3 @@
+--arg-from-file-A a1 --arg-from-file-B b1
+--arg-from-file-A a2 --arg-from-file-B b2
+

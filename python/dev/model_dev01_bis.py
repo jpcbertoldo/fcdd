@@ -20,9 +20,21 @@ from torch import Tensor
 from typing import Tuple, Optional
 import numpy as np
 
+from common_dev01_bis import AdaptiveClipError, find_scores_clip_values_from_empircal_cdf
 
-from callbacks_dev01 import merge_steps_outputs
-from common_dev01 import AdaptiveClipError, find_scores_clip_values_from_empircal_cdf
+DROPOUT_MODE_LASTCONV = "lastconv"
+DROPOUT_MODE_FCDD_CHOICES = (None, DROPOUT_MODE_LASTCONV,)
+DROPOUT_MODE_U2NET_CHOICES = (None,)
+
+def dropout_validate_parameters_mode_single_proba(parameters: list):
+    assert len(parameters) == 1, f"{parameters} is not a valid for dropout mode {DROPOUT_MODE_LASTCONV}"
+    proba = parameters[0]
+    assert 0.0 <= proba <= 1.0, f"{proba} (parameters[0]) is not a valid probability"
+    if proba == 0.0:
+        warnings.warn(f"{proba} (parameters[0]) is 0.0, so dropout will be disabled, you can also set dropout_mode to None")
+    if proba == 1.0:
+        warnings.warn(f"{proba} (parameters[0]) is 1.0, so dropout will drop all the connections!")
+    return proba
 
 OPTIMIZER_SGD = 'sgd'
 OPTIMIZER_ADAM = 'adam'
@@ -213,7 +225,78 @@ MODEL_CHOICES_FCDD = (
 )
 
 
-class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
+class MergeStepOutputsMixin:
+    """some callbacks depend on this mixin because of the interface using 'last_epoch_outputs'"""
+    
+    @staticmethod
+    def merge_steps_outputs(steps_outputs: List[Dict[str, Tensor]]):
+        """
+        gather all the pieces into a single dict and transfer tensors to cpu
+
+        several callbacks depend on the pl_module (model) having the attribute last_epoch_outputs,
+        which should be set with this function
+        """
+
+        if steps_outputs is None:
+            return None
+
+        assert isinstance(steps_outputs, list), f"steps_outputs must be a list, got {type(steps_outputs)}"
+
+        assert len(steps_outputs) >= 1, f"steps_outputs must have at least one element, got {len(steps_outputs)}"
+
+        assert all(isinstance(x, dict) for x in steps_outputs), f"steps_outputs must be a list of dicts, got {steps_outputs}"
+
+        dict0 = steps_outputs[0]
+        keys = set(dict0.keys())
+
+        assert all(set(x.keys()) == keys for x in steps_outputs), f"steps_outputs must have the same keys, got {steps_outputs}, keys={keys}"
+
+        return {
+            # step 3: transfer the tensor to the cpu to liberate the gpu memory
+            k: v.cpu()
+            for k, v in {
+                # step 2: concatenate the tensors
+                k: (
+                    torch.stack(list_of_values, dim=0)
+                    if list_of_values[0].ndim == 0 else
+                    torch.cat(list_of_values, dim=0)
+                )
+                for k, list_of_values in {
+                    # step 1: gather the dicts values into lists (one list per key) ==> single dict
+                    k: [step_outputs[k] for step_outputs in steps_outputs]
+                    for k in keys
+                }.items()
+            }.items()
+        }
+
+    def training_epoch_end(self, outputs) -> None:
+        self.merge_steps_outputs_training_epoch_end(outputs)
+
+    def merge_steps_outputs_training_epoch_end(self, outputs) -> None:
+        self.last_epoch_outputs = MergeStepOutputsMixin.merge_steps_outputs(outputs)
+    
+    def validation_epoch_end(self, outputs):
+        """if you override this, you can still just call the function below"""
+        self.merge_steps_outputs_validation_epoch_end(outputs)
+
+    def merge_steps_outputs_validation_epoch_end(self, outputs):
+        self.last_epoch_outputs = MergeStepOutputsMixin.merge_steps_outputs(outputs)
+        
+    def test_epoch_end(self, outputs):
+        """if you override this, you can still just call the function below"""
+        self.merge_steps_outputs_test_epoch_end(outputs)
+        
+    def merge_steps_outputs_test_epoch_end(self, outputs):
+        self.last_epoch_outputs = MergeStepOutputsMixin.merge_steps_outputs(outputs)
+    
+    def teardown(self, stage=None):
+        """if you override this, you can still just call the function below"""
+        self.merge_steps_outputs_teardown(stage=stage)
+
+    def merge_steps_outputs_teardown(self, stage=None):
+        self.last_epoch_outputs = None
+
+class FCDD(SchedulersMixin, MergeStepOutputsMixin, PixelwiseHSCLossesMixin, LightningModule):
     """
     # VGG_11BN based net with most of the VGG layers having weights 
     # pretrained on the ImageNet classification task.
@@ -237,12 +320,18 @@ class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
         scheduler_parameters: list,
         # else
         loss_name: str,
+        dropout_mode: Optional[str],
+        dropout_parameters: list,
     ):
         assert optimizer_name in OPTIMIZER_CHOICES, f"optimizer_name={optimizer_name} not in {OPTIMIZER_CHOICES}"
         assert scheduler_name in SCHEDULER_CHOICES, f"scheduler_name={scheduler_name} not in {SCHEDULER_CHOICES}"
         assert loss_name in LOSS_FCDD_CHOICES, f"loss_name={loss_name} not in {LOSS_FCDD_CHOICES}"
         assert model_name in MODEL_CHOICES_FCDD, f"model_name={model_name} not in {MODEL_CHOICES_FCDD}"
+        assert dropout_mode in DROPOUT_MODE_FCDD_CHOICES, f"dropout_mode={dropout_mode} not in {DROPOUT_MODE_FCDD_CHOICES}"
         
+        if dropout_mode == DROPOUT_MODE_LASTCONV:
+            dropout_proba = dropout_validate_parameters_mode_single_proba(dropout_parameters)
+                
         if model_name != MODEL_FCDD_CNN224_VGG_F:
             raise NotImplementedError(f"model_name={model_name} not implemented")
         
@@ -304,6 +393,15 @@ class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
         
         self.conv_final = torch.nn.Conv2d(512, 1, 1)
         
+        if dropout_mode is None:
+            self.dropout_lastconv = nn.Identity()
+            
+        elif dropout_mode == DROPOUT_MODE_LASTCONV:
+            self.dropout_lastconv = nn.Dropout(p=dropout_proba)
+        
+        else:
+            raise NotImplementedError(f"dropout_mode={dropout_mode} not implemented")
+        
         self.save_hyperparameters()
         pass
     
@@ -362,7 +460,7 @@ class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
         receptive field specifically hard-coded for the archicteture FCDD_CNN224_VGG
         """
         return {
-            'n': 28, 'j': 8, 'r': 62, 's': 3.5, 'img_shape': (3, 224, 224),
+            'n': 28, 'j': 8, 'r': 62, 's': 3.5, 'img_shape': (3, ) + self.in_shape,
             # !!!
             # this one didnt exist before, i hard-coded it in there to further simplify
             # this is only valid for the class FCDD_CNN224_VGG_F
@@ -479,23 +577,11 @@ class FCDD(SchedulersMixin, PixelwiseHSCLossesMixin, LightningModule):
     def training_step(self, batch, batch_idx):    
         return self._common_step(batch, batch_idx, stage=RunningStage.TRAINING)
     
-    def training_epoch_end(self, outputs) -> None:
-        self.last_epoch_outputs = merge_steps_outputs(outputs)
-    
     def validation_step(self, batch, batch_idx):
         return self._common_step(batch, batch_idx, stage=RunningStage.VALIDATING)
-    
-    def validation_epoch_end(self, validation_step_outputs):
-        self.last_epoch_outputs = merge_steps_outputs(validation_step_outputs)
         
     def test_step(self, batch, batch_idx):
         return self._common_step(batch, batch_idx, stage=RunningStage.TESTING)
-    
-    def test_epoch_end(self, test_step_outputs):
-        self.last_epoch_outputs = merge_steps_outputs(test_step_outputs)
-    
-    def teardown(self, stage=None):
-        self.last_epoch_outputs = None
 
 
 from typing import Dict, Tuple
@@ -708,6 +794,7 @@ HYPERSHPERE_U2NET_LOSS_WEIGHTS_UNIFORM = "uniform"
 
 
 class HyperSphereU2Net(
+    MergeStepOutputsMixin, 
     SchedulersMixin, 
     PixelwiseHSCLossesMixin, 
     LightningModule,
@@ -724,9 +811,15 @@ class HyperSphereU2Net(
         scheduler_parameters: list,
         loss_name: str,
         model_name: str,
+        dropout_mode: Optional[str],
+        dropout_parameters: list,
         # this is held constant for now (there is no option in the cli)
         loss_stage_weights: Union[str, Tuple[float, ...]] = HYPERSHPERE_U2NET_LOSS_WEIGHTS_UNIFORM,
     ):
+        
+        if dropout_mode is not None:
+            raise NotImplementedError(f"dropout is not implemented yet for class {self.__class__.__name__}")
+        
         assert optimizer_name in OPTIMIZER_CHOICES, f"{optimizer_name} is not a valid optimizer name"
         assert scheduler_name in SCHEDULER_CHOICES, f"{scheduler_name} is not a valid scheduler name"
         assert loss_name in LOSS_U2NET_CHOICES, f"{loss_name} is not a valid loss name"
@@ -1173,27 +1266,12 @@ class HyperSphereU2Net(
             loss=loss,
         )
     
-    def _common_epoch_end(self, outputs, stage):
-        self.last_epoch_outputs = merge_steps_outputs(outputs)
-            
     def training_step(self, batch, batch_idx):    
         return self._common_step(batch, batch_idx, stage=RunningStage.TRAINING)
-    
-    def training_epoch_end(self, training_steps_outputs) -> None:
-        return self._common_epoch_end(training_steps_outputs, stage=RunningStage.TRAINING)
     
     def validation_step(self, batch, batch_idx):
         return self._common_step(batch, batch_idx, stage=RunningStage.VALIDATING)
     
-    def validation_epoch_end(self, validation_steps_outputs):
-        return self._common_epoch_end(validation_steps_outputs, stage=RunningStage.VALIDATING)
-        
     def test_step(self, batch, batch_idx):
         return self._common_step(batch, batch_idx, stage=RunningStage.TESTING)
     
-    def test_epoch_end(self, test_step_outputs):
-        return self._common_epoch_end(test_step_outputs, stage=RunningStage.TESTING)
-    
-    def teardown(self, stage=None):
-        self.last_epoch_outputs = None
-

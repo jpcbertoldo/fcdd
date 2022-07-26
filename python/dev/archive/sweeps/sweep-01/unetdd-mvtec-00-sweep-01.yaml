@@ -1,0 +1,39 @@
+program: unetdd_mvtec_00_sweep_01_train.py
+method: bayes
+metric:
+  goal: maximize
+  name: validate/roc-auc
+parameters:
+  # obs: log-* distributions
+  # the parameters are in terms of log(X)
+  # actual values of X will be exp(p), p ~ D
+  # i need to write the log("wished mu/min/max")
+  learning_rate:
+    distribution: log_normal
+    # mu: 0.002
+    mu: -6.2146081
+    sigma: 1.0
+  weight_decay:
+    distribution: log_normal
+    # mu: 0.0001
+    mu: -9.21034037
+    sigma: 1.0
+  lightning_gradient_clip_val:
+    distribution: log_uniform_values
+    min: 0.1
+    max: 10.0
+  lightning_accumulate_grad_batches:
+    distribution: q_log_uniform_values
+    min: 1
+    max: 30
+    q: 2
+  scheduler_parameters:
+    distribution: uniform
+    min: 0.9950
+    max: 0.9999
+early_terminate:
+  type: hyperband
+  # brackets: [267, 400]
+  s: 2
+  eta: 1.5
+  max_iter: 600

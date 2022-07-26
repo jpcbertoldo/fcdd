@@ -23,11 +23,11 @@ from torchvision.datasets import VisionDataset
 from torchvision.datasets.imagenet import check_integrity
 from tqdm import tqdm
 
-from common_dev01 import (create_numpy_random_generator,
+from common_dev01_bis import (create_numpy_random_generator,
                           create_torch_random_generator)
-from data_dev01 import (ANOMALY_TARGET, NOMINAL_TARGET, BatchCompose,
+from data_dev01_bis import (ANOMALY_TARGET, NOMINAL_TARGET, BatchCompose,
                         BatchGaussianNoise, BatchLocalContrastNormalization,
-                        BatchRandomChoice, BatchRandomCrop, LightningDataset,
+                        BatchRandomChoice, BatchRandomCrop, BatchRandomFlip, LightningDataset, LoopBatchRandomAffine, MultiBatchCompose,
                         MultiBatchdRandomChoice, MultiBatchTransformMixin,
                         RandomTransformMixin, generate_dataloader_images,
                         generate_dataloader_preview_single_fig,
@@ -73,7 +73,12 @@ SUPERVISE_MODES_DOC = {
 }
 
 PREPROCESSING_LCNAUG1 = 'lcnaug1'
-PREPROCESSING_CHOICES = (PREPROCESSING_LCNAUG1,)
+PREPROCESSING_LCNAUG2 = 'lcnaug2'
+PREPROCESSING_CHOICES = (None, PREPROCESSING_LCNAUG1, PREPROCESSING_LCNAUG2)
+
+DATAMODULE_PREPROCESS_MOMENT_BEFORE_BATCH_TRANSFER = "preprocess-before-batch-transfer"
+DATAMODULE_PREPROCESS_MOMENT_AFTER_BATCH_TRANSFER = "preprocess-after-batch-transfer"
+DATAMODULE_PREPROCESS_MOMENT_CHOICES = (DATAMODULE_PREPROCESS_MOMENT_BEFORE_BATCH_TRANSFER, DATAMODULE_PREPROCESS_MOMENT_AFTER_BATCH_TRANSFER)
 
 TARGZ_DOWNLOAD_URL = "ftp://guest:GU%2E205dldo@ftp.softronics.ch/mvtec_anomaly_detection/mvtec_anomaly_detection.tar.xz"
 TARGZ_FNAME = 'mvtec_anomaly_detection.tar.xz'
@@ -1284,6 +1289,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         root: Path, 
         normal_class: int, 
         preprocessing: str, 
+        preprocess_moment: str,
         supervise_mode: str, 
         batch_size: int,
         nworkers: int,
@@ -1308,6 +1314,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         # validate preproc
         assert preprocessing in PREPROCESSING_CHOICES, f'`preproc` must be one of {PREPROCESSING_CHOICES}'
         assert supervise_mode in SUPERVISE_MODES, f'`supervise_mode` must be one of {SUPERVISE_MODES}'
+        assert preprocess_moment in DATAMODULE_PREPROCESS_MOMENT_CHOICES, f'`preprocess_moment` must be one of {DATAMODULE_PREPROCESS_MOMENT_CHOICES}'
 
         if supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
             assert real_anomaly_limit is not None, f"'real_anomaly_limit' cannot be None if the supervise mode is {supervise_mode}"
@@ -1318,10 +1325,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         # files
         self.root = root
         
-        # modes and their subparameters        
-        self.preprocessing = preprocessing
-        self.supervise_mode = supervise_mode
-        self.real_anomaly_limit = real_anomaly_limit
+        # todo: remove these to use only hparams['...']
         
         # data parameters
         self.raw_shape = tuple(raw_shape)  # it has to be a tuple for the comparison with torch shapes
@@ -1338,7 +1342,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         # randomness
         # seeds are validated in create_random_generator()
         self.seed = seed
-        if self.supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
+        if supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
             self.real_anomaly_split_random_generator = create_numpy_random_generator(self.seed)
         
         # ========================================== TRANSFORMS ==========================================
@@ -1346,11 +1350,33 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         img_width_height = self.net_shape[-1]
         
         # use a function to instantiate it in order to make sure the function is the same but different instance
-        def resize_netshape_multi_transform():
+        def resize_netshape_multibatch():
             return make_multibatch(transforms.Resize(img_width_height, transforms.InterpolationMode.NEAREST))
         
-        def randomcrop_multi_transform():
+        def randomcrop_multibatch():
             return make_multibatch_use_same_random_state(BatchRandomCrop(img_width_height, generator=create_numpy_random_generator(self.seed),))
+        
+        def randomly_resize_or_randomcrop_multibatch():
+            return MultiBatchdRandomChoice(
+                transforms=[randomcrop_multibatch(), resize_netshape_multibatch(),], 
+                generator=create_numpy_random_generator(self.seed),
+            )
+        
+        def randomflip_multibatch():
+            return make_multibatch_use_same_random_state(
+                BatchRandomFlip(vertical_probability=0.5, horizontal_probability=0.5, torch_generator=create_torch_random_generator(self.seed))
+            )
+        
+        def randomaffine_multibatch():
+            return make_multibatch_use_same_random_state(
+                LoopBatchRandomAffine(
+                    rotation_degrees=4,
+                    scale_range=(0.95, 1.05),
+                    shear_degrees=(4, 4),  # vertical and horizontal
+                    torch_generator=create_torch_random_generator(self.seed),
+                    interpolation=transforms.InterpolationMode.NEAREST,
+                )
+            )
         
         def _img_color_augmentation():
             return BatchCompose(transforms=[
@@ -1371,15 +1397,21 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         
         # ========================================== PREPROCESSING ==========================================
         # different types of preprocessing pipelines, 'lcn' is for using LCN, 'aug{X}' for augmentations
-        if preprocessing == PREPROCESSING_LCNAUG1:
+        
+        if preprocessing is None:
+            
+            # img and gtmap - test & Btrain
+            self.test_img_and_gtmap_transform = self.train_img_and_gtmap_transform = resize_netshape_multibatch()
+                        
+            # img - test & Btrain
+            self.test_img_transform = self.train_img_transform = _clamp01()
+        
+        elif preprocessing == PREPROCESSING_LCNAUG1:
             
             # img and gtmap - train
             # my own implmentation of RandomChoice
             # multi compose is used because both gtmap and img must be resized
-            self.train_img_and_gtmap_transform = MultiBatchdRandomChoice(
-                transforms=[randomcrop_multi_transform(), resize_netshape_multi_transform(),], 
-                generator=create_numpy_random_generator(self.seed),
-            )
+            self.train_img_and_gtmap_transform = randomly_resize_or_randomcrop_multibatch()
                         
             # img - train
             self.train_img_transform = BatchCompose(transforms=[
@@ -1392,7 +1424,38 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             
             # image and gtmap - test
             # multi compose is used because both gtmap and img must be resized
-            self.test_img_and_gtmap_transform = resize_netshape_multi_transform()
+            self.test_img_and_gtmap_transform = resize_netshape_multibatch()
+            
+            # img - test
+            self.test_img_transform = BatchCompose(transforms=[
+                BatchLocalContrastNormalization(), 
+                _lcn_global_normalization_transform(normal_class),
+                _clamp01(),
+            ])
+        
+        elif preprocessing == PREPROCESSING_LCNAUG2:
+            
+            # img and gtmap - train
+            # my own implmentation of RandomChoice
+            # multi compose is used because both gtmap and img must be resized by using the same transform
+            self.train_img_and_gtmap_transform = MultiBatchCompose(transforms=[
+                randomflip_multibatch(),
+                randomaffine_multibatch(),
+                randomly_resize_or_randomcrop_multibatch(),
+            ])
+                        
+            # img - train
+            self.train_img_transform = BatchCompose(transforms=[
+                _img_color_augmentation(),
+                _clamp01(),
+                BatchLocalContrastNormalization(), 
+                _lcn_global_normalization_transform(normal_class),
+                _clamp01(),
+            ])
+            
+            # image and gtmap - test
+            # multi compose is used because both gtmap and img must be resized
+            self.test_img_and_gtmap_transform = resize_netshape_multibatch()
             
             # img - test
             self.test_img_transform = BatchCompose(transforms=[
@@ -1438,6 +1501,9 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         
+        supervise_mode = self.hparams["supervise_mode"]
+        real_anomaly_limit = self.hparams["real_anomaly_limit"]
+        
         # case 'validate' is necessary it uses the test split to validate the model
         if stage in (None, 'fit', 'validate'):
         
@@ -1450,10 +1516,10 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             # 'validate' uses the test split to validate the model
             self.test_mvtec.setup()
             
-            if self.supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
+            if supervise_mode == SUPERVISE_MODE_REAL_ANOMALY:
                 
                 # this is needed for the real anomaly split                
-                print(f'using mode {self.supervise_mode} with real anomaly limit {self.real_anomaly_limit}, the anomalies used for training will be removed from the test set')
+                print(f'using mode {supervise_mode} with real anomaly limit {real_anomaly_limit}, the anomalies used for training will be removed from the test set')
                 
                 n_anomaly_types = len(self.test_mvtec.anomaly_label_strings)
                 anomaly_type_indices = list(range(n_anomaly_types))
@@ -1474,7 +1540,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                         
                     # those used in the online supervisor
                     supervision_indices = self.real_anomaly_split_random_generator.choice(
-                        all_indices, size=min(self.real_anomaly_limit, all_indices.numel()), replace=False,
+                        all_indices, size=min(real_anomaly_limit, all_indices.numel()), replace=False,
                     )
                     test_indices = np.array(sorted(set(all_indices) - set(supervision_indices)))
 
@@ -1502,11 +1568,6 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
                 )
                 # no need to prepare data, it's already done in the test set
                 self.real_anomaly_mvtec.setup()
-                # self.real_anomaly_mvtec = Subset(
-                #     self.real_anomaly_mvtec, 
-                #     self.test_subsplits_indices["supervision"],
-                # )
-                # self.test_mvtec = Subset(self.test_mvtec, self.test_subsplits_indices["test"])
                 self.real_anomaly_mvtec.subset_indices = self.test_subsplits_indices["supervision"]
                 self.test_mvtec.subset_indices = self.test_subsplits_indices["test"]
                 
@@ -1533,23 +1594,37 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
     def on_before_batch_transfer(self, batch, dataloader_idx: int):
         
         img, target, gtmap = batch
-        
+                
         if self.trainer.training:
             img, target, gtmap = self.online_instance_replacer(img, target, gtmap)
         
-        # img = (img * 255).byte()
-        # target = (target * 255).byte()
-        # gtmap = (gtmap * 255).byte()
+        preprocess_moment = self.hparams["preprocess_moment"]
         
-        return img, target, gtmap
-
+        if preprocess_moment != DATAMODULE_PREPROCESS_MOMENT_BEFORE_BATCH_TRANSFER:
+            return img, target, gtmap
+        
+        if self.trainer.training:
+            img, gtmap = self.train_img_and_gtmap_transform(img, gtmap)
+            img = self.train_img_transform(img)
+            return img, target, gtmap
+        
+        # elif self.trainer.testing or self.trainer.validating or self.trainer.sanity_checking:
+        elif self.trainer.testing or self.trainer.validating:
+            img, gtmap = self.test_img_and_gtmap_transform(img, gtmap)
+            img = self.test_img_transform(img)
+            return img, target, gtmap
+        
+        else:
+            raise NotImplementedError(f'Unknown stage. {self.trainer.state}')
+        
     def on_after_batch_transfer(self, batch, dataloader_idx: int):
 
         img, target, gtmap = batch
+
+        preprocess_moment = self.hparams["preprocess_moment"]
         
-        # img = img.type(torch.float32) / 255.
-        # target = target.type(torch.float32) / 255.
-        # gtmap = gtmap.type(torch.float32) / 255.
+        if preprocess_moment != DATAMODULE_PREPROCESS_MOMENT_AFTER_BATCH_TRANSFER:
+            return img, target, gtmap
         
         if self.trainer.training:
             img, gtmap = self.train_img_and_gtmap_transform(img, gtmap)
@@ -1565,10 +1640,11 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
         else:
             raise NotImplementedError(f'Unknown stage. {self.trainer.state}')
     
-    def train_dataloader(self, batch_size_override: Optional[int] = None, embed_preprocessing: bool = False):
+    def train_dataloader(self, batch_size_override: Optional[int] = None, nworkers_override: Optional[int] = None, embed_preprocessing: bool = False):
         """batch_size_override: override the batch size for special purposes like generating the preview faster"""
         
         batchsize = batch_size_override if batch_size_override is not None else self.batch_size
+        nworkers = nworkers_override if nworkers_override is not None else self.nworkers
         dataset = self.train_mvtec
         
         if embed_preprocessing:
@@ -1601,7 +1677,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             dataset=dataset, 
             batch_size=batchsize, 
             shuffle=True,
-            num_workers=self.nworkers, 
+            num_workers=nworkers, 
             pin_memory=self.pin_memory, 
             persistent_workers=False,
             generator=generator,
@@ -1610,10 +1686,11 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
     def val_dataloader(self, *args, **kwargs):
         return self.test_dataloader(*args, **kwargs)
 
-    def test_dataloader(self, batch_size_override: Optional[int] = None, embed_preprocessing: bool = False):
+    def test_dataloader(self, batch_size_override: Optional[int] = None, nworkers_override: Optional[int] = None, embed_preprocessing: bool = False):
         """batch_size_override: override the batch size for special purposes like generating the preview faster"""
         
         batchsize = batch_size_override if batch_size_override is not None else self.batch_size
+        nworkers = nworkers_override if nworkers_override is not None else self.nworkers
         dataset = self.test_mvtec
         
         if embed_preprocessing:
@@ -1647,7 +1724,7 @@ class MVTecAnomalyDetectionDataModule(LightningDataModule):
             dataset=dataset, 
             batch_size=batchsize, 
             shuffle=False,
-            num_workers=self.nworkers, 
+            num_workers=nworkers, 
             pin_memory=self.pin_memory, 
             persistent_workers=False,
             generator=generator,

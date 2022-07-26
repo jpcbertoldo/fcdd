@@ -11,16 +11,17 @@ from re import A
 from typing import Any, Callable, List, Optional, Tuple
 
 import pytorch_lightning as pl
-import torch
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.profiler import (AdvancedProfiler, PyTorchProfiler,
                                         SimpleProfiler)
 from pytorch_lightning.trainer.states import RunningStage
+
+import torch
 from torch.profiler import tensorboard_trace_handler
 
 import mvtec_dataset_dev01 as mvtec_dataset_dev01
 import wandb
-from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH, HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH, HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH, LOG_HISTOGRAM_MODES,
+from callbacks_dev01 import (HEATMAP_NORMALIZATION_MINMAX_IN_EPOCH, HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH, LOG_HISTOGRAM_MODES,
                              DataloaderPreviewCallback, LearningRateLoggerCallback,
                              LogAveragePrecisionCallback, LogHistogramCallback,
                              LogHistogramsSuperposedPerClassCallback,
@@ -316,196 +317,197 @@ def parser_add_arguments(parser: ArgumentParser) -> ArgumentParser:
     :return: the parser with added arguments
     """
     # ===================================== training =====================================
-    parser.add_argument('--epochs', type=int)
-    parser.add_argument('--learning-rate', type=float)
-    parser.add_argument('--weight-decay', type=float)
+    parser.add_argument("--epochs", type=int)
+    parser.add_argument("--learning_rate", type=float)
+    parser.add_argument("--weight_decay", type=float)
     # ====================================== model =======================================
-    parser.add_argument('--model', type=str, choices=MODEL_CHOICES,)
+    parser.add_argument("--model", type=str, choices=MODEL_CHOICES,)
     parser.add_argument("--loss", type=str, choices=LOSS_CHOICES,)
-    parser.add_argument('--optimizer', type=str, choices=OPTIMIZER_CHOICES,)
+    parser.add_argument("--optimizer", type=str, choices=OPTIMIZER_CHOICES,)
     parser.add_argument(
-        '--scheduler', type=none_or_str, choices=SCHEDULER_CHOICES,
+        "--scheduler", type=none_or_str, choices=SCHEDULER_CHOICES,
         help='The type of learning rate scheduler.'
              '"lambda", reduces the learning rate each epoch by a certain factor.'
     )
     parser.add_argument(
-        '--scheduler-parameters', type=float, nargs='*',
+        "--scheduler_parameters", type=float, nargs='*',
         help='Sequence of learning rate scheduler parameters. '
              '"lambda": one parameter is allowed, the factor the learning rate is reduced per epoch. '
     )
     # ====================================== dataset =====================================
-    parser.add_argument('--dataset', type=str, choices=DATASET_CHOICES)
-    parser.add_argument("--raw-shape", type=int, nargs=2,)
-    parser.add_argument("--net-shape", type=int, nargs=2,)
-    parser.add_argument('--batch-size', type=int,)
-    parser.add_argument('--nworkers', type=int, help='Number of workers for data loading (DataLoader parameter).')
-    parser.add_argument('--pin-memory', action='store_true')
+    parser.add_argument("--dataset", type=str, choices=DATASET_CHOICES)
+    parser.add_argument("--raw_shape", type=int, nargs=2,)
+    parser.add_argument("--net_shape", type=int, nargs=2,)
+    parser.add_argument("--batch_size", type=int,)
+    parser.add_argument("--nworkers", type=int, help='Number of workers for data loading (DataLoader parameter).')
+    parser.add_argument("--pin_memory", action='store_true')
     parser.add_argument(
-        '--preprocessing', type=str, choices=ALL_PREPROCESSING_CHOICES,
+        "--preprocessing", type=str, choices=ALL_PREPROCESSING_CHOICES,
         help='Preprocessing pipeline (augmentations and such). Defined inside each dataset module.'
     )
     parser.add_argument(
-        '--supervise-mode', type=str, choices=ALL_SUPERVISE_MODE_CHOICES,
+        "--supervise_mode", type=str, choices=ALL_SUPERVISE_MODE_CHOICES,
         help='This determines the kind of artificial anomalies. '
     )
     parser.add_argument(
-        '--real-anomaly-limit', type=int,
+        "--real_anomaly_limit", type=int,
         help='Determines the number of real anomalous images used in the case of real anomaly supervision. '
              'Has no impact on synthetic anomalies.'
     )
     # ====================================== script ======================================
     parser.add_argument(
-        '--no-test', dest="test", action="store_false",
+        "--no_test", dest="test", action="store_false",
         help='If set then the model will not be tested at the end of the training. It will by default.'
     )
     parser.add_argument(
-        "--preview-nimages", type=int, help="Number of images to preview per class (normal/anomalous)."
+        "--preview_nimages", type=int, help="Number of images to preview per class (normal/anomalous)."
     )
     parser.add_argument(
-        '--classes', type=int, nargs='+', default=None,
+        "--classes", type=int, nargs='+', default=None,
         help='Run only training sessions for some of the classes being nominal. If not give (default) then all classes are trained.'
     )
     parser.add_argument(
-        "--cuda-visible-devices", type=int, nargs='*', default=None,
+        "--cuda_visible_devices", type=int, nargs='*', default=None,
     )
     # ====================================== seeds ======================================
-    seeds_group = parser.add_mutually_exclusive_group(required=True)
+    # seeds_group = parser.add_mutually_exclusive_group(required=True)
+    seeds_group = parser
     seeds_group.add_argument(
-        '--n-seeds', type=int, 
+        "--n_seeds", type=int, 
         help='Number of (randomly generated) seeds per class. If seeds is specified this is unnecessary.'
     )
-    seeds_group.add_argument(
-        "--seeds", type=seed_str2int, nargs='*',
-        help="If set, the model will be trained with the given seeds."
-            "Otherwise it can they can be autogenerated with -n-seeds."
-            "The seeds must be passed in hexadecimal format, e.g. 0x1234."
-    )
+    # seeds_group.add_argument(
+    #     "--seeds", type=seed_str2int, nargs='*',
+    #     help="If set, the model will be trained with the given seeds."
+    #         "Otherwise it can they can be autogenerated with -n-seeds."
+    #         "The seeds must be passed in hexadecimal format, e.g. 0x1234."
+    # )
     # ====================================== files =======================================
     parser.add_argument(
-        '--logdir', type=Path, default=Path("../../data/results"),
+        "--logdir", type=Path, default=Path("../../data/results"),
         help='Where log data is to be stored. A subfolder (rundir) is created in there. The start time is put after the dir name. Default: ../../data/results.'
     )
-    parser.add_argument('--rundir-suffix', type=str, default='',)
-    parser.add_argument('--rundir-prefix', type=str, default='',)
+    parser.add_argument("--rundir_suffix", type=str, default='',)
+    parser.add_argument("--rundir_prefix", type=str, default='',)
     parser.add_argument(
-        '--datadir', type=Path, default=Path("../../data/datasets"),
+        "--datadir", type=Path, default=Path("../../data/datasets"),
         help='Where datasets are found or to be downloaded to. Default: ../../data/datasets.',
     )
     # ====================================== wandb =======================================
-    parser.add_argument("--wandb-project", type=str,)
-    parser.add_argument("--wandb-tags", type=str, nargs='*', action='extend',)
+    parser.add_argument("--wandb_project", type=str,)
+    parser.add_argument("--wandb_tags", type=str, nargs='*', action='extend',)
     parser.add_argument(
-        "--wandb-profile", action="store_true",
+        "--wandb_profile", action="store_true",
         help="If set, the run will be profiled and sent to wandb."
     )
-    parser.add_argument("--wandb-offline", action="store_true", help="If set, will not sync with the webserver.",)
+    parser.add_argument("--wandb_offline", action="store_true", help="If set, will not sync with the webserver.",)
     parser.add_argument(
         # choices taken from wandb/sdk/wandb_watch.py => watch()
-        "--wandb-watch", type=none_or_str, choices=WANDB_WATCH_CHOICES, 
+        "--wandb_watch", type=none_or_str, choices=WANDB_WATCH_CHOICES, 
         help="Argument for wandb_logger.watch(..., log=WANDB_WATCH).",
     )
     parser.add_argument(
-        "--wandb-watch-log-freq", type=int, default=100,
+        "--wandb_watch_log_freq", type=int, default=100,
         help="Log frequency of gradients and parameters. Argument for wandb_logger.watch(..., log_freq=WANDB_WATCH_LOG_FREQ). ",
     )
     parser.add_argument(        
-        "--wandb-checkpoint-mode", type=none_or_str, choices=WANDB_CHECKPOINT_MODES,
+        "--wandb_checkpoint_mode", type=none_or_str, choices=WANDB_CHECKPOINT_MODES,
         help="How to save checkpoints."
     )
     parser.add_argument(
-        "--wandb-log-roc", type=bool, nargs=3,
+        "--wandb_log_roc", type=bool, nargs=3,
         help="If set, the ROC AUC curve will be logged, respectively, for train/validation/test. On test the curve is also logged."
     )
     parser.add_argument(
-        "--wandb-log-pr", type=bool, nargs=3,
+        "--wandb_log_pr", type=bool, nargs=3,
         help="If set, the average precision curve will be logged, respectively, for train/validation/test. On test the PR curve is also logged."
     )
     parser.add_argument(
-        "--wandb-log-histogram-score", type=none_or_str, nargs=3, choices=LOG_HISTOGRAM_MODES,
+        "--wandb_log_histogram_score", type=none_or_str, nargs=3, choices=LOG_HISTOGRAM_MODES,
         help="if and how to log  score values; you should give 3 values, respectively for the train/validation/test hooks"
     )
     parser.add_argument(
-        "--wandb-log-histogram-loss", type=none_or_str, nargs=3, choices=LOG_HISTOGRAM_MODES,
+        "--wandb_log_histogram_loss", type=none_or_str, nargs=3, choices=LOG_HISTOGRAM_MODES,
         help="if and how to log loss values; you should give 3 values, respectively for the train/validation/test hooks"
     )
     group_log_image_heatmap = parser.add_argument_group("log-image-heatmap")
-    # group_log_image_heatmap.add_argument(
-    #     "--wandb-log-image-heatmap-contrast-percentiles", type=float, nargs=2,
-    #     help="Percentile values for the contrast of the heatmap: min/max"
-    # )
     group_log_image_heatmap.add_argument(
-        "--wandb-log-image-heatmap-nsamples", nargs=3, type=int,
+        "--wandb_log_image_heatmap_contrast_percentiles", type=float, nargs=2,
+        help="Percentile values for the contrast of the heatmap: min/max"
+    )
+    group_log_image_heatmap.add_argument(
+        "--wandb_log_image_heatmap_nsamples", nargs=3, type=int,
         help="how many of each class (normal/anomalous) per epoch?"
              "alwyas log the same ones assuming the order of images doesnt' change"
     )
     group_log_image_heatmap.add_argument(
-        "--wandb-log-image-heatmap-resolution", nargs=3, type=none_or_int,
+        "--wandb_log_image_heatmap_resolution", nargs=3, type=none_or_int,
         help="size of the image (width=height), and if 'None' then keep the original size"
     )
     parser.add_argument(
-        "--wandb-log-percentiles-score-train", type=float, nargs="*",
+        "--wandb_log_percentiles_score_train", type=float, nargs="*",
         help="If set, the score will be logged at the given percentiles for train (normal and anomalous scores separatedly)."
     )
     parser.add_argument(
-        "--wandb-log-percentiles-score-validation", type=float, nargs="*",
+        "--wandb_log_percentiles_score_validation", type=float, nargs="*",
         help="If set, the score will be logged at the given percentiles for train (normal and anomalous scores separatedly)."
     )
     parser.add_argument(
-        "--wandb-log-perinstance-mean-score", type=bool, nargs=3,
+        "--wandb_log_perinstance_mean_score", type=bool, nargs=3,
         help="if true then the pixel score will be averaged per instance and logged in a table"
     )
     parser.add_argument(
-        "--wandb-log-perinstance-mean-loss", type=bool, nargs=3,
+        "--wandb_log_perinstance_mean_loss", type=bool, nargs=3,
         help="if true then the loss will be averaged per instance and logged in a table; you should give 3 values, respectively for the train/validation/test hooks"
     )
     
     # ================================ pytorch lightning =================================
     parser.add_argument(
-        "--lightning-accelerator", type=str, 
+        "--lightning_accelerator", type=str, 
         default=LIGHTNING_ACCELERATOR_GPU, 
         choices=LIGHTNING_ACCELERATOR_CHOICES,
         help=f"https://pytorch-lightning.readthedocs.io/en/latest/extensions/accelerator.html"
     )
-    parser.add_argument("--lightning-ndevices", type=int, default=1, help="Number of devices (gpus) to use for training.")
+    parser.add_argument("--lightning_ndevices", type=int, default=1, help="Number of devices (gpus) to use for training.")
     parser.add_argument(
-        "--lightning-strategy", type=none_or_str, 
+        "--lightning_strategy", type=none_or_str, 
         default=None, 
         choices=LIGHTNING_STRATEGY_CHOICES,
         help="See https://pytorch-lightning.readthedocs.io/en/latest/extensions/strategy.html"
     )
     parser.add_argument(
-        "--lightning-precision", type=int, choices=LIGHTNING_PRECISION_CHOICES,
+        "--lightning_precision", type=int, choices=LIGHTNING_PRECISION_CHOICES,
         help="https://pytorch-lightning.readthedocs.io/en/latest/guides/speed.html#mixed-precision-16-bit-training"
     )
     parser.add_argument(
-        "--lightning-model-summary-max-depth", type=int, 
+        "--lightning_model_summary_max_depth", type=int, 
         help="https://pytorch-lightning.readthedocs.io/en/latest/api/pytorch_lightning.callbacks.ModelSummary.html#pytorch_lightning.callbacks.ModelSummary",
     )
     parser.add_argument(
-        "--lightning-check-val-every-n-epoch", type=int,
+        "--lightning_check_val_every_n_epoch", type=int,
         help="... find link to lightning doc ..."
     )
     parser.add_argument(
-        "--lightning-accumulate-grad-batches", type=int,
+        "--lightning_accumulate_grad_batches", type=int,
         help="Accumulate gradients for THIS batches. https://pytorch-lightning.readthedocs.io/en/latest/advanced/training_tricks.html#accumulate-gradients"
     )
     parser.add_argument(
-        "--lightning-profiler", type=none_or_str, choices=LIGHTNING_PROFILER_CHOICES,
+        "--lightning_profiler", type=none_or_str, choices=LIGHTNING_PROFILER_CHOICES,
         help="simple and advanced: https://pytorch-lightning.readthedocs.io/en/latest/tuning/profiler_basic.html\n"
              "pytorch: https://pytorch-lightning.readthedocs.io/en/latest/tuning/profiler_intermediate.html\n"
              "in any case it is saved in a f"
     )
     group_gradient_clipping = parser.add_argument_group("gradient-clipping")
     group_gradient_clipping.add_argument(
-        "--lightning-gradient-clip-val", type=float,
+        "--lightning_gradient_clip_val", type=float,
         help=f"https://pytorch-lightning.readthedocs.io/en/latest/advanced/training_tricks.html#gradient-clipping",
     )
     group_gradient_clipping.add_argument(
-        "--lightning-gradient-clip-algorithm", type=str, choices=LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES,
+        "--lightning_gradient_clip_algorithm", type=str, choices=LIGHTNING_GRADIENT_CLIP_ALGORITHM_CHOICES,
         help=f"https://pytorch-lightning.readthedocs.io/en/latest/advanced/training_tricks.html#gradient-clipping",
     )
     parser.add_argument(
-        "--lightning-deterministic", type=bool,
+        "--lightning_deterministic", type=bool,
         help="https://pytorch-lightning.readthedocs.io/en/stable/common/trainer.html#reproducibility",
     )
     return parser
@@ -556,22 +558,28 @@ def args_post_parse(args_):
     
     # ================================== seeds ==================================
     
-    if args_.seeds is not None:
-        for s in args_.seeds:
+    def validate_seeds(seeds):
+        for s in seeds:
             assert type(s) == int, f"seed must be an int, got {type(s)}"
             assert s >= 0, f"seed must be >= 0, got {s}"
-        assert len(set(args_.seeds)) == len(args_.seeds), f"seeds must be unique, got {s}"
-        args_.seeds = tuple(args_.seeds)
-        
-    # seeds and n_seeds are in a mutually exclusive group in the parser
-    # so the case below must have n_seeds 
-    else:
+        assert len(set(seeds)) == len(seeds), f"seeds must be unique, got {s}"
+        return tuple(seeds)
+    
+    def generate_n_seeds(n_seeds):
         seeds = []
-        for _ in range(args_.n_seeds):
+        for _ in range(n_seeds):
             seeds.append(create_seed())
             time.sleep(1/3)  # let the system state change
-        args_.seeds = tuple(seeds)
+        return tuple(seeds)
+
+    # # seeds and n_seeds are in a mutually exclusive group in the parser
+    # # so the case below must have n_seeds 
+    # if args_.seeds is not None:
+    #     args_.seeds = validate_seeds(args_.seeds)
+    # else:
+    #     args_.seeds = generate_n_seeds(args_.n_seeds)
         
+    args_.seeds = generate_n_seeds(args_.n_seeds)
     del vars(args_)['n_seeds']
     
     # ================================== wandb_log_percentiles_score ==================================
@@ -584,7 +592,6 @@ def args_post_parse(args_):
     del vars(args_)['wandb_log_percentiles_score_validation']
         
     return args_
-
 
 # ==========================================================================================
 # ==========================================================================================
@@ -634,7 +641,7 @@ def run_one(
     # which respectively configure the train/validation/test phases
     wandb_log_roc: Tuple[bool, bool, bool],
     wandb_log_pr: Tuple[bool, bool, bool],
-    # wandb_log_image_heatmap_contrast_percentiles: Tuple[float, float],
+    wandb_log_image_heatmap_contrast_percentiles: Tuple[float, float],
     wandb_log_image_heatmap_nsamples: Tuple[int, int, int],
     wandb_log_image_heatmap_resolution: Tuple[int, int, int],
     wandb_log_histogram_score: Tuple[bool, bool, bool],
@@ -870,9 +877,8 @@ def run_one(
                     labels_key="labels",
                     nsamples_each_class=nsamples_train,
                     resolution=resolution_train,
-                    # heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
-                    # min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
-                    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
+                    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
+                    min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
                     python_generator=create_python_random_generator(seed),
                 ),
             ])
@@ -887,9 +893,8 @@ def run_one(
                     labels_key="labels",
                     nsamples_each_class=nsamples_validation,
                     resolution=resolution_validation,
-                    # heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
-                    # min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
-                    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
+                    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
+                    min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
                     python_generator=create_python_random_generator(seed),
                 ),
             ])
@@ -904,9 +909,8 @@ def run_one(
                     labels_key="labels",
                     nsamples_each_class=nsamples_test,
                     resolution=resolution_test,
-                    # heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
-                    # min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
-                    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_ADAPTIVE_CDF_BASED_IN_EPOCH,
+                    heatmap_normalization=HEATMAP_NORMALIZATION_PERCENTILES_IN_EPOCH,
+                    min_max_percentiles=wandb_log_image_heatmap_contrast_percentiles,
                     python_generator=create_python_random_generator(seed),
                 ),
             ])
@@ -1387,4 +1391,104 @@ def run(**kwargs) -> dict:
             else:
                 # wandb_logger.finalize("success")
                 wandb.finish(0)
-                
+    
+#!/usr/bin/env python
+# coding: utf-8
+
+from argparse import ArgumentParser
+from pickletools import optimize
+from sched import scheduler
+
+import torch
+
+import model_dev01
+import mvtec_dataset_dev01
+
+# i had to do this because RSU (for the u2net) uses bilineal interpolation, which does not have a deterministic implementation
+# there is also the option 
+# lightning_deterministic=True,
+# down here
+torch.use_deterministic_algorithms(False)
+
+parser = parser_add_arguments(ArgumentParser())
+
+parser.set_defaults(
+    # >>>>>>>>>>>>>>>>>>>>> sweep default
+    epochs=600,
+    optimizer=model_dev01.OPTIMIZER_ADAM,
+    # learning_rate=2e-3,
+    scheduler=model_dev01.SCHEDULER_LAMBDA,
+    # scheduler_parameters=[0.998],
+    # weight_decay=1e-4,
+    batch_size=3,
+    # lightning_accumulate_grad_batches=8,  # half epoch for class 0
+    classes=[3],
+    # cuda_visible_devices=[0],
+    # ===========================================================================
+    # >>>>>>>>>>>>>>>>>>>>> common 
+    # [model]  
+    model=model_dev01.MODEL_U2NET_REPVGG_HEIGHT4_LITE,
+    # model=model_dev01.MODEL_U2NET_HEIGHT4_LITE,
+    # model=model_dev01.MODEL_U2NET_HEIGHT6_FULL,
+    loss=model_dev01.LOSS_U2NET_ALLSIDES_PIXELWISE_BATCH_AVG,
+    # [dataset]
+    dataset=mvtec_dataset_dev01.DATASET_NAME,
+    raw_shape=(240, 240),
+    net_shape=(224, 224),
+    nworkers=1,
+    pin_memory=False,
+    preprocessing=mvtec_dataset_dev01.PREPROCESSING_LCNAUG1,
+    supervise_mode=mvtec_dataset_dev01.SUPERVISE_MODE_REAL_ANOMALY,
+    real_anomaly_limit=1,
+    # [script]
+    test=True,
+    preview_nimages=0,
+    n_seeds=1,
+    # seeds=None,
+    # classes=None,
+    # [wandb]
+    wandb_project="mvtec-u2netdd-sweep00",
+    wandb_tags=["dev01", "u2net", "sweep00-mvtec-u2net"],
+    wandb_profile=False,
+    wandb_offline=False,
+    wandb_watch=None,
+    wandb_watch_log_freq=100,  # wandb's default
+    wandb_checkpoint_mode=WANDB_CHECKPOINT_MODE_LAST,
+    # [roc(train/validation/test)]
+    wandb_log_roc=(False, True, True),
+    # [pr(train/validation/test)]
+    wandb_log_pr=(False, True, True),
+    # [image+heatmap]
+    wandb_log_image_heatmap_nsamples=(0, 5, 40),
+    wandb_log_image_heatmap_resolution=(None, 128, None),
+    wandb_log_image_heatmap_contrast_percentiles=(3., 97.),  # (contrast_min, contrast_max)
+    # [histogram]
+    wandb_log_histogram_score=(None, None, None),
+    wandb_log_histogram_loss=(None, None, None),
+    # [percentiles]
+    wandb_log_percentiles_score_train=(),
+    wandb_log_percentiles_score_validation=(),
+    # [per-instance-mean]
+    wandb_log_perinstance_mean_score = (False, False, False),
+    wandb_log_perinstance_mean_loss = (False, False, False),
+    # [computation]
+    lightning_accelerator=LIGHTNING_ACCELERATOR_GPU,
+    lightning_ndevices=1,
+    lightning_strategy=None,
+    lightning_precision=LIGHTNING_PRECISION_32,
+    lightning_model_summary_max_depth=1,
+    lightning_check_val_every_n_epoch=10,
+    lightning_profiler=None,  # LIGHTNING_PROFILER_SIMPLE,
+    # lightning_gradient_clip_val=1.0,
+    lightning_gradient_clip_algorithm=LIGHTNING_GRADIENT_CLIP_ALGORITHM_VALUE,
+    lightning_deterministic=False,
+)
+import sys
+print(f"sys.argv={sys.argv}")
+args = parser.parse_args()
+print(f"parsed args={args}")
+args_validate_dataset_specific_choices(args)
+args_validate_model_specific_choices(args)
+args = args_post_parse(args)
+print(f"post-processed args={args}")
+run(**vars(args))

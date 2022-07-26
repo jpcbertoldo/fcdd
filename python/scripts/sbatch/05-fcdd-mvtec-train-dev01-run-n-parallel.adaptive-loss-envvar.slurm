@@ -7,7 +7,7 @@
 #SBATCH --gres       gpu:1
 #SBATCH --cpus-per-task 2
 
-#SBATCH --array=0-5%1   # Id of job start-end % number of simultaneous running job
+#######SBATCH --array=0-5%1   # Id of job start-end % number of simultaneous running job
 
 # variable meanings
 # %x = job-name
@@ -16,12 +16,12 @@
 # %a = SLURM_ARRAY_TASK_ID (the job index in the array)
 # %j = SLURM_JOBID (unique for each job)
 
-# !!!!! THIS ONE !!!!!! 
 # OUTPUT FOR ARRAY JOB
-#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/run-n-parallel/%x-%N-%A_%a-%j.log
+########SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/run-n-parallel/%x-%N-%A_%a-%j.log
  
+# !!!!! THIS ONE !!!!!! 
 # OUTPUT FOR SINGLE JOB
-##SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/run-n-parallel/%x-%N-%j.log
+#SBATCH --output     /cluster/CMM/home/jcasagrandebertoldo/log/fcdd/mvtec/run-n-parallel/%x-%N-%j.log
 
 # tous les evenements pertinents seront envoyes par email a cette adresse
 #SBATCH --mail-type  ALL
@@ -124,10 +124,10 @@ MYTMPDIR="/cluster/CMM/data1/jcasagrandebertoldo/tmp"
 LOGDIR="${HOME}/log/fcdd/mvtec/run-n-parallel"
 
 # OUTPUT FOR ARRAY JOB
-JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}-${SLURM_JOB_ID}.python-"
+# JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}-${SLURM_JOB_ID}.python-"
 
 # OUTPUT FOR SINGLE JOB
-# JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_JOB_ID}.python-"
+JNAME_BASE="${SLURM_JOB_NAME}-${Node}-${SLURM_JOB_ID}.python-"
 
 JPATH_BASE=${LOGDIR}/$JNAME_BASE
 JPATH_EXT=".log"
@@ -200,9 +200,39 @@ do
     
     echo "launching idx=${idx}"
     echo "JPATH=${JPATH}"
-    
+     
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
     # & will put it in the background
-    python ${SCRIPT_FNAME} ${ARGS} > "${JPATH}" 2>&1 & 
+    loss_empirical_cdf_clip_threshold="0.15" python ${SCRIPT_FNAME} ${ARGS} > "${JPATH}" 2>&1 & 
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
+    # MODIF
     
     PID=$!
     echo "PID=${PID}"

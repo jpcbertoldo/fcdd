@@ -1,0 +1,64 @@
+program: "train_mvtec_dev01_bis.py"
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--wandb_issweep"
+  - "--lightning_swa_enabled"
+  - ${args}
+method: grid
+metric:
+  goal: maximize
+  name: test/avg-precision
+parameters:
+  epochs:
+    value: 500
+  scheduler:
+    value: "lambda"  # lr = lr * rate, rate \in (0, 1)
+  scheduler_parameters:
+    value: 0.9985  # equivalent to the old 0.985
+  # obs: scheduler_parameters ^ epochs = 0.9985 ^ 500 = 0.47 ~ 0.5
+  # so the usual scheduler will decrease the initial lr to half of it 
+  # obs2: this is already the default but i'm putting it here for clarity of the other params
+  learning_rate:
+    value: 0.001
+  preprocessing:
+    value: lcnaug1
+  lightning_swa_learning_rate:
+    values:
+      - 0.010
+      - 0.003
+      - 0.001
+  lightning_swa_epoch_start:
+    values:
+      - 0.2  # 0.2 * 500 = 100
+      - 0.5  # 0.4 * 500 = 200
+  supervise_mode:
+    values: 
+      - "synthetic-anomaly-confetti"
+      - "real-anomaly"
+  seeds:
+    # i got these seed values from a random list of runs
+    values:
+      - "0x526f289f74732498"
+      - "0x40452d6f87068d81"
+      - "0x2395859d21efbbd6"
+      - "0x22cd096d5f8a9c21"
+      - "0xeb33f3d140c7b5f4"
+  classes:
+    values:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      - 13
+      - 14
