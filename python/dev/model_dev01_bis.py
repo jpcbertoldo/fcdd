@@ -145,6 +145,15 @@ class PixelwiseHSCLossesMixin:
         
         if loss_version == LOSS_OLD_FCDD:
             loss_map = self._old_fcdd(score_map, masks)
+            # take the mean of the loss map per img firs
+            # take the mean of the loss map per img firs
+            # take the mean of the loss map per img firs
+            # take the mean of the loss map per img firs
+            # take the mean of the loss map per img firs
+            # take the mean of the loss map per img firs
+            # take the mean of the loss map per img firs
+            # take the mean of the loss map per img first
+            # and do the per img avg before combining normal/anom loss
         
         elif loss_version == LOSS_PIXELWISE_BATCH_AVG:
             loss_map = self._pixel_wise_batch_avg(score_map, masks, extra_return)
