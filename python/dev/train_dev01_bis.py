@@ -159,6 +159,7 @@ print(f"SUPERVISE_MODE_CHOICES={ALL_SUPERVISE_MODE_CHOICES}")
 
 MODEL_CLASSES = {
     model_dev01_bis.MODEL_FCDD_CNN224_VGG_F: model_dev01_bis.FCDD,
+    model_dev01_bis.MODEL_FCDD_CNN224_VGG_F_EVAL: model_dev01_bis.FCDD,
     model_dev01_bis.MODEL_U2NET_HEIGHT4_LITE: model_dev01_bis.HyperSphereU2Net,
     model_dev01_bis.MODEL_U2NET_HEIGHT6_LITE: model_dev01_bis.HyperSphereU2Net,
     model_dev01_bis.MODEL_U2NET_HEIGHT6_FULL: model_dev01_bis.HyperSphereU2Net,

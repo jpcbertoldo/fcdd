@@ -19,6 +19,8 @@ import torch
 from torch import Tensor
 from typing import Tuple, Optional
 import numpy as np
+import wandb
+import os
 
 from common_dev01_bis import AdaptiveClipError, find_scores_clip_values_from_empircal_cdf
 
@@ -47,9 +49,10 @@ print(f"SCHEDULER_CHOICES={SCHEDULER_CHOICES}")
 
 # fcdd losses, based on a single score map output
 LOSS_OLD_FCDD = 'old-fcdd'
+LOSS_OLD_FCDD_FIXED = 'old-fcdd-fixed'
 LOSS_PIXELWISE_BATCH_AVG = 'pixelwise-batch-avg'
 LOSS_PIXELWISE_BATCH_AVG_CLIP_SCORE_CDF_ADAPTIVE = 'pixelwise-batch-avg-clip-score-cdf-adaptive'
-LOSS_FCDD_CHOICES = (LOSS_OLD_FCDD, LOSS_PIXELWISE_BATCH_AVG, LOSS_PIXELWISE_BATCH_AVG_CLIP_SCORE_CDF_ADAPTIVE)
+LOSS_FCDD_CHOICES = (LOSS_OLD_FCDD, LOSS_PIXELWISE_BATCH_AVG, LOSS_PIXELWISE_BATCH_AVG_CLIP_SCORE_CDF_ADAPTIVE, LOSS_OLD_FCDD_FIXED)
 
 # **u2net losses**
 # un2net outputs as many score maps as there are heights + 1, the fused score map
@@ -145,34 +148,28 @@ class PixelwiseHSCLossesMixin:
         
         if loss_version == LOSS_OLD_FCDD:
             loss_map = self._old_fcdd(score_map, masks)
-            # take the mean of the loss map per img firs
-            # take the mean of the loss map per img firs
-            # take the mean of the loss map per img firs
-            # take the mean of the loss map per img firs
-            # take the mean of the loss map per img firs
-            # take the mean of the loss map per img firs
-            # take the mean of the loss map per img firs
-            # take the mean of the loss map per img first
-            # and do the per img avg before combining normal/anom loss
+            return loss_map, loss_map.mean()
+        
+        if loss_version == LOSS_OLD_FCDD_FIXED:
+            loss_map, loss = self._old_fcdd_fixed(score_map, masks)
+            return loss_map, loss
         
         elif loss_version == LOSS_PIXELWISE_BATCH_AVG:
             loss_map = self._pixel_wise_batch_avg(score_map, masks, extra_return)
+            return loss_map, loss_map.mean()
         
         elif loss_version == LOSS_PIXELWISE_BATCH_AVG_CLIP_SCORE_CDF_ADAPTIVE:
             loss_map = self._pixel_wise_batch_avg_clip_score_cdf_adaptive(score_map, masks)
+            return loss_map, loss_map.mean()
             
-        else:
-            raise NotImplementedError(f"loss '{loss_version}' not implemented")
+        raise NotImplementedError(f"loss '{loss_version}' not implemented")
         
-        return loss_map, loss_map.mean()
     
     def _pixel_wise_batch_avg_clip_score_cdf_adaptive(self, score_map, masks):
         
         try:
             with torch.no_grad():
                 # temporary hack to not modify the cli
-                import wandb
-                import os
                 loss_empirical_cdf_clip_threshold = float(os.environ.get('loss_empirical_cdf_clip_threshold', 0.05))
                 wandb.run.summary.update(dict(loss_empirical_cdf_clip_threshold=loss_empirical_cdf_clip_threshold))
                 clipmin, clipmax = find_scores_clip_values_from_empircal_cdf(
@@ -226,11 +223,39 @@ class PixelwiseHSCLossesMixin:
         loss_maps = norm_loss_maps + anom_loss_maps
         
         return loss_maps
+    
+    def _old_fcdd_fixed(self, scores, masks):
+        
+        # scores \in R+^{N x 1 x H x W}
+        loss_maps = (scores + 1).sqrt() - 1
+            
+        norm_loss_maps = (loss_maps * (1 - masks))
+            
+        anom_loss_maps = -(((1 - (-loss_maps).exp()) + 1e-31).log())
+        anom_loss_maps = anom_loss_maps * masks
+            
+        pixelwise_loss_maps = norm_loss_maps + anom_loss_maps
+        
+        # let's delete this to not make things confusing
+        del anom_loss_maps
+        
+        anom_loss_maps = loss_maps * masks
+        
+        # take the average of each image
+        norm_loss_perimg = norm_loss_maps.mean(dim=(1, 2, 3))        
+        anom_loss_perimg = anom_loss_maps.mean(dim=(1, 2, 3))
+        anom_loss_perimg = -(((1 - (-anom_loss_perimg).exp()) + 1e-31).log())
+                
+        loss = (norm_loss_perimg + anom_loss_perimg).mean()
+        
+        return pixelwise_loss_maps, loss
 
 
 MODEL_FCDD_CNN224_VGG_F = "FCDD_CNN224_VGG_F"  # this const is like this for backward compatibility
+MODEL_FCDD_CNN224_VGG_F_EVAL = "FCDD_CNN224_VGG_F_EVAL" 
 MODEL_CHOICES_FCDD = (
     MODEL_FCDD_CNN224_VGG_F,
+    MODEL_FCDD_CNN224_VGG_F_EVAL,
 )
 
 
@@ -341,7 +366,7 @@ class FCDD(SchedulersMixin, MergeStepOutputsMixin, PixelwiseHSCLossesMixin, Ligh
         if dropout_mode == DROPOUT_MODE_LASTCONV:
             dropout_proba = dropout_validate_parameters_mode_single_proba(dropout_parameters)
                 
-        if model_name != MODEL_FCDD_CNN224_VGG_F:
+        if model_name not in (MODEL_FCDD_CNN224_VGG_F, MODEL_FCDD_CNN224_VGG_F_EVAL):
             raise NotImplementedError(f"model_name={model_name} not implemented")
         
         # for some reason pyttorch lightning needs this specific call super().__init__()
@@ -397,6 +422,8 @@ class FCDD(SchedulersMixin, MergeStepOutputsMixin, PixelwiseHSCLossesMixin, Ligh
         self.features = self.features[:-8]        
         # free the layers in the middle
         for m in self.features[:15]:
+            if model_name == MODEL_FCDD_CNN224_VGG_F_EVAL:
+                m.eval()  # ?
             for p in m.parameters():
                 p.requires_grad = False
         
