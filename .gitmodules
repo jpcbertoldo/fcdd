@@ -1,3 +1,12 @@
 [submodule "cd-diagram"]
 	path = cd-diagram
 	url = https://github.com/jpcbertoldo/cd-diagram
+[submodule "rc2021"]
+	path = rc2021
+	url = git@github.com:jpcbertoldo/rc2021.git
+[submodule "2022-07-bmvc/2022-07-bmvc"]
+	path = 2022-07-bmvc/2022-07-bmvc
+	url = git@github.com:jpcbertoldo/2022-07-bmvc.git
+[submodule "ad-scores"]
+	path = ad-scores
+	url = git@github.com:jpcbertoldo/ad-scores.git
